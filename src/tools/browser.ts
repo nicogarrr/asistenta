@@ -1,5 +1,4 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { notePageAfterFailedCall } from '../browser/page-after-call.js';
 import {
   type BrowserService,
@@ -9,6 +8,7 @@ import {
   type WaitResult,
 } from '../browser/service.js';
 import { UNREADABLE_TARGET } from '../browser/target.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import {
   armDesktopSignup,
   signupEmailDomains,
@@ -91,108 +91,110 @@ const MEDIA_SCRIPTS: Record<string, string> = {
 }, __SECONDS__);`,
 };
 
-const BrowserParams = Type.Object({
-  action: Type.Union([
-    Type.Literal('open'),
-    Type.Literal('snapshot'),
-    Type.Literal('click'),
-    Type.Literal('fill'),
-    Type.Literal('choose'),
-    Type.Literal('press'),
-    Type.Literal('wait'),
-    Type.Literal('wait_for'),
-    Type.Literal('pick'),
-    Type.Literal('screenshot'),
-    Type.Literal('media'),
-    Type.Literal('back'),
-    Type.Literal('close'),
-  ]),
-  what: Type.Optional(
-    Type.String({
-      description:
-        'For media: state | skip_ad | play | pause | mute | unmute | seek. Adverts are ' +
-        'skipped automatically in the background; skip_ad is for reporting on one.',
-    }),
-  ),
-  to: Type.Optional(Type.Number({ description: 'For media with what=seek: seconds.' })),
-  expect: Type.Optional(
-    Type.String({
-      description:
-        'For click on a selection (store, address, date, plan, option): the text the ' +
-        'page MUST show afterwards if the selection matches the user request (e.g. the ' +
-        'requested city). The tool checks it itself; if it is missing, the session is ' +
-        'locked (no click/choose/fill/press) until you open or go back.',
-    }),
-  ),
-  url: Type.Optional(Type.String({ description: 'For open. Must be http(s).' })),
-  selector: Type.Optional(
-    Type.String({
-      description:
-        'CSS or text target for click/fill/press/wait. A selector from the snapshot is ' +
-        'best, but plain visible text also works: click/fill accept "Buscar" as well as ' +
-        '"#buscar", and if the selector is stale they fall back to role, text and label.',
-    }),
-  ),
-  text: Type.Optional(Type.String({ description: 'For fill and choose: the text to type.' })),
-  secret_key: Type.Optional(
-    Type.String({
-      description:
-        'For fill: a vault key site:<dominio>:<campo> (e.g. site:seg-social.es:password). ' +
-        'The daemon types the secret straight from the vault, masked end to end: the value ' +
-        'never appears to you, in the result or in the transcript. Use it for logins. ' +
-        'Mutually exclusive with text.',
-    }),
-  ),
-  option: Type.Optional(
-    Type.String({
-      description:
-        'For choose: the suggestion to pick, if not just the typed text (e.g. "Madrid Chamartín"). Needed when several suggestions match.',
-    }),
-  ),
-  key: Type.Optional(Type.String({ description: 'For press, e.g. "Enter".' })),
-  with: Type.Optional(
-    Type.String({
-      description:
-        'For wait/wait_for: what to wait for, a CSS selector or the visible text. For pick: ' +
-        'the label to choose from the suggestions, e.g. "Madrid-Chamartín".',
-    }),
-  ),
-  from: Type.Optional(
-    Type.String({
-      description: 'For pick: the field to write in, a selector or its label. Required by pick.',
-    }),
-  ),
-  timeoutMs: Type.Optional(
-    Type.Number({
-      description: 'For wait, pick, click and fill. Default 3000, maximum 30000.',
-    }),
-  ),
-  fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
-  mobile: Type.Optional(
-    Type.Boolean({
-      description:
-        'For screenshot: capture at phone width (390×844) to check how the page looks on a phone. The page size is put back afterwards.',
-    }),
-  ),
-  send: Type.Optional(
-    Type.Boolean({
-      description:
-        'For screenshot: also send the image to the user in the chat. Use it when the user asks for a capture of what you are doing in the browser.',
-    }),
-  ),
-  visible: Type.Optional(
-    Type.Boolean({
-      description:
-        'For open. Put the window on screen instead of headless. Pass ' +
-        'visible: true whenever the user might want to WATCH the task happen - it is the ' +
-        'default you should use when the user says "you do it" or "let me see". Without ' +
-        'it the browser is headless and the user sees NOTHING at all. Every result tells ' +
-        'you which one is in use. Also REQUIRED for any media: a headless browser has no ' +
-        'audio output, so a video "plays" in silence and you would be lying if you said ' +
-        'the user can hear it.',
-    }),
-  ),
-});
+const BrowserParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('open'),
+      Type.Literal('snapshot'),
+      Type.Literal('click'),
+      Type.Literal('fill'),
+      Type.Literal('choose'),
+      Type.Literal('press'),
+      Type.Literal('wait'),
+      Type.Literal('wait_for'),
+      Type.Literal('pick'),
+      Type.Literal('screenshot'),
+      Type.Literal('media'),
+      Type.Literal('back'),
+      Type.Literal('close'),
+    ]),
+    what: Type.Optional(
+      Type.String({
+        description:
+          'For media: state | skip_ad | play | pause | mute | unmute | seek. Adverts are ' +
+          'skipped automatically in the background; skip_ad is for reporting on one.',
+      }),
+    ),
+    to: Type.Optional(Type.Number({ description: 'For media with what=seek: seconds.' })),
+    expect: Type.Optional(
+      Type.String({
+        description:
+          'For click on a selection (store, address, date, plan, option): the text the ' +
+          'page MUST show afterwards if the selection matches the user request (e.g. the ' +
+          'requested city). The tool checks it itself; if it is missing, the session is ' +
+          'locked (no click/choose/fill/press) until you open or go back.',
+      }),
+    ),
+    url: Type.Optional(Type.String({ description: 'For open. Must be http(s).' })),
+    selector: Type.Optional(
+      Type.String({
+        description:
+          'CSS or text target for click/fill/press/wait. A selector from the snapshot is ' +
+          'best, but plain visible text also works: click/fill accept "Buscar" as well as ' +
+          '"#buscar", and if the selector is stale they fall back to role, text and label.',
+      }),
+    ),
+    text: Type.Optional(Type.String({ description: 'For fill and choose: the text to type.' })),
+    secret_key: Type.Optional(
+      Type.String({
+        description:
+          'For fill: a vault key site:<dominio>:<campo> (e.g. site:seg-social.es:password). ' +
+          'The daemon types the secret straight from the vault, masked end to end: the value ' +
+          'never appears to you, in the result or in the transcript. Use it for logins. ' +
+          'Mutually exclusive with text.',
+      }),
+    ),
+    option: Type.Optional(
+      Type.String({
+        description:
+          'For choose: the suggestion to pick, if not just the typed text (e.g. "Madrid Chamartín"). Needed when several suggestions match.',
+      }),
+    ),
+    key: Type.Optional(Type.String({ description: 'For press, e.g. "Enter".' })),
+    with: Type.Optional(
+      Type.String({
+        description:
+          'For wait/wait_for: what to wait for, a CSS selector or the visible text. For pick: ' +
+          'the label to choose from the suggestions, e.g. "Madrid-Chamartín".',
+      }),
+    ),
+    from: Type.Optional(
+      Type.String({
+        description: 'For pick: the field to write in, a selector or its label. Required by pick.',
+      }),
+    ),
+    timeoutMs: Type.Optional(
+      Type.Number({
+        description: 'For wait, pick, click and fill. Default 3000, maximum 30000.',
+      }),
+    ),
+    fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
+    mobile: Type.Optional(
+      Type.Boolean({
+        description:
+          'For screenshot: capture at phone width (390×844) to check how the page looks on a phone. The page size is put back afterwards.',
+      }),
+    ),
+    send: Type.Optional(
+      Type.Boolean({
+        description:
+          'For screenshot: also send the image to the user in the chat. Use it when the user asks for a capture of what you are doing in the browser.',
+      }),
+    ),
+    visible: Type.Optional(
+      Type.Boolean({
+        description:
+          'For open. Put the window on screen instead of headless. Pass ' +
+          'visible: true whenever the user might want to WATCH the task happen - it is the ' +
+          'default you should use when the user says "you do it" or "let me see". Without ' +
+          'it the browser is headless and the user sees NOTHING at all. Every result tells ' +
+          'you which one is in use. Also REQUIRED for any media: a headless browser has no ' +
+          'audio output, so a video "plays" in silence and you would be lying if you said ' +
+          'the user can hear it.',
+      }),
+    ),
+  }),
+);
 
 /**
  * Script for action=fill that verifies what ended up in the field.
@@ -457,7 +459,7 @@ export function createBrowserTool(
   service: BrowserService,
   scopeOf: () => string,
   sendImage?: (png: Buffer) => Promise<boolean>,
-): AgentTool<typeof BrowserParams> & {
+): AgentTool<ReturnType<typeof BrowserParams>> & {
   gateHint: (args: Record<string, unknown>) => Promise<string>;
 } {
   // Lo que leyó gateHint de cada elemento justo antes de preguntar, para comparar
@@ -489,7 +491,7 @@ export function createBrowserTool(
       'aprobación otra vez si sigue siendo lo que hay que hacer.'
     );
   };
-  const tool: AgentTool<typeof BrowserParams> & {
+  const tool: AgentTool<ReturnType<typeof BrowserParams>> & {
     gateHint: (args: Record<string, unknown>) => Promise<string>;
   } = {
     name: 'browser',
@@ -582,7 +584,7 @@ export function createBrowserTool(
       'and say so; do not continue the order on the wrong selection.',
       'Never type credentials or card numbers into a page.',
     ].join('\n'),
-    parameters: BrowserParams,
+    parameters: BrowserParams(),
     // Sequential: the page is one shared object, and two actions in flight at once
     // race on the same navigation.
     executionMode: 'sequential',

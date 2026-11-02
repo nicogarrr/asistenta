@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { scheduleEs } from '../cron/describe-es.js';
 import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
@@ -56,38 +56,40 @@ export function reminderText(r: Pick<Routine, 'name' | 'prompt'>): string {
   return r.prompt?.trim() || r.name.replace(/^recordatorio(?:-1)?:\s*/, '');
 }
 
-const Params = Type.Object({
-  action: Type.Union([Type.Literal('create'), Type.Literal('list'), Type.Literal('cancel')]),
-  text: Type.Optional(
-    Type.String({
-      description:
-        'create: what to remind, in the second person ("apagar el horno"). cancel: a word from the reminder to cancel.',
-    }),
-  ),
-  at: Type.Optional(
-    Type.String({
-      description:
-        "create, one time: local date and time as YYYY-MM-DDTHH:MM (24h, the user's timezone). Work it out from the <now> block.",
-    }),
-  ),
-  in_minutes: Type.Optional(
-    Type.Number({
-      description: 'create, one time: minutes from now (at least 2). Alternative to at.',
-    }),
-  ),
-  schedule: Type.Optional(
-    Type.String({
-      description:
-        'create, repeating: 5-field cron in local time (min hour day-of-month month day-of-week), e.g. "30 8 * * 1" for Mondays at 8:30.',
-    }),
-  ),
-  until: Type.Optional(
-    Type.String({
-      description:
-        'create, repeating only: last local day it may fire, YYYY-MM-DD ("cada día durante una semana", "hasta el viernes"). Omit when it has no end.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([Type.Literal('create'), Type.Literal('list'), Type.Literal('cancel')]),
+    text: Type.Optional(
+      Type.String({
+        description:
+          'create: what to remind, in the second person ("apagar el horno"). cancel: a word from the reminder to cancel.',
+      }),
+    ),
+    at: Type.Optional(
+      Type.String({
+        description:
+          "create, one time: local date and time as YYYY-MM-DDTHH:MM (24h, the user's timezone). Work it out from the <now> block.",
+      }),
+    ),
+    in_minutes: Type.Optional(
+      Type.Number({
+        description: 'create, one time: minutes from now (at least 2). Alternative to at.',
+      }),
+    ),
+    schedule: Type.Optional(
+      Type.String({
+        description:
+          'create, repeating: 5-field cron in local time (min hour day-of-month month day-of-week), e.g. "30 8 * * 1" for Mondays at 8:30.',
+      }),
+    ),
+    until: Type.Optional(
+      Type.String({
+        description:
+          'create, repeating only: last local day it may fire, YYYY-MM-DD ("cada día durante una semana", "hasta el viernes"). Omit when it has no end.',
+      }),
+    ),
+  }),
+);
 
 export interface ReminderDeps {
   store: Store;
@@ -438,7 +440,7 @@ export function reminderButtonCommand(
   return `⏰ Te lo vuelvo a recordar a las ${stamp(when).slice(11)}: ${hit.text}`;
 }
 
-export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params> {
+export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typeof Params>> {
   const now = deps.now ?? (() => Date.now());
   return {
     name: 'reminder',
@@ -454,7 +456,7 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
       'word from the text removes it. Say back the exact time you set, in local time.',
       'Never claim a reminder exists unless this tool said it was created.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const scope = deps.scopeOf();

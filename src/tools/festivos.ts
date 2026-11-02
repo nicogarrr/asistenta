@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { localDay } from '../datecontext.js';
 import { log } from '../log.js';
 
@@ -130,19 +130,21 @@ export function puenteDe(date: string, isOff: (d: string) => boolean): string | 
   return null;
 }
 
-const Params = Type.Object({
-  fecha: Type.Optional(
-    Type.String({
-      description:
-        'A date to check, YYYY-MM-DD (work it out from the <now> block: «el lunes» → next Monday).',
-    }),
-  ),
-  puentes: Type.Optional(
-    Type.Boolean({
-      description: 'true: list the coming puentes and long weekends (next 12 months).',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    fecha: Type.Optional(
+      Type.String({
+        description:
+          'A date to check, YYYY-MM-DD (work it out from the <now> block: «el lunes» → next Monday).',
+      }),
+    ),
+    puentes: Type.Optional(
+      Type.Boolean({
+        description: 'true: list the coming puentes and long weekends (next 12 months).',
+      }),
+    ),
+  }),
+);
 
 export interface FestivosDeps {
   fetchFn?: typeof fetch;
@@ -153,7 +155,7 @@ export interface FestivosDeps {
 
 const DOWN = 'No pude consultar los festivos ahora: el servicio no responde. Prueba en un rato.';
 
-export function createFestivosTool(deps: FestivosDeps = {}): AgentTool<typeof Params> {
+export function createFestivosTool(deps: FestivosDeps = {}): AgentTool<ReturnType<typeof Params>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
   const cache = new Map<number, { at: number; body: unknown }>();
@@ -193,7 +195,7 @@ export function createFestivosTool(deps: FestivosDeps = {}): AgentTool<typeof Pa
     label: 'Festivos',
     description:
       'Spanish public holidays (national + the owner’s region, PA_FESTIVOS_COMUNIDAD, default Asturias; local ones from PA_FESTIVOS_LOCALES) from date.nager.at, no key. Use for «¿el lunes es festivo?», «¿cuándo es el próximo festivo?», «¿qué puentes hay?». Read-only.',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {

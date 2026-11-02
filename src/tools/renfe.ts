@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Browser } from 'playwright';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
 /**
@@ -241,15 +241,19 @@ export function formatTrains(trains: RenfeTrain[]): string {
     .join('\n');
 }
 
-const RenfeParams = Type.Object({
-  origin: Type.String({ description: 'Ciudad o estación de origen, p. ej. "Madrid".' }),
-  destination: Type.String({ description: 'Ciudad o estación de destino, p. ej. "Barcelona".' }),
-  date: Type.String({ description: 'Fecha de ida, YYYY-MM-DD (no puede ser pasada).' }),
-  after: Type.Optional(
-    Type.String({ description: 'Solo trenes que salen desde esta hora, HH:MM (24 h).' }),
-  ),
-  limit: Type.Optional(Type.Number({ description: 'Máximo de trenes a devolver. Por defecto 8.' })),
-});
+const RenfeParams = lazySchema(() =>
+  Type.Object({
+    origin: Type.String({ description: 'Ciudad o estación de origen, p. ej. "Madrid".' }),
+    destination: Type.String({ description: 'Ciudad o estación de destino, p. ej. "Barcelona".' }),
+    date: Type.String({ description: 'Fecha de ida, YYYY-MM-DD (no puede ser pasada).' }),
+    after: Type.Optional(
+      Type.String({ description: 'Solo trenes que salen desde esta hora, HH:MM (24 h).' }),
+    ),
+    limit: Type.Optional(
+      Type.Number({ description: 'Máximo de trenes a devolver. Por defecto 8.' }),
+    ),
+  }),
+);
 
 class StepError extends Error {}
 
@@ -555,7 +559,7 @@ export async function searchRenfe(
   }
 }
 
-export function createRenfeTool(deps: RenfeDeps = {}): AgentTool<typeof RenfeParams> {
+export function createRenfeTool(deps: RenfeDeps = {}): AgentTool<ReturnType<typeof RenfeParams>> {
   return {
     name: 'renfe',
     label: 'Renfe',
@@ -565,7 +569,7 @@ export function createRenfeTool(deps: RenfeDeps = {}): AgentTool<typeof RenfePar
       'Pasa la fecha ya resuelta (YYYY-MM-DD) usando el bloque <now> del contexto.',
       'Si devuelve un error, cuenta al usuario el paso que falló; nunca afirmes que has buscado si no hay lista de trenes.',
     ].join(' '),
-    parameters: RenfeParams,
+    parameters: RenfeParams(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       try {

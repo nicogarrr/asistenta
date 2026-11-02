@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { localDay } from '../datecontext.js';
 import type { Store } from '../db.js';
 import { log } from '../log.js';
@@ -231,26 +231,30 @@ function recuento(items: BoeItem[]): string {
   return y(parts);
 }
 
-const Params = Type.Object({
-  buscar: Type.Optional(
-    Type.String({
-      description:
-        'Words to look for in the day’s BOE (titles, issuing body, heading), e.g. «ayudas vivienda», «oposiciones Gijón». Omit for a summary of the day.',
-    }),
-  ),
-  fecha: Type.Optional(Type.String({ description: 'Day as YYYY-MM-DD. Omit for today (Madrid).' })),
-  aviso: Type.Optional(
-    Type.Union([Type.Literal('activar'), Type.Literal('desactivar'), Type.Literal('ver')], {
-      description:
-        'Only when the owner asks: activar (with buscar) a daily BOE watch that writes only when something matches; desactivar (with buscar for one, without for all); ver lists them.',
-    }),
-  ),
-  rutina: Type.Optional(
-    Type.Boolean({
-      description: 'Only set by the BOE watch routine itself. Never set it otherwise.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    buscar: Type.Optional(
+      Type.String({
+        description:
+          'Words to look for in the day’s BOE (titles, issuing body, heading), e.g. «ayudas vivienda», «oposiciones Gijón». Omit for a summary of the day.',
+      }),
+    ),
+    fecha: Type.Optional(
+      Type.String({ description: 'Day as YYYY-MM-DD. Omit for today (Madrid).' }),
+    ),
+    aviso: Type.Optional(
+      Type.Union([Type.Literal('activar'), Type.Literal('desactivar'), Type.Literal('ver')], {
+        description:
+          'Only when the owner asks: activar (with buscar) a daily BOE watch that writes only when something matches; desactivar (with buscar for one, without for all); ver lists them.',
+      }),
+    ),
+    rutina: Type.Optional(
+      Type.Boolean({
+        description: 'Only set by the BOE watch routine itself. Never set it otherwise.',
+      }),
+    ),
+  }),
+);
 
 export interface BoeDeps {
   fetchFn?: typeof fetch;
@@ -269,7 +273,7 @@ export interface BoeDeps {
 
 class NoPublicado extends Error {}
 
-export function createBoeTool(deps: BoeDeps = {}): AgentTool<typeof Params> {
+export function createBoeTool(deps: BoeDeps = {}): AgentTool<ReturnType<typeof Params>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
   const cache = new Map<string, { at: number; items: BoeItem[] }>();
@@ -351,7 +355,7 @@ export function createBoeTool(deps: BoeDeps = {}): AgentTool<typeof Params> {
     label: 'BOE',
     description:
       'Spain’s official gazette (BOE) for a given day, from its open-data API (no key). Use for «¿ha salido algo en el BOE sobre X?», «¿qué trae hoy el BOE?». Read-only. aviso=activar (with buscar) / desactivar / ver only when the owner asks to be told when something about a topic appears in the BOE.',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {

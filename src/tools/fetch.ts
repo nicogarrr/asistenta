@@ -1,7 +1,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log, logHost } from '../log.js';
 import {
   fetchYoutubeTranscript,
@@ -27,17 +27,19 @@ import { decodeWin1252, WIN1252_LABELS, win1252NativeOk } from '../win1252.js';
  * HTML is reduced to text before it reaches the model: a raw page is 200-500kB of
  * markup for maybe 2kB of content, and the token difference is the whole budget.
  */
-const FetchParams = Type.Object({
-  url: Type.String({ description: 'Absolute http(s) URL.' }),
-  format: Type.Optional(
-    Type.Union([Type.Literal('text'), Type.Literal('markdown')], {
-      description: 'How to render the page. Default: markdown.',
-    }),
-  ),
-  maxChars: Type.Optional(
-    Type.Number({ description: 'Truncate the extracted text to this many characters.' }),
-  ),
-});
+const FetchParams = lazySchema(() =>
+  Type.Object({
+    url: Type.String({ description: 'Absolute http(s) URL.' }),
+    format: Type.Optional(
+      Type.Union([Type.Literal('text'), Type.Literal('markdown')], {
+        description: 'How to render the page. Default: markdown.',
+      }),
+    ),
+    maxChars: Type.Optional(
+      Type.Number({ description: 'Truncate the extracted text to this many characters.' }),
+    ),
+  }),
+);
 
 /**
  * Extrae el contenido principal de una página (modo lectura) con
@@ -509,14 +511,14 @@ export interface FetchToolDeps {
 export function createFetchTool(
   defaultMaxChars = 20_000,
   deps: FetchToolDeps = {},
-): AgentTool<typeof FetchParams> {
+): AgentTool<ReturnType<typeof FetchParams>> {
   return {
     name: 'fetch',
     label: 'Fetch',
     description:
       'Download a web page and return its text content. Use this when the user shares a link or asks about a page. Returns text only: no images, no scripts, no interaction. ' +
       'For a YouTube video link it returns the video transcript (subtitles) instead of the page: use it for "resúmeme este vídeo" / "de qué va este vídeo".',
-    parameters: FetchParams,
+    parameters: FetchParams(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const url = args.url.trim();

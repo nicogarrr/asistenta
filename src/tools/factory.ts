@@ -16,7 +16,7 @@
  * re-opens the test requirement.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { runFactoryToolSandboxed } from '../factory/runner.js';
 import {
   listFactoryTools,
@@ -32,50 +32,56 @@ import { foldAccents } from '../text.js';
 
 export const FACTORY_TOOL_NAME = 'fabrica';
 
-const FactoryParams = Type.Object({
-  action: Type.Union([
-    Type.Literal('list'),
-    Type.Literal('read'),
-    Type.Literal('build'),
-    Type.Literal('test'),
-    Type.Literal('install'),
-    Type.Literal('uninstall'),
-    Type.Literal('improve'),
-  ]),
-  id: Type.Optional(
-    Type.String({
-      description:
-        'Slug de la herramienta (read/test/install/uninstall/improve). En build: opcional; se deriva del nombre.',
-    }),
-  ),
-  name: Type.Optional(Type.String({ description: 'build: nombre humano corto.' })),
-  description: Type.Optional(Type.String({ description: 'build: una linea con lo que consigue.' })),
-  whenToUse: Type.Optional(
-    Type.String({
-      description: 'build: la peticion que deberia dispararla, como la diria el usuario.',
-    }),
-  ),
-  parameters: Type.Optional(
-    Type.Record(Type.String(), Type.Unknown(), {
-      description:
-        'build: JSON schema de objeto para los parametros ({ "type": "object", "properties": { ... } }).',
-    }),
-  ),
-  code: Type.Optional(
-    Type.String({
-      description:
-        'build/improve: modulo ESM completo con exports name, description, parameters y run(params).',
-    }),
-  ),
-  sampleParams: Type.Optional(
-    Type.Record(Type.String(), Type.Unknown(), {
-      description: 'test: parametros de ejemplo para ejecutar la herramienta una vez.',
-    }),
-  ),
-  note: Type.Optional(
-    Type.String({ description: 'improve: que cambio y por que (queda en las notas del TOOL.md).' }),
-  ),
-});
+const FactoryParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('list'),
+      Type.Literal('read'),
+      Type.Literal('build'),
+      Type.Literal('test'),
+      Type.Literal('install'),
+      Type.Literal('uninstall'),
+      Type.Literal('improve'),
+    ]),
+    id: Type.Optional(
+      Type.String({
+        description:
+          'Slug de la herramienta (read/test/install/uninstall/improve). En build: opcional; se deriva del nombre.',
+      }),
+    ),
+    name: Type.Optional(Type.String({ description: 'build: nombre humano corto.' })),
+    description: Type.Optional(
+      Type.String({ description: 'build: una linea con lo que consigue.' }),
+    ),
+    whenToUse: Type.Optional(
+      Type.String({
+        description: 'build: la peticion que deberia dispararla, como la diria el usuario.',
+      }),
+    ),
+    parameters: Type.Optional(
+      Type.Record(Type.String(), Type.Unknown(), {
+        description:
+          'build: JSON schema de objeto para los parametros ({ "type": "object", "properties": { ... } }).',
+      }),
+    ),
+    code: Type.Optional(
+      Type.String({
+        description:
+          'build/improve: modulo ESM completo con exports name, description, parameters y run(params).',
+      }),
+    ),
+    sampleParams: Type.Optional(
+      Type.Record(Type.String(), Type.Unknown(), {
+        description: 'test: parametros de ejemplo para ejecutar la herramienta una vez.',
+      }),
+    ),
+    note: Type.Optional(
+      Type.String({
+        description: 'improve: que cambio y por que (queda en las notas del TOOL.md).',
+      }),
+    ),
+  }),
+);
 
 /** Id de herramienta a partir de su nombre: «Árbol Ñandú» → «arbol-nandu». Exportada para tests. */
 export function slugify(name: string): string {
@@ -108,7 +114,7 @@ function describe(m: FactoryToolMeta): string {
 
 export function createFactoryTool(
   opts: { onChange?: () => void } = {},
-): AgentTool<typeof FactoryParams> {
+): AgentTool<ReturnType<typeof FactoryParams>> {
   return {
     name: FACTORY_TOOL_NAME,
     label: 'Fabrica de herramientas',
@@ -119,7 +125,7 @@ export function createFactoryTool(
       'Las herramientas instaladas aparecen como fab_<id> en el siguiente mensaje.',
       'Flujo: build -> test -> install. Sin test superado del codigo actual no hay install.',
     ].join(' '),
-    parameters: FactoryParams,
+    parameters: FactoryParams(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       switch (args.action) {

@@ -1,5 +1,4 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import type { BrowserService } from '../browser/service.js';
 import {
   describePassengerCompleteness,
@@ -8,6 +7,7 @@ import {
   type Passenger,
   type PassengerSelectors,
 } from '../commerce/profile.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log, redact } from '../log.js';
 import type { PurchaseStage, ToolCall } from '../permissions.js';
 import { fold, isPaymentText, pageSaysMoney } from '../permissions.js';
@@ -555,52 +555,56 @@ function textOf(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-const CheckoutParams = Type.Object({
-  action: Type.Union([
-    Type.Literal('search'),
-    Type.Literal('select'),
-    Type.Literal('fill_passenger'),
-    Type.Literal('status'),
-    Type.Literal('confirm'),
-  ]),
-  url: Type.Optional(
-    Type.String({ description: 'Para search: la pagina donde empieza la compra.' }),
-  ),
-  query: Type.Optional(
-    Type.String({ description: 'Para search: que buscar (destino, producto, fecha...).' }),
-  ),
-  selector: Type.Optional(
-    Type.String({
-      description:
-        'CSS o texto del elemento, del action=snapshot del navegador. Para search: el ' +
-        'campo donde escribir la búsqueda. Para select: el elemento que quieres pulsar.',
-    }),
-  ),
-  item: Type.Optional(
-    Type.String({
-      description:
-        'Para select y confirm: qué es lo que se compra, en palabras. Describe el ' +
-        'producto (tren, entrada, vuelo), no el pago.',
-    }),
-  ),
-  selectors: Type.Optional(
-    Type.Object({
-      fullName: Type.Optional(Type.String({ description: 'Selector del campo de nombre.' })),
-      document: Type.Optional(Type.String({ description: 'Selector del campo de documento.' })),
-      email: Type.Optional(Type.String({ description: 'Selector del campo de email.' })),
-      phone: Type.Optional(Type.String({ description: 'Selector del campo de telefono.' })),
-    }),
-  ),
-  price: Type.Optional(
-    Type.String({
-      description:
-        'Para confirm: el importe que has leido en la pagina. Se contrasta con lo que ' +
-        'la pagina muestra ahora.',
-    }),
-  ),
-});
+const CheckoutParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('search'),
+      Type.Literal('select'),
+      Type.Literal('fill_passenger'),
+      Type.Literal('status'),
+      Type.Literal('confirm'),
+    ]),
+    url: Type.Optional(
+      Type.String({ description: 'Para search: la pagina donde empieza la compra.' }),
+    ),
+    query: Type.Optional(
+      Type.String({ description: 'Para search: que buscar (destino, producto, fecha...).' }),
+    ),
+    selector: Type.Optional(
+      Type.String({
+        description:
+          'CSS o texto del elemento, del action=snapshot del navegador. Para search: el ' +
+          'campo donde escribir la búsqueda. Para select: el elemento que quieres pulsar.',
+      }),
+    ),
+    item: Type.Optional(
+      Type.String({
+        description:
+          'Para select y confirm: qué es lo que se compra, en palabras. Describe el ' +
+          'producto (tren, entrada, vuelo), no el pago.',
+      }),
+    ),
+    selectors: Type.Optional(
+      Type.Object({
+        fullName: Type.Optional(Type.String({ description: 'Selector del campo de nombre.' })),
+        document: Type.Optional(Type.String({ description: 'Selector del campo de documento.' })),
+        email: Type.Optional(Type.String({ description: 'Selector del campo de email.' })),
+        phone: Type.Optional(Type.String({ description: 'Selector del campo de telefono.' })),
+      }),
+    ),
+    price: Type.Optional(
+      Type.String({
+        description:
+          'Para confirm: el importe que has leido en la pagina. Se contrasta con lo que ' +
+          'la pagina muestra ahora.',
+      }),
+    ),
+  }),
+);
 
-export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof CheckoutParams> {
+export function createCheckoutTool(
+  deps: CheckoutToolDeps,
+): AgentTool<ReturnType<typeof CheckoutParams>> {
   const load = deps.loadPassenger ?? (() => loadPassenger());
   const maxCents = deps.maxAmountCents ?? 30_000;
   if (!Number.isSafeInteger(maxCents) || maxCents < 0) {
@@ -713,7 +717,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
       'ningun boton. Cuando el usuario confirme, teLimits a decirle que ya esta todo listo y',
       'que pulse el. Si el devuelve "si" y vuelve a llamar a confirm, se le vuelve a pedir.',
     ].join('\n'),
-    parameters: CheckoutParams,
+    parameters: CheckoutParams(),
     // Sequential: one page, and two selections clicking at once is how the wrong option
     // gets bought.
     executionMode: 'sequential',

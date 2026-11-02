@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { onDiskSpelling } from '../permissions.js';
 import { recordAfterWrite, recordBeforeWrite } from '../undo.js';
@@ -13,24 +13,32 @@ export const DEFAULT_READ_LINES = 2000;
 /** Chars returned in one read, whatever the line count (one-line minified files). Kept under MAX_TOOL_RESULT_CHARS (24k) so the generic backstop never cuts a read result. */
 export const MAX_READ_CHARS = 22_000;
 
-const ReadParams = Type.Object({
-  path: Type.String({ description: 'File path, absolute or relative to the working directory.' }),
-  offset: Type.Optional(Type.Number({ description: 'First line to return, 1-based. Default 1.' })),
-  limit: Type.Optional(
-    Type.Number({ description: 'How many lines to return. Default: everything left.' }),
-  ),
-});
+const ReadParams = lazySchema(() =>
+  Type.Object({
+    path: Type.String({ description: 'File path, absolute or relative to the working directory.' }),
+    offset: Type.Optional(
+      Type.Number({ description: 'First line to return, 1-based. Default 1.' }),
+    ),
+    limit: Type.Optional(
+      Type.Number({ description: 'How many lines to return. Default: everything left.' }),
+    ),
+  }),
+);
 
-const WriteParams = Type.Object({
-  path: Type.String({ description: 'File path.' }),
-  content: Type.String({ description: 'Full file contents.' }),
-});
+const WriteParams = lazySchema(() =>
+  Type.Object({
+    path: Type.String({ description: 'File path.' }),
+    content: Type.String({ description: 'Full file contents.' }),
+  }),
+);
 
-const ListParams = Type.Object({
-  path: Type.Optional(
-    Type.String({ description: 'Directory path. Defaults to the working directory.' }),
-  ),
-});
+const ListParams = lazySchema(() =>
+  Type.Object({
+    path: Type.Optional(
+      Type.String({ description: 'Directory path. Defaults to the working directory.' }),
+    ),
+  }),
+);
 
 /**
  * Containment check. A model that resolves `../../.ssh/id_rsa` must be told no
@@ -66,7 +74,8 @@ function guardPath(raw: string): string {
   return p;
 }
 
-export const readTool: AgentTool<typeof ReadParams> = {
+// Esquema al primer uso (core/lazy-schema.ts): estas tools existen al importar el módulo.
+export const readTool: AgentTool<ReturnType<typeof ReadParams>> = {
   name: 'read',
   label: 'Read',
   description: [
@@ -75,7 +84,9 @@ export const readTool: AgentTool<typeof ReadParams> = {
     'the whole file and re-reading it. The result always reports the total line count',
     'and the range returned, so you can page without guessing.',
   ].join(' '),
-  parameters: ReadParams,
+  get parameters() {
+    return ReadParams();
+  },
   executionMode: 'parallel',
   execute: async (_id, args) => {
     const path = guardPath(args.path);
@@ -131,12 +142,14 @@ export const readTool: AgentTool<typeof ReadParams> = {
   },
 };
 
-export const writeTool: AgentTool<typeof WriteParams> = {
+export const writeTool: AgentTool<ReturnType<typeof WriteParams>> = {
   name: 'write',
   label: 'Write',
   description:
     'Write a UTF-8 text file, creating parent directories as needed. Overwrites without warning.',
-  parameters: WriteParams,
+  get parameters() {
+    return WriteParams();
+  },
   executionMode: 'sequential',
   execute: async (_id, args) => {
     const path = guardPath(args.path);
@@ -152,11 +165,13 @@ export const writeTool: AgentTool<typeof WriteParams> = {
   },
 };
 
-export const listTool: AgentTool<typeof ListParams> = {
+export const listTool: AgentTool<ReturnType<typeof ListParams>> = {
   name: 'list',
   label: 'List',
   description: 'List the entries in a directory.',
-  parameters: ListParams,
+  get parameters() {
+    return ListParams();
+  },
   executionMode: 'parallel',
   execute: async (_id, args) => {
     const path = guardPath(args.path ?? '.');

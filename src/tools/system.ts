@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { childEnv } from '../child-env.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { psErrorSummary } from './ps-error.js';
 
@@ -340,24 +340,26 @@ Write-Output ("N|" + $(if ($online) { '1' } else { '0' }) + "|" + $(if ($ip) { $
   };
 }
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('volume'),
-    Type.Literal('mute'),
-    Type.Literal('lock'),
-    Type.Literal('status'),
-    Type.Literal('play'),
-  ]),
-  level: Type.Optional(
-    Type.Number({ description: 'For volume: 0-100. Omit to just read the current level.' }),
-  ),
-  path: Type.Optional(
-    Type.String({ description: 'For play: the audio file to send to the speakers.' }),
-  ),
-  volume: Type.Optional(Type.Number({ description: 'For play: how loud, 0-100. Default 100.' })),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('volume'),
+      Type.Literal('mute'),
+      Type.Literal('lock'),
+      Type.Literal('status'),
+      Type.Literal('play'),
+    ]),
+    level: Type.Optional(
+      Type.Number({ description: 'For volume: 0-100. Omit to just read the current level.' }),
+    ),
+    path: Type.Optional(
+      Type.String({ description: 'For play: the audio file to send to the speakers.' }),
+    ),
+    volume: Type.Optional(Type.Number({ description: 'For play: how loud, 0-100. Default 100.' })),
+  }),
+);
 
-export function createSystemTool(): AgentTool<typeof Params> {
+export function createSystemTool(): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'system',
     label: 'Sistema',
@@ -374,7 +376,7 @@ export function createSystemTool(): AgentTool<typeof Params> {
       'can hear from the speakers right now, including media playing in a visible',
       'browser window.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       switch (args.action) {

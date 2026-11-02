@@ -14,8 +14,8 @@
  */
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
-import { Type } from 'typebox';
 import { QUESTION_BUDGET } from '../approval-text.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { localTimeZone } from '../datecontext.js';
 import type { Store } from '../db.js';
 import { type GoalWorkstreamProjection, projectGoal } from '../goals/projection.js';
@@ -34,40 +34,44 @@ export const MIN_GOAL_TICK_MS = 60 * 60_000;
  */
 export const MAX_PROPOSAL_CHARS = 3900;
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('proponer'),
-    Type.Literal('activar'),
-    Type.Literal('pausar'),
-    Type.Literal('reanudar'),
-    Type.Literal('cancelar'),
-    Type.Literal('listar'),
-    Type.Literal('estado'),
-    Type.Literal('avance'),
-  ]),
-  id: Type.Optional(
-    Type.String({
-      description: 'Goal id (from proponer/listar). All actions but proponer/listar.',
-    }),
-  ),
-  titulo: Type.Optional(Type.String({ description: 'proponer: short title, in Spanish.' })),
-  objetivo: Type.Optional(
-    Type.String({ description: "proponer: the user's objective, verbatim." }),
-  ),
-  pasos: Type.Optional(
-    Type.Array(Type.String(), { description: 'proponer: the plan, one step per entry, in order.' }),
-  ),
-  cadencia: Type.Optional(
-    Type.String({
-      description:
-        'proponer: 5-field local cron for the ticks (min hour dom mon dow), at most once an hour, e.g. "20 * * * *".',
-    }),
-  ),
-  paso: Type.Optional(Type.Number({ description: 'avance: 1-based step number completed.' })),
-  nota: Type.Optional(
-    Type.String({ description: 'avance: one line on what happened in that step.' }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('proponer'),
+      Type.Literal('activar'),
+      Type.Literal('pausar'),
+      Type.Literal('reanudar'),
+      Type.Literal('cancelar'),
+      Type.Literal('listar'),
+      Type.Literal('estado'),
+      Type.Literal('avance'),
+    ]),
+    id: Type.Optional(
+      Type.String({
+        description: 'Goal id (from proponer/listar). All actions but proponer/listar.',
+      }),
+    ),
+    titulo: Type.Optional(Type.String({ description: 'proponer: short title, in Spanish.' })),
+    objetivo: Type.Optional(
+      Type.String({ description: "proponer: the user's objective, verbatim." }),
+    ),
+    pasos: Type.Optional(
+      Type.Array(Type.String(), {
+        description: 'proponer: the plan, one step per entry, in order.',
+      }),
+    ),
+    cadencia: Type.Optional(
+      Type.String({
+        description:
+          'proponer: 5-field local cron for the ticks (min hour dom mon dow), at most once an hour, e.g. "20 * * * *".',
+      }),
+    ),
+    paso: Type.Optional(Type.Number({ description: 'avance: 1-based step number completed.' })),
+    nota: Type.Optional(
+      Type.String({ description: 'avance: one line on what happened in that step.' }),
+    ),
+  }),
+);
 
 function reply(text: string, isError = false): AgentToolResult {
   return { content: [{ type: 'text', text }], details: {}, isError };
@@ -212,9 +216,9 @@ export interface GoalToolDeps {
   humanRepliedAfter: (scope: string, sinceIso: string) => boolean;
 }
 
-export function createGoalTool(
-  deps: GoalToolDeps,
-): AgentTool<typeof Params> & { gateHint: (args: Record<string, unknown>) => Promise<string> } {
+export function createGoalTool(deps: GoalToolDeps): AgentTool<ReturnType<typeof Params>> & {
+  gateHint: (args: Record<string, unknown>) => Promise<string>;
+} {
   /** Reads the goal and pins it to the calling chat: no cross-chat reach. */
   const mine = (id: string | undefined): Goal | AgentToolResult => {
     if (!id) return reply('Falta el id del objetivo (lo ves con action=listar).', true);
@@ -254,7 +258,7 @@ export function createGoalTool(
       'avance: mark a plan step done. pausar/reanudar/cancelar/listar/estado manage the goal.',
       'Never claim a goal is active unless activar said so.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const scope = deps.scopeOf();

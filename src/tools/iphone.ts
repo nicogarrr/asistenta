@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { type IphoneStatus, readiness, setupGuide } from '../iphone/client.js';
 import { log } from '../log.js';
 
@@ -26,28 +26,30 @@ export interface IphoneToolDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('status'),
-    Type.Literal('setup'),
-    Type.Literal('screenshot'),
-    Type.Literal('run'),
-    Type.Literal('stop'),
-    Type.Literal('home'),
-  ]),
-  goal: Type.Optional(
-    Type.String({
-      description:
-        'Para run: el objetivo en lenguaje natural ("abre Ajustes y ve a Wi-Fi"). Una tarea concreta y acotada.',
-    }),
-  ),
-  waitSeconds: Type.Optional(
-    Type.Number({
-      description:
-        'Para run: cuanto esperar a que termine (0-600, por defecto 60). 0 = no esperar.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('status'),
+      Type.Literal('setup'),
+      Type.Literal('screenshot'),
+      Type.Literal('run'),
+      Type.Literal('stop'),
+      Type.Literal('home'),
+    ]),
+    goal: Type.Optional(
+      Type.String({
+        description:
+          'Para run: el objetivo en lenguaje natural ("abre Ajustes y ve a Wi-Fi"). Una tarea concreta y acotada.',
+      }),
+    ),
+    waitSeconds: Type.Optional(
+      Type.Number({
+        description:
+          'Para run: cuanto esperar a que termine (0-600, por defecto 60). 0 = no esperar.',
+      }),
+    ),
+  }),
+);
 
 const POLL_MS = 3000;
 const MAX_WAIT_S = 600;
@@ -69,7 +71,7 @@ function enqueue<T>(fn: () => Promise<T>): Promise<T> {
 
 const text = (t: string) => ({ type: 'text' as const, text: t });
 
-export function createIphoneTool(deps: IphoneToolDeps): AgentTool<typeof Params> {
+export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typeof Params>> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   return {
@@ -90,7 +92,7 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<typeof Params>
       'se corta el AirPlay, la tarea se queda parada. Nunca introduzcas contrasenas ni codigos por aqui',
       'salvo que Nico lo pida en esta conversacion.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       switch (args.action) {

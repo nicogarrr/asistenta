@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import type { Store } from '../db.js';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { log } from '../log.js';
@@ -359,36 +359,38 @@ function linea(i: Incidencia, now: Date, conProvincia: boolean): string {
   return `• ${i.carretera}${km}${sitio ? ` (${sitio})` : ''}${sentido}: ${what}${when ? `, ${when}` : ''}.`;
 }
 
-const Params = Type.Object({
-  carretera: Type.Optional(
-    Type.String({
-      description: 'Road as the DGT names it (A-8, AS-17, N-634). Omit for the whole province.',
-    }),
-  ),
-  provincia: Type.Optional(
-    Type.String({
-      description:
-        'Spanish province (e.g. Asturias, Cantabria). Omit to use the owner’s (PA_TRAFICO_PROVINCIA, default Asturias); with carretera, omit to search all of Spain.',
-    }),
-  ),
-  aviso: Type.Optional(
-    Type.Union([Type.Literal('activar'), Type.Literal('desactivar'), Type.Literal('ver')], {
-      description:
-        'Only when the owner asks to be told about a road: activar (with carretera) a watch that writes only when a NEW incident appears; desactivar (with carretera for one, without for all); ver lists them.',
-    }),
-  ),
-  nivel: Type.Optional(
-    Type.Union([Type.Literal('todo'), Type.Literal('graves'), Type.Literal('cortes')], {
-      description:
-        'For aviso=activar: todo («si hay algo»), graves (accidents, queues, stopped vehicles, closures) or cortes («si cortan la carretera»). Default todo.',
-    }),
-  ),
-  rutina: Type.Optional(
-    Type.Boolean({
-      description: 'Only set by the traffic watch routine itself. Never set it otherwise.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    carretera: Type.Optional(
+      Type.String({
+        description: 'Road as the DGT names it (A-8, AS-17, N-634). Omit for the whole province.',
+      }),
+    ),
+    provincia: Type.Optional(
+      Type.String({
+        description:
+          'Spanish province (e.g. Asturias, Cantabria). Omit to use the owner’s (PA_TRAFICO_PROVINCIA, default Asturias); with carretera, omit to search all of Spain.',
+      }),
+    ),
+    aviso: Type.Optional(
+      Type.Union([Type.Literal('activar'), Type.Literal('desactivar'), Type.Literal('ver')], {
+        description:
+          'Only when the owner asks to be told about a road: activar (with carretera) a watch that writes only when a NEW incident appears; desactivar (with carretera for one, without for all); ver lists them.',
+      }),
+    ),
+    nivel: Type.Optional(
+      Type.Union([Type.Literal('todo'), Type.Literal('graves'), Type.Literal('cortes')], {
+        description:
+          'For aviso=activar: todo («si hay algo»), graves (accidents, queues, stopped vehicles, closures) or cortes («si cortan la carretera»). Default todo.',
+      }),
+    ),
+    rutina: Type.Optional(
+      Type.Boolean({
+        description: 'Only set by the traffic watch routine itself. Never set it otherwise.',
+      }),
+    ),
+  }),
+);
 
 export interface TraficoDeps {
   fetchFn?: typeof fetch;
@@ -411,7 +413,7 @@ export interface TraficoDeps {
 const ESPANA = new Set(['espana', 'toda espana', 'todo el pais', 'toda la peninsula']);
 const NIVELES: readonly Nivel[] = ['todo', 'graves', 'cortes'];
 
-export function createTraficoTool(deps: TraficoDeps = {}): AgentTool<typeof Params> {
+export function createTraficoTool(deps: TraficoDeps = {}): AgentTool<ReturnType<typeof Params>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
   let cache: { at: number; items: Incidencia[]; publicado: Date | null } | null = null;
@@ -621,7 +623,7 @@ export function createTraficoTool(deps: TraficoDeps = {}): AgentTool<typeof Para
     label: 'Tráfico (DGT)',
     description:
       'Live traffic incidents in Spain from the DGT (roadworks, closures, accidents, slow traffic, stopped vehicles), no key. Use for «¿cómo está el tráfico?», «¿hay algo en la A-8?», «¿está cortada la AS-17?». Default area: the owner’s province (PA_TRAFICO_PROVINCIA, Asturias). Read-only. aviso=activar (with carretera, nivel) / desactivar / ver only when the owner asks to be told about a road («avísame si cortan la AS-II»).',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {

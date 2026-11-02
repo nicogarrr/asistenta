@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import type { Store } from '../db.js';
 import { log } from '../log.js';
 import { type DeliverySetting, outputHash } from '../routine-delivery.js';
@@ -41,39 +41,42 @@ export interface Gasolinera {
   precio: number;
 }
 
-const Params = Type.Object({
-  combustible: Type.Optional(
-    Type.Union(
-      [
-        Type.Literal('diesel'),
-        Type.Literal('diesel_premium'),
-        Type.Literal('gasolina95'),
-        Type.Literal('gasolina98'),
-        Type.Literal('glp'),
-      ],
-      {
-        description: 'Fuel. Omit to use the owner’s default (PA_CARBURANTE) or show diesel and 95.',
-      },
+const Params = lazySchema(() =>
+  Type.Object({
+    combustible: Type.Optional(
+      Type.Union(
+        [
+          Type.Literal('diesel'),
+          Type.Literal('diesel_premium'),
+          Type.Literal('gasolina95'),
+          Type.Literal('gasolina98'),
+          Type.Literal('glp'),
+        ],
+        {
+          description:
+            'Fuel. Omit to use the owner’s default (PA_CARBURANTE) or show diesel and 95.',
+        },
+      ),
     ),
-  ),
-  cuantas: Type.Optional(
-    Type.Integer({ minimum: 1, maximum: 10, description: 'How many stations (default 5).' }),
-  ),
-  umbral: Type.Optional(
-    Type.Number({ description: 'Price in €/L: only stations at or below it (e.g. 1.40).' }),
-  ),
-  aviso: Type.Optional(
-    Type.Union([Type.Literal('activar'), Type.Literal('desactivar')], {
-      description:
-        'Only when the owner asks: turn on/off an alert (checked at 9:00 and 19:00) when the fuel drops to umbral or below.',
-    }),
-  ),
-  rutina: Type.Optional(
-    Type.Boolean({
-      description: 'Only set by the fuel alert routine itself. Never set it otherwise.',
-    }),
-  ),
-});
+    cuantas: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 10, description: 'How many stations (default 5).' }),
+    ),
+    umbral: Type.Optional(
+      Type.Number({ description: 'Price in €/L: only stations at or below it (e.g. 1.40).' }),
+    ),
+    aviso: Type.Optional(
+      Type.Union([Type.Literal('activar'), Type.Literal('desactivar')], {
+        description:
+          'Only when the owner asks: turn on/off an alert (checked at 9:00 and 19:00) when the fuel drops to umbral or below.',
+      }),
+    ),
+    rutina: Type.Optional(
+      Type.Boolean({
+        description: 'Only set by the fuel alert routine itself. Never set it otherwise.',
+      }),
+    ),
+  }),
+);
 
 export interface GasolinerasDeps {
   fetchFn?: typeof fetch;
@@ -161,7 +164,9 @@ const fold = (s: string): string =>
     .toLowerCase()
     .trim();
 
-export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typeof Params> {
+export function createGasolinerasTool(
+  deps: GasolinerasDeps = {},
+): AgentTool<ReturnType<typeof Params>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
   const cache = new Map<string, { at: number; body: unknown }>();
@@ -277,7 +282,7 @@ export function createGasolinerasTool(deps: GasolinerasDeps = {}): AgentTool<typ
     label: 'Gasolineras más baratas',
     description:
       'Cheapest petrol stations in the owner’s town (PA_GASOLINERAS_MUNICIPIO, default Gijón) from the Spanish Ministry’s official prices (updated every 30 min, no key). Use for «¿dónde echo gasolina más barata?», «¿a cuánto está el diésel?», «¿hay alguna por debajo de 1,40?». Read-only. aviso=activar (with umbral) / desactivar only when the owner asks for an alert when the price drops.',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {

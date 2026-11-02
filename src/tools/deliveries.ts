@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import {
   activeDeliveries,
   type Delivery,
@@ -10,14 +10,16 @@ import {
 import { deliveriesText } from '../mail/deliveries-text.js';
 import type { MailMessage } from '../mail/types.js';
 
-const Params = Type.Object({
-  recogido: Type.Optional(
-    Type.String({
-      description:
-        'Only when the owner says he already picked up or received a parcel («ya he recogido el de InPost»): its tracking number, carrier or a word of it. Marks it delivered so it stops showing. After a «¿Cuál?» pass his answer as said («el segundo», «el último»). Empty for «where is my parcel».',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    recogido: Type.Optional(
+      Type.String({
+        description:
+          'Only when the owner says he already picked up or received a parcel («ya he recogido el de InPost»): its tracking number, carrier or a word of it. Marks it delivered so it stops showing. After a «¿Cuál?» pass his answer as said («el segundo», «el último»). Empty for «where is my parcel».',
+      }),
+    ),
+  }),
+);
 const LOOKBACK_MS = 14 * 86_400_000;
 
 /** The last «¿Cuál?» list, so «el segundo» or «el último» picks from it (30 min). */
@@ -72,13 +74,15 @@ export interface DeliveriesToolDeps {
  * «¿Dónde está mi pedido?»: los envíos en marcha según los correos de la tienda y la
  * transportista. Solo lectura: lee el correo propio, no entra en webs de transportistas.
  */
-export function createDeliveriesTool(deps: DeliveriesToolDeps): AgentTool<typeof Params> {
+export function createDeliveriesTool(
+  deps: DeliveriesToolDeps,
+): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'repartos',
     label: 'Repartos',
     description:
       "Where the owner's parcels are, from shipping/order emails already in his mailbox (Amazon, Correos, SEUR, MRW, GLS, DHL, UPS, InPost, Paack…): carrier, tracking number and last status (incl. ready for pickup at a locker/point). Use for «¿dónde está mi pedido?», «¿llega hoy el paquete?», «¿tengo algo para recoger?». Read-only; never opens carrier websites.",
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const now = deps.now?.() ?? Date.now();

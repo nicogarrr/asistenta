@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { PRICE_WATCH_REMOVE_HINT } from '../palabras-vigilancia.js';
 import { eur, type PageWatch, type PageWatchStore } from '../watch/pages.js';
@@ -19,27 +19,30 @@ import { eur, type PageWatch, type PageWatchStore } from '../watch/pages.js';
  *   (src/egress-taint.ts) la trata como un fetch a esa URL.
  */
 
-const Params = Type.Object({
-  action: Type.Union([Type.Literal('add'), Type.Literal('list'), Type.Literal('remove')]),
-  url: Type.Optional(
-    Type.String({ description: 'add: public http(s) link to the product page to watch.' }),
-  ),
-  target_eur: Type.Optional(
-    Type.Number({
-      description: 'add: alert when the price drops to or below this amount in euros (e.g. 399.9).',
-    }),
-  ),
-  drop_pct: Type.Optional(
-    Type.Number({ description: 'add: alert when the price drops this percent (1-95).' }),
-  ),
-  keyword: Type.Optional(
-    Type.String({
-      description: 'add: alert when this word appears or disappears (e.g. "agotado").',
-    }),
-  ),
-  label: Type.Optional(Type.String({ description: 'add: short name to show in alerts.' })),
-  id: Type.Optional(Type.String({ description: 'remove: the watch id (or its first letters).' })),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([Type.Literal('add'), Type.Literal('list'), Type.Literal('remove')]),
+    url: Type.Optional(
+      Type.String({ description: 'add: public http(s) link to the product page to watch.' }),
+    ),
+    target_eur: Type.Optional(
+      Type.Number({
+        description:
+          'add: alert when the price drops to or below this amount in euros (e.g. 399.9).',
+      }),
+    ),
+    drop_pct: Type.Optional(
+      Type.Number({ description: 'add: alert when the price drops this percent (1-95).' }),
+    ),
+    keyword: Type.Optional(
+      Type.String({
+        description: 'add: alert when this word appears or disappears (e.g. "agotado").',
+      }),
+    ),
+    label: Type.Optional(Type.String({ description: 'add: short name to show in alerts.' })),
+    id: Type.Optional(Type.String({ description: 'remove: the watch id (or its first letters).' })),
+  }),
+);
 
 /**
  * Los avisos propios del registro («ya vigilas 20 páginas…», el porcentaje) ya son claros
@@ -80,7 +83,9 @@ function describe(w: PageWatch): string {
   return `${w.id} · ${w.label || w.url}${extra ? ` (${extra})` : ''}`;
 }
 
-export function createPriceWatchTool(deps: PriceWatchToolDeps): AgentTool<typeof Params> {
+export function createPriceWatchTool(
+  deps: PriceWatchToolDeps,
+): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'vigilar_precio',
     label: 'Vigilar precio',
@@ -92,7 +97,7 @@ export function createPriceWatchTool(deps: PriceWatchToolDeps): AgentTool<typeof
       'drop_pct, keyword, label), action=list, action=remove (id). Adding the same url again',
       'replaces target_eur and drop_pct. Never claim a watch exists unless this tool said so.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const scope = deps.scopeOf();

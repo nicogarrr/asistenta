@@ -1,18 +1,20 @@
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { formatOcr, ocrImage } from '../screen/ocr.js';
 
-const Params = Type.Object({
-  action: Type.Literal('screen'),
-  maxLines: Type.Optional(
-    Type.Number({
-      description: 'Max OCR lines to return. Default 120. Truncation is always stated.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Literal('screen'),
+    maxLines: Type.Optional(
+      Type.Number({
+        description: 'Max OCR lines to return. Default 120. Truncation is always stated.',
+      }),
+    ),
+  }),
+);
 
 /**
  * Read the text on the screen, with the position of every word.
@@ -44,7 +46,7 @@ const Params = Type.Object({
 export function createOcrTool(deps: {
   screenshotToFile: () => Promise<string>;
   ocrAvailable: () => Promise<boolean>;
-}): AgentTool<typeof Params> {
+}): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'ocr',
     label: 'OCR',
@@ -67,7 +69,7 @@ export function createOcrTool(deps: {
       'Cost: one extra screenshot and about a second. Worth it whenever a wrong click would',
       'cost a step. It needs an OCR language pack installed in Windows (Spanish or English).',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     // Sequential: it captures the screen, and two captures in one batch can straddle a
     // repaint, which would report text for a state that no longer exists.
     executionMode: 'sequential',

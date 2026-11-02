@@ -1,5 +1,4 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { type ConvertResult, pdfToEpub } from '../books/convert.js';
 import { isKindleAddress, type KindleDeps, safeFilename, sendToKindle } from '../books/kindle.js';
 import { downloadBook, type Fetcher, getJson as netGetJson } from '../books/net.js';
@@ -16,6 +15,7 @@ import {
   searchOpenLibrary,
   searchWikisource,
 } from '../books/sources.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { mailSendFailText } from './mail.js';
 
@@ -44,45 +44,49 @@ export interface BookToolDeps {
   secret?: SecretSource;
 }
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('search'),
-    Type.Literal('get'),
-    Type.Literal('set_kindle'),
-    Type.Literal('get_url'),
-  ]),
-  query: Type.Optional(Type.String({ description: 'For search: title and/or author.' })),
-  language: Type.Optional(
-    Type.String({
-      description:
-        'For search: ISO code of the wanted language. Defaults to es (Spanish only). Pass "any" only if the user asks for another language.',
-    }),
-  ),
-  id: Type.Optional(
-    Type.String({
-      description: 'For get: the id of a search result, e.g. gutenberg:2000 or openlibrary:foo.',
-    }),
-  ),
-  url: Type.Optional(
-    Type.String({
-      description:
-        'For get_url: a direct https link to an EPUB or PDF the user gave you. Public addresses only.',
-    }),
-  ),
-  title: Type.Optional(Type.String({ description: 'For get_url: the title, for the filename.' })),
-  deliver: Type.Optional(
-    Type.Union([Type.Literal('telegram'), Type.Literal('kindle'), Type.Literal('both')], {
-      description: 'For get: where to send it. Default telegram.',
-    }),
-  ),
-  address: Type.Optional(Type.String({ description: 'For set_kindle: the @kindle.com address.' })),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('search'),
+      Type.Literal('get'),
+      Type.Literal('set_kindle'),
+      Type.Literal('get_url'),
+    ]),
+    query: Type.Optional(Type.String({ description: 'For search: title and/or author.' })),
+    language: Type.Optional(
+      Type.String({
+        description:
+          'For search: ISO code of the wanted language. Defaults to es (Spanish only). Pass "any" only if the user asks for another language.',
+      }),
+    ),
+    id: Type.Optional(
+      Type.String({
+        description: 'For get: the id of a search result, e.g. gutenberg:2000 or openlibrary:foo.',
+      }),
+    ),
+    url: Type.Optional(
+      Type.String({
+        description:
+          'For get_url: a direct https link to an EPUB or PDF the user gave you. Public addresses only.',
+      }),
+    ),
+    title: Type.Optional(Type.String({ description: 'For get_url: the title, for the filename.' })),
+    deliver: Type.Optional(
+      Type.Union([Type.Literal('telegram'), Type.Literal('kindle'), Type.Literal('both')], {
+        description: 'For get: where to send it. Default telegram.',
+      }),
+    ),
+    address: Type.Optional(
+      Type.String({ description: 'For set_kindle: the @kindle.com address.' }),
+    ),
+  }),
+);
 
 function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: 'text' as const, text }], details };
 }
 
-export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
+export function createBookTool(deps: BookToolDeps): AgentTool<ReturnType<typeof Params>> {
   const getJson: GetJson = deps.getJson ?? ((u) => netGetJson(u, deps.fetcher));
   const convert = deps.convert ?? ((pdf: Buffer, title: string) => pdfToEpub(pdf, title));
 
@@ -232,7 +236,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
       'received it: Amazon only accepts mail from approved senders, so say "enviado". Never',
       'claim a book was downloaded when the download failed: the tool result says what happened.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args, signal) => {
       switch (args.action) {

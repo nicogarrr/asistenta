@@ -10,9 +10,9 @@ import type {
   Usage,
 } from '@earendil-works/pi-ai';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
-import { Type } from 'typebox';
 import type { Config } from '../config.js';
 import { PersonalAgent } from '../core/agent.js';
+import { Type } from '../core/lazy-schema.js';
 import { ENTRY_SEPARATOR, MemorySnapshot } from '../memory/snapshot.js';
 import { MemoryStore } from '../memory.js';
 import { type Decision, Gate, type ToolCall as GateCall } from '../permissions.js';

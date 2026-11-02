@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { oldPendingOffer, pendingAge } from '../credentials/pending-age.js';
 import {
   approveSignup,
@@ -24,33 +24,37 @@ import {
 import { log } from '../log.js';
 import { vaultExists as realVaultExists } from '../vault.js';
 
-const Params = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal('listar'),
-      Type.Literal('buscar'),
-      Type.Literal('preparar_registro'),
-      Type.Literal('confirmar_registro'),
-      Type.Literal('guardar'),
-      Type.Literal('descartar'),
-      Type.Literal('codigo_registro'),
-    ],
-    {
-      description:
-        'listar = all saved accounts; buscar = is there an account for a site; preparar_registro / confirmar_registro / guardar / descartar = the sign-up steps; codigo_registro = read the verification code the site mailed for an approved sign-up.',
-    },
-  ),
-  sitio: Type.Optional(Type.String({ description: 'Site or domain, e.g. wallapop.es.' })),
-  correo: Type.Optional(
-    Type.String({ description: 'For confirmar_registro: the email of the prepared sign-up.' }),
-  ),
-  sin_simbolos: Type.Optional(
-    Type.Boolean({ description: 'For preparar_registro: the site does not accept symbols.' }),
-  ),
-  max_largo: Type.Optional(
-    Type.Number({ description: 'For preparar_registro: maximum password length the site allows.' }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union(
+      [
+        Type.Literal('listar'),
+        Type.Literal('buscar'),
+        Type.Literal('preparar_registro'),
+        Type.Literal('confirmar_registro'),
+        Type.Literal('guardar'),
+        Type.Literal('descartar'),
+        Type.Literal('codigo_registro'),
+      ],
+      {
+        description:
+          'listar = all saved accounts; buscar = is there an account for a site; preparar_registro / confirmar_registro / guardar / descartar = the sign-up steps; codigo_registro = read the verification code the site mailed for an approved sign-up.',
+      },
+    ),
+    sitio: Type.Optional(Type.String({ description: 'Site or domain, e.g. wallapop.es.' })),
+    correo: Type.Optional(
+      Type.String({ description: 'For confirmar_registro: the email of the prepared sign-up.' }),
+    ),
+    sin_simbolos: Type.Optional(
+      Type.Boolean({ description: 'For preparar_registro: the site does not accept symbols.' }),
+    ),
+    max_largo: Type.Optional(
+      Type.Number({
+        description: 'For preparar_registro: maximum password length the site allows.',
+      }),
+    ),
+  }),
+);
 
 const fecha = (iso: string): string => {
   const d = new Date(iso);
@@ -147,7 +151,9 @@ export function createAccountsTool(
   mail: MailSearch = realSignupMail,
   // Instalación nueva: todavía no hay caja fuerte. Con un vault de prueba, se da por hecho que sí.
   hasVault: () => boolean = vault === realVault ? realVaultExists : () => true,
-): AgentTool<typeof Params> & { gateHint: (args: Record<string, unknown>) => Promise<string> } {
+): AgentTool<ReturnType<typeof Params>> & {
+  gateHint: (args: Record<string, unknown>) => Promise<string>;
+} {
   // La web exacta que la pregunta de la Gate enseñó al dueño para cada confirmar_registro
   // (por nombre+correo). Con ella, «confirma wallapop» pide un solo sí en vez de dos.
   const shown = new Map<string, { domain: string; at: number }>();
@@ -182,7 +188,7 @@ export function createAccountsTool(
     label: 'Cuentas',
     description:
       "Owner's password manager (encrypted vault) and account sign-up in his name. listar/buscar: which sites he has an account on (buscar on one site also gives the full username, for «¿cuál es mi usuario en X?»). Never returns passwords. To log in, use browser fill with secret_key site:<domain>:username / site:<domain>:password. To create an account («créame una cuenta en X»): preparar_registro, fill the form, confirmar_registro BEFORE clicking submit, then guardar or descartar. If the site emails a verification code, cuentas codigo_registro reads just that code (the owner approves each time; it never opens links). sitio can be a bare name («regístrame en wallapop», «confirma lo de wallapop»): confirmar_registro, guardar, descartar and codigo_registro resolve it when only one half-done sign-up matches, and say which ones if several do; preparar_registro needs the exact domain (wallapop.es), so pass it if you know it or ask the owner. descartar asks the owner first, naming the exact site. Hand CAPTCHAs, SMS codes and confirmation links to the owner; never paid plans or card data. To delete an account from the manager or change a saved password, tell the owner to run `pa cuentas borrar <web>` or `pa cuentas cambiar <web>` in a terminal on his PC.",
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       let text: string;

@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import type { Config } from '../config.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log, logHost } from '../log.js';
 import { paths } from '../paths.js';
 import { vaultGet } from '../vault.js';
@@ -26,19 +26,21 @@ import { isFetchableResolved } from './fetch.js';
 
 export const TINYFISH_VAULT_KEY = 'web:tinyfishApiKey';
 
-const WebParams = Type.Object({
-  action: Type.Union([Type.Literal('search'), Type.Literal('fetch'), Type.Literal('stats')], {
-    description: 'search: buscar en la web; fetch: leer una URL; stats: medicion del enrutador.',
+const WebParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([Type.Literal('search'), Type.Literal('fetch'), Type.Literal('stats')], {
+      description: 'search: buscar en la web; fetch: leer una URL; stats: medicion del enrutador.',
+    }),
+    query: Type.Optional(Type.String({ description: 'search: lo que hay que buscar.' })),
+    url: Type.Optional(Type.String({ description: 'fetch: URL http(s) publica a leer.' })),
+    maxResults: Type.Optional(
+      Type.Number({ description: 'search: maximo de resultados (defecto 8).' }),
+    ),
+    maxChars: Type.Optional(
+      Type.Number({ description: 'fetch: recorta el texto a este numero de caracteres.' }),
+    ),
   }),
-  query: Type.Optional(Type.String({ description: 'search: lo que hay que buscar.' })),
-  url: Type.Optional(Type.String({ description: 'fetch: URL http(s) publica a leer.' })),
-  maxResults: Type.Optional(
-    Type.Number({ description: 'search: maximo de resultados (defecto 8).' }),
-  ),
-  maxChars: Type.Optional(
-    Type.Number({ description: 'fetch: recorta el texto a este numero de caracteres.' }),
-  ),
-});
+);
 
 function text(t: string): {
   content: { type: 'text'; text: string }[];
@@ -66,7 +68,7 @@ export function createWebTool(
     buildBackends?: () => Promise<WebBackend[]>;
     metricsPath?: string;
   } = {},
-): AgentTool<typeof WebParams> {
+): AgentTool<ReturnType<typeof WebParams>> {
   const metricsPath = deps.metricsPath ?? paths.webMetrics;
   const buildBackends = deps.buildBackends ?? (() => buildWebBackends());
 
@@ -75,7 +77,7 @@ export function createWebTool(
     label: 'Web',
     description:
       'Busca en la web o lee una URL con el enrutador propio: varios backends declarados gratis con fallback automatico, tope de coste (por defecto 0 €: un backend declarado con coste nunca se llama) y medicion por peticion. Usa search para buscar, fetch para leer una pagina concreta y stats para ver la medicion.',
-    parameters: WebParams,
+    parameters: WebParams(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const router = new WebRouter({

@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import {
   type BoardTask,
   dayLabel,
@@ -15,49 +15,51 @@ import {
   type TaskRepeat,
 } from '../tasks/board.js';
 
-const Params = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal('apuntar'),
-      Type.Literal('ver'),
-      Type.Literal('marcar'),
-      Type.Literal('mover'),
-      Type.Literal('borrar'),
-      Type.Literal('renombrar'),
-      Type.Literal('repetir'),
-    ],
-    { description: 'apuntar | ver | marcar | mover | borrar | renombrar | repetir' },
-  ),
-  titulo: Type.Optional(
-    Type.String({ description: 'apuntar/renombrar: what to do, short («llamar al banco»).' }),
-  ),
-  dia: Type.Optional(
-    Type.String({
-      description:
-        'apuntar/mover, or ver one day: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «la semana que viene», «el mes que viene», «5/11» or YYYY-MM-DD.',
-    }),
-  ),
-  hora: Type.Optional(
-    Type.String({ description: 'Optional local time: HH:MM, «5 de la tarde», «diez y media».' }),
-  ),
-  semana: Type.Optional(
-    Type.Union([Type.Literal('esta'), Type.Literal('proxima')], {
-      description: 'ver: this week (default) or next.',
-    }),
-  ),
-  tarea: Type.Optional(
-    Type.String({
-      description: 'marcar/mover/borrar: the task number or a few words of it («banco»).',
-    }),
-  ),
-  estado: Type.Optional(Type.String({ description: 'marcar: pendiente | en curso | hecho.' })),
-  repetir: Type.Optional(
-    Type.String({
-      description:
-        'apuntar/repetir: «todos los lunes», «los lunes», «cada día», «de lunes a viernes», «cada dos semanas», «cada mes»; «no» stops it.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union(
+      [
+        Type.Literal('apuntar'),
+        Type.Literal('ver'),
+        Type.Literal('marcar'),
+        Type.Literal('mover'),
+        Type.Literal('borrar'),
+        Type.Literal('renombrar'),
+        Type.Literal('repetir'),
+      ],
+      { description: 'apuntar | ver | marcar | mover | borrar | renombrar | repetir' },
+    ),
+    titulo: Type.Optional(
+      Type.String({ description: 'apuntar/renombrar: what to do, short («llamar al banco»).' }),
+    ),
+    dia: Type.Optional(
+      Type.String({
+        description:
+          'apuntar/mover, or ver one day: «hoy», «mañana», «jueves», «jueves que viene», «12 de noviembre», «dentro de 3 días», «la semana que viene», «el mes que viene», «5/11» or YYYY-MM-DD.',
+      }),
+    ),
+    hora: Type.Optional(
+      Type.String({ description: 'Optional local time: HH:MM, «5 de la tarde», «diez y media».' }),
+    ),
+    semana: Type.Optional(
+      Type.Union([Type.Literal('esta'), Type.Literal('proxima')], {
+        description: 'ver: this week (default) or next.',
+      }),
+    ),
+    tarea: Type.Optional(
+      Type.String({
+        description: 'marcar/mover/borrar: the task number or a few words of it («banco»).',
+      }),
+    ),
+    estado: Type.Optional(Type.String({ description: 'marcar: pendiente | en curso | hecho.' })),
+    repetir: Type.Optional(
+      Type.String({
+        description:
+          'apuntar/repetir: «todos los lunes», «los lunes», «cada día», «de lunes a viernes», «cada dos semanas», «cada mes»; «no» stops it.',
+      }),
+    ),
+  }),
+);
 
 export interface TasksToolDeps {
   board: TaskBoard;
@@ -132,7 +134,7 @@ function nextDay(day: string): string {
  * borrar solo con orden escrita. Una tarea con hora no crea aviso por su cuenta: la
  * respuesta pregunta si quiere recordatorio y eso lo hace la herramienta `reminder`.
  */
-export function createTasksTool(deps: TasksToolDeps): AgentTool<typeof Params> {
+export function createTasksTool(deps: TasksToolDeps): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'tareas',
     label: 'Tareas de la semana',
@@ -148,7 +150,7 @@ export function createTasksTool(deps: TasksToolDeps): AgentTool<typeof Params> {
       'A task with a time does NOT remind by itself: offer a reminder and use the reminder tool if he says yes.',
       'For planning an event, apuntar one task per step, then ask him only what is really missing.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const text = run(deps, args);

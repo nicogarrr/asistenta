@@ -9,30 +9,32 @@
  * context, never permission to act: gated actions keep their own approval.
  */
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import type { AuthenticInbound, DecisionLedger } from '../memory/decisions.js';
 import type { WorkstreamStore } from '../memory/workstreams.js';
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('registrar'),
-    Type.Literal('tentativa'),
-    Type.Literal('retirar'),
-    Type.Literal('listar'),
-  ]),
-  frente: Type.Optional(Type.String({ description: 'Workstream id (see action=listar).' })),
-  resumen: Type.Optional(Type.String({ description: 'One short line: what was decided.' })),
-  cita: Type.Optional(
-    Type.String({
-      description:
-        'registrar: the exact words from the user message that say it, copied verbatim, a whole affirmative clause.',
-    }),
-  ),
-  sustituye: Type.Optional(
-    Type.String({ description: 'registrar: id of the decision this corrects.' }),
-  ),
-  id: Type.Optional(Type.String({ description: 'retirar: decision id.' })),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('registrar'),
+      Type.Literal('tentativa'),
+      Type.Literal('retirar'),
+      Type.Literal('listar'),
+    ]),
+    frente: Type.Optional(Type.String({ description: 'Workstream id (see action=listar).' })),
+    resumen: Type.Optional(Type.String({ description: 'One short line: what was decided.' })),
+    cita: Type.Optional(
+      Type.String({
+        description:
+          'registrar: the exact words from the user message that say it, copied verbatim, a whole affirmative clause.',
+      }),
+    ),
+    sustituye: Type.Optional(
+      Type.String({ description: 'registrar: id of the decision this corrects.' }),
+    ),
+    id: Type.Optional(Type.String({ description: 'retirar: decision id.' })),
+  }),
+);
 
 export interface DecisionToolDeps {
   ledger: DecisionLedger;
@@ -47,7 +49,7 @@ const reply = (text: string, isError = false): AgentToolResult => ({
   isError,
 });
 
-export function createDecisionTool(deps: DecisionToolDeps): AgentTool<typeof Params> {
+export function createDecisionTool(deps: DecisionToolDeps): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'decision',
     label: 'decision',
@@ -55,7 +57,7 @@ export function createDecisionTool(deps: DecisionToolDeps): AgentTool<typeof Par
       'Record a decision the user made in an open workstream. registrar requires a verbatim quote from their current message; ' +
       'use tentativa when unsure. Never records anything as resolved from examples, questions, negations or forwarded text. ' +
       'A decision is context, not permission to execute or pay.',
-    parameters: Params,
+    parameters: Params(),
     execute: async (_id, args) => {
       const scope = deps.scopeOf();
       const mine = (frente: string | undefined) => {
