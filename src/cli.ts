@@ -119,6 +119,7 @@ import type {
   Outbound,
 } from './channels/types.js';
 import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
+import { aplicarClaveGo } from './clave-panel.js';
 import { type Config, loadConfig, resetConfigForTests } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
@@ -230,7 +231,6 @@ import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
 import { aplicarModeloPanel, MODELOS_PANEL } from './modelos-panel.js';
-import { aplicarClaveGo } from './clave-panel.js';
 import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
@@ -604,7 +604,7 @@ import { plainVoiceError } from './voice/plain-error.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
-import { SttError, transcribeVoiceNote } from './voice/stt.js';
+import { DEFAULT_STT_MODEL, SttError, transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { createTtsConVozLocal } from './voice/voz-local.js';
@@ -1155,7 +1155,7 @@ async function doctorCommand(): Promise<number> {
 
     // Voice is opt-in at the point of use, so the only useful question is whether the
     // model is already cached. A cold cache means the first voice note pays a download.
-    const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
+    const modelCached = existsSync(join(paths.models, ...DEFAULT_STT_MODEL.split('/')));
     lines.push(
       `voice stt       ${modelCached ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
     );

@@ -48,14 +48,14 @@ import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
 import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
-import { paths } from '../paths.js';
 import { listCaptureDevices } from '../screen/media.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { WHISPER_SAMPLE_RATE } from './audio.js';
+import { DEFAULT_STT_MODEL, loadWhisperPipeline } from './stt.js';
 import { OWW_FRAME_SAMPLES, OwwWakeDetector } from './wakeword-oww.js';
 
 /** Same checkpoint as `src/voice/stt.ts`, and for the same reason: `whisper-*.en` cannot do Spanish. */
-const DEFAULT_MODEL = 'onnx-community/whisper-small';
+const DEFAULT_MODEL = DEFAULT_STT_MODEL;
 
 /**
  * Default wake word. The user's word for their assistant, in Spanish.
@@ -147,9 +147,6 @@ const ENERGY_GATE_RMS = 0.05;
 
 /** A transcriber that keeps failing is stopped, not retried every interval forever. */
 const MAX_CONSECUTIVE_FAILURES = 3;
-
-/** First-run model load budget, same rationale as stt.ts: a cold download is minutes. */
-const LOAD_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * Per-check inference budget. Measured 1-2s per short window on this machine;
@@ -452,36 +449,14 @@ type WakeAsrPipeline = (
   },
 ) => Promise<{ text: string }>;
 
-let pipelineMemo: Promise<WakeAsrPipeline> | null = null;
-
 /**
- * Whisper, memoised process-wide. Same pattern as `src/voice/stt.ts` and the
- * same reason: the promise itself is the memo, so concurrent callers cannot
- * start two downloads or two sessions. This is a second memo rather than a
- * shared one because stt.ts's loader is module-private and this module is not
- * allowed to edit it; if both voice paths run in one process the checkpoint is
- * instantiated twice, which costs memory but not correctness.
+ * Whisper, compartido con las notas de voz (`loadWhisperPipeline` de stt.ts): el
+ * mismo checkpoint en el mismo proceso se carga una sola vez. Antes había un memo
+ * aparte aquí y, con la palabra de activación y las notas de voz a la vez, el
+ * modelo vivía dos veces en memoria.
  */
 function loadWakePipeline(model: string): Promise<WakeAsrPipeline> {
-  pipelineMemo ??= (async () => {
-    const { LogLevel, env, pipeline } = await import('@huggingface/transformers');
-    // Same cache as stt.ts: the model lives in the state dir, never in the repo,
-    // and every load after the first is offline.
-    env.cacheDir = paths.models;
-    env.logLevel = LogLevel.ERROR;
-    const pipe = await withTimeout(
-      pipeline('automatic-speech-recognition', model, { dtype: 'q8', device: 'cpu' }),
-      LOAD_TIMEOUT_MS,
-      `whisper model ${model} did not finish loading within ${LOAD_TIMEOUT_MS / 1000}s`,
-    );
-    log.info('wake stt model ready', { model });
-    return pipe as unknown as WakeAsrPipeline;
-  })().catch((err: unknown) => {
-    // Clear the memo so a flaky first load does not brick the listener forever.
-    pipelineMemo = null;
-    throw err;
-  });
-  return pipelineMemo;
+  return loadWhisperPipeline(model) as unknown as Promise<WakeAsrPipeline>;
 }
 
 /**
