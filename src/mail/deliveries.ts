@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { sliceSafe } from '../text.js';
 import type { MailMessage } from './types.js';
 
 /**
@@ -144,7 +145,7 @@ export function parseDelivery(
     status,
     ...(tracking ? { tracking } : {}),
     ...(order ? { order } : {}),
-    title: msg.subject.replace(/\s+/g, ' ').trim().slice(0, 80),
+    title: sliceSafe(msg.subject.replace(/\s+/g, ' ').trim(), 80),
   };
 }
 
