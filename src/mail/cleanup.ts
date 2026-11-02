@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 import { STATE_DIR } from '../paths.js';
-import { sliceSafe } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 import { MOVE_TARGET_LABEL, type MoveTarget } from './move.js';
 import { type MailRule, matchRule } from './rules.js';
 import type { ScannedMail } from './scan.js';
@@ -63,7 +63,8 @@ export function selectForCleanup(
   mails: readonly ScannedMail[],
   filter: CleanupFilter,
 ): { picked: Array<ScannedMail & { category: MailCategory }>; accion: MoveTarget } {
-  const want = filter.remitente?.trim().toLowerCase();
+  // «lo de Ibéria»: sin tildes, como las reglas (matchRule); las direcciones no llevan.
+  const want = filter.remitente ? foldAccents(filter.remitente).trim() : undefined;
   const accion: MoveTarget =
     filter.accion ??
     (filter.regla && filter.regla.accion !== 'leido' ? filter.regla.accion : 'limpieza');
@@ -75,7 +76,7 @@ export function selectForCleanup(
     } else if (filter.categoria) {
       if (category !== filter.categoria) continue;
     } else if (!want && !DEFAULT_CATEGORIES.includes(category)) continue;
-    if (want && !m.from.includes(want)) continue;
+    if (want && !foldAccents(m.from).includes(want)) continue;
     picked.push({ ...m, category });
   }
   return { picked, accion };
