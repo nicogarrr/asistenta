@@ -8391,10 +8391,11 @@ export function runMemoryCommand(memory: MemoryStore, scope: string): string {
   const entries = memory.allIn(memoryScopesFor(scope).read);
   const scopes = memory.scopes();
   return entries.length
-    ? [`Recuerdo ${entries.length} cosas:`, ...entries.map((e) => `- [${e.id}] ${e.text}`)].join(
-        '\n',
-      )
-    : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} conversaciones con memoria)`;
+    ? [
+        `Recuerdo ${entries.length} ${entries.length === 1 ? 'cosa' : 'cosas'}:`,
+        ...entries.map((e) => `- [${e.id}] ${e.text}`),
+      ].join('\n')
+    : `No recuerdo nada todavía. Lo aprenderé sobre la marcha. (${scopes.length} ${scopes.length === 1 ? 'conversación' : 'conversaciones'} con memoria)`;
 }
 
 /**
