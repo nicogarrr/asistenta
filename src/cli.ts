@@ -343,6 +343,7 @@ function delegateTool(
   config: Config,
   threadTools?: () => readonly AgentTool[],
   approve?: (question: string) => Promise<boolean>,
+  background?: (job: BackgroundJob) => boolean,
 ): AgentTool {
   delegateWiring ??= createDelegateWiring({
     config,
@@ -350,7 +351,9 @@ function delegateTool(
     secretPaths: secretStatePaths(),
     parentTools: () => [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[],
   });
-  return threadTools ? delegateWiring.forThread(threadTools, approve) : delegateWiring.tool;
+  return threadTools
+    ? delegateWiring.forThread(threadTools, approve, background)
+    : delegateWiring.tool;
 }
 
 import {
@@ -714,6 +717,11 @@ import {
   vaultSplitValueText,
   vaultUsageText,
 } from './cli-messages.js';
+import {
+  BackgroundDelegates,
+  type BackgroundJob,
+  backgroundTurnInbound,
+} from './core/background-delegate.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
   BORRAR_SUB,
@@ -2125,6 +2133,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * notes and its logged-in session still in place.
    */
   const MAX_THREADS = 20;
+  /** `delegate` en segundo plano: lo que corre por hilo; /stop y el desalojo lo cortan. */
+  const backgroundDelegates = new BackgroundDelegates({
+    onError: (err) => log.warn('background delegate delivery failed', { err: String(err) }),
+  });
   const evictIdleThreads = (): void => {
     evictThreads({
       threads,
@@ -2136,6 +2148,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         factorySyncs,
         { delete: (k: string) => lastTurns.forget(k) },
         { delete: (k: string) => messageThread.forgetThread(k) },
+        { delete: (k: string) => backgroundDelegates.abortThread(k) },
       ],
       onEvict: (victim) => {
         // The browser profile stays on disk on purpose; only the live Chromium goes.
@@ -2178,6 +2191,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** thread.key -> salida del turno vivo cuando no es Telegram (el panel); ver thread-context.ts. */
   const threadOutputs = new ThreadOutputs();
 
+  /**
+   * `delegate` con background: la subtarea corre aparte y su resultado entra luego en
+   * ESTE hilo como un turno corto (en cola tras lo que esté haciendo). En un turno
+   * del panel no: ahí se espera como siempre.
+   */
+  const startBackgroundDelegate = (thread: Thread, job: BackgroundJob): boolean => {
+    if (threadOutputs.get(thread.key) !== undefined) return false;
+    return backgroundDelegates.start(
+      { key: thread.key, generation: () => thread.generation },
+      job,
+      (note) =>
+        queueThreadTurn(thread, async () => {
+          const turnInbound = backgroundTurnInbound(inboundFor(thread), note, new Date());
+          await runTurn(thread, turnInbound, note, { external: 'subtarea en segundo plano' });
+        }),
+    );
+  };
   const inboundFor = (thread: Thread): Inbound => {
     const live = threadInbound.get(thread.key);
     if (live) return live;
@@ -2225,6 +2255,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           broker: approvals,
           chatId: chatIdOf(thread.chatKey),
         }),
+        (job) => startBackgroundDelegate(thread, job),
       ),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
@@ -6256,6 +6287,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (thread.active) wasActive++;
       thread.generation++;
       thread.agent.abort('external');
+      backgroundDelegates.abortThread(thread.key);
       thread.tail = Promise.resolve();
     }
     telegram.cancelForChat(inbound.chatId);
@@ -6615,6 +6647,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       out?: TurnOutput;
       /** Turno del chat del panel (loopback + token): lo escribe el dueño, puede enseñar reglas. */
       panel?: boolean;
+      /**
+       * El texto NO es del dueño (p. ej. el resultado de un `delegate` en segundo plano):
+       * el turno va marcado como contenido de fuera y no enseña reglas.
+       */
+      external?: string;
     },
   ): Promise<void> => {
     const generation = thread.generation;
@@ -6637,6 +6674,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // F10: un turno que entra por correo es contenido externo: lo que no sea lectura pregunta.
     // También privado: el cuerpo del correo es de tu buzón y entra sin herramienta.
     if (inbound.channel === EMAIL_CHANNEL) taintEmailTurn(thread.gate, thread.key, inbound.text);
+    if (opts.external) {
+      thread.gate.markTainted(thread.key, opts.external);
+      thread.gate.recordExternalText(thread.key, text);
+    }
     let lastSummary: string | null = null;
     // One episodic session per turn, closed in the finally below even when the
     // turn was cancelled or failed: a turn that produced no answer still
@@ -7031,7 +7072,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
       }
 
-      rememberUserRequest(thread, prompt);
+      if (!opts.external) rememberUserRequest(thread, prompt);
       if (documentNote) prompt = prompt.trim() ? `${documentNote}\n${prompt}` : documentNote;
 
       if (!prompt.trim() && !images?.length) {
@@ -7055,7 +7096,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ownerDm: isOwnerDm(inbound, vigilanteOwnerId),
         // El panel solo lo usa el dueño (loopback + token) y siempre en su hilo principal.
         panelOwner: opts.panel === true && opts.out !== undefined && thread.name === 'main',
-        ownerText: text,
+        ownerText: opts.external ? '' : text,
       });
       const contextNote = buildContextNote(
         thread,

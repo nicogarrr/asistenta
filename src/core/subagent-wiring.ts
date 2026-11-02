@@ -9,6 +9,7 @@
  * rechaza: falla cerrado) y lista como `deny` toda herramienta con efectos.
  * Los permisos del padre no se amplian jamas: la Gate del padre no se toca.
  */
+
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { formatApproval } from '../approval-text.js';
 import type { Config } from '../config.js';
@@ -16,6 +17,7 @@ import { Gate } from '../permissions.js';
 import { createDelegateTool } from '../tools/delegate.js';
 import type { AgentRunResult } from './agent.js';
 import { PersonalAgent } from './agent.js';
+import type { BackgroundJob } from './background-delegate.js';
 import { SPECIALIST_READ_TOOLS, type SpecialistSpec, specialistAllowsCall } from './specialists.js';
 import { SubagentPool, type SubagentPoolOptions } from './subagent.js';
 import {
@@ -232,7 +234,11 @@ export interface DelegateWiringOptions extends ChildFactoryOptions {
 export function createDelegateWiring(options: DelegateWiringOptions): {
   tool: AgentTool;
   pool: SubagentPool;
-  forThread: (threadTools: () => readonly AgentTool[], approve?: SpecialistApprove) => AgentTool;
+  forThread: (
+    threadTools: () => readonly AgentTool[],
+    approve?: SpecialistApprove,
+    background?: (job: BackgroundJob) => boolean,
+  ) => AgentTool;
 } {
   const deps = createSubagentDeps({
     makeChild: createChildFactory(options),
@@ -241,10 +247,15 @@ export function createDelegateWiring(options: DelegateWiringOptions): {
   const pool = new SubagentPool(deps, options.pool);
   // depthOf = 0: solo el agente principal tiene esta tool; el hijo jamas la recibe.
   const tool = createDelegateTool(pool, () => 0) as unknown as AgentTool;
-  const forThread = (threadTools: () => readonly AgentTool[], approve?: SpecialistApprove) =>
+  const forThread = (
+    threadTools: () => readonly AgentTool[],
+    approve?: SpecialistApprove,
+    background?: (job: BackgroundJob) => boolean,
+  ) =>
     createDelegateTool(pool, () => 0, {
       parentTools: threadTools,
       ...(approve ? { approve } : {}),
+      ...(background ? { background } : {}),
     }) as unknown as AgentTool;
   return { tool, pool, forThread };
 }

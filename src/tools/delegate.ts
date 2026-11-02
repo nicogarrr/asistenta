@@ -11,6 +11,7 @@
  * lista blanca de nombres que el ejecutor del hijo debe respetar.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { type BackgroundJob, backgroundStartedText } from '../core/background-delegate.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { resolveSpecialist, SPECIALISTS, specialistNames } from '../core/specialists.js';
 import type { SubagentPool } from '../core/subagent.js';
@@ -44,6 +45,12 @@ const DelegateParams = lazySchema(() =>
           'Nombres de herramientas que el hijo puede usar. Deben ser herramientas sin efectos secundarios.',
       }),
     ),
+    background: Type.Optional(
+      Type.Boolean({
+        description:
+          'true para una lectura larga (varias fuentes, varios minutos): corre aparte, tú contestas ya y el resultado llega solo a esta conversación. No con specialist.',
+      }),
+    ),
   }),
 );
 
@@ -56,6 +63,8 @@ export interface DelegateDetails {
   /** Pidió permiso para alguna acción y no se le dio ninguno: no hizo lo que pidió. */
   denied?: true;
   error?: string;
+  /** Se lanzó en segundo plano: el resultado llega después como turno del hilo. */
+  background?: true;
 }
 
 function specialistLine(): string {
@@ -116,6 +125,11 @@ export function createDelegateTool(
     parentTools: () => readonly AgentTool[];
     /** Pregunta al humano del hilo; solo la usan los especialistas con efectos. */
     approve?: (question: string, signal?: AbortSignal) => Promise<boolean>;
+    /**
+     * Arranca una subtarea en segundo plano (`background: true`); false si ahora no
+     * se puede (tope del hilo, turno del panel) y entonces se hace esperando.
+     */
+    background?: (job: BackgroundJob) => boolean;
   },
 ): AgentTool<ReturnType<typeof DelegateParams>, DelegateDetails> {
   return {
@@ -133,6 +147,34 @@ export function createDelegateTool(
     execute: async (_toolCallId, args, signal) => {
       const specialist =
         args.specialist === undefined ? undefined : resolveSpecialist(args.specialist);
+      // En segundo plano solo el subagente genérico (lectura): un especialista con
+      // efectos pregunta al humano y eso no puede quedarse colgado fuera del turno.
+      if (args.background === true && args.specialist === undefined && thread?.background) {
+        const parentTools = thread.parentTools;
+        const started = thread.background({
+          task: args.task,
+          run: async (jobSignal) => {
+            const result = await pool.run({
+              task: args.task,
+              parentDepth: depthOf(),
+              ...(args.role ? { role: args.role } : {}),
+              ...(args.tools ? { tools: args.tools } : {}),
+              signal: jobSignal,
+              // Sin approve: el hijo no hereda aprobaciones ni puede pedirlas.
+              context: { parentTools },
+            });
+            if (result.error !== undefined) throw new Error(result.error);
+            if (result.text.trim() === '') throw new Error(emptyResultNotice(undefined));
+            return result.text;
+          },
+        });
+        if (started) {
+          return {
+            content: [{ type: 'text', text: backgroundStartedText(args.task) }],
+            details: { depth: depthOf() + 1, background: true },
+          };
+        }
+      }
       // Cuántas preguntas hizo esta delegación y a cuántas se dijo que sí (solo cuenta:
       // la respuesta del humano pasa tal cual).
       let asked = 0;
