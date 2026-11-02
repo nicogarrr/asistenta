@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 import { STATE_DIR } from '../paths.js';
+import { sliceSafe } from '../text.js';
 import { addressOf, CATEGORY_LABEL, type MailCategory } from './triage.js';
 
 export type RuleAction = 'archivar' | 'limpieza' | 'papelera' | 'leido';
@@ -70,10 +71,10 @@ export function addRule(
     return 'Una regla necesita al menos remitente, asunto o categoría.';
   const rules = loadRules(file);
   if (rules.length >= MAX_RULES) return `Ya hay ${MAX_RULES} reglas: borra alguna antes.`;
-  const clean = (v?: string) => (v?.trim() ? v.trim().slice(0, 120) : undefined);
+  const clean = (v?: string) => (v?.trim() ? sliceSafe(v.trim(), 120) : undefined);
   const saved: MailRule = {
     id: rules.reduce((max, r) => Math.max(max, r.id), 0) + 1,
-    texto: rule.texto.trim().slice(0, 300),
+    texto: sliceSafe(rule.texto.trim(), 300),
     remitente: clean(rule.remitente),
     asunto: clean(rule.asunto),
     excepto: clean(rule.excepto),

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
+import { sliceSafe } from '../text.js';
 
 /**
  * PDF -> EPUB with calibre's `ebook-convert`, the one converter that handles PDFs well
@@ -76,7 +77,7 @@ export async function pdfToEpub(
     const input = join(dir, 'libro.pdf');
     const output = join(dir, 'libro.epub');
     writeFileSync(input, pdf);
-    const r = await run(cmd, [input, output, '--title', title.slice(0, 200)], 5 * 60_000);
+    const r = await run(cmd, [input, output, '--title', sliceSafe(title, 200)], 5 * 60_000);
     if (r.code !== 0 || !existsSync(output)) {
       return {
         ok: false,

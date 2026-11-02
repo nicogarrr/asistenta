@@ -17,6 +17,7 @@ import {
   toPlayableAudio,
 } from '../screen/media.js';
 import { recordScreen } from '../screen/recorder.js';
+import { sliceSafe } from '../text.js';
 import { playAudioFile, playbackRestoreText } from './system.js';
 
 /**
@@ -494,7 +495,7 @@ function listAudio(deps: MediaToolDeps) {
     const seconds = a.durationSeconds
       ? `${Math.round(a.durationSeconds)}s`
       : 'duracion desconocida';
-    const said = a.transcript ? ` dijo: "${a.transcript.slice(0, 80)}"` : '';
+    const said = a.transcript ? ` dijo: "${sliceSafe(a.transcript, 80)}"` : '';
     return `${i + 1}. recibido ${agoLabel(a.at, deps.recall.now())} (${seconds})${said}`;
   });
   return ok(`Audios tuyos que puedo reproducir (${list.length}):\n${lines.join('\n')}`, {

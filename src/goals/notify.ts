@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { chatIdOf } from '../channels/types.js';
 import { friendlyModelError } from '../core/friendly-error.js';
+import { sliceSafe } from '../text.js';
 import { GOAL_TICK_STOPPED, goalStoppedText } from './parado.js';
 import { type Goal, splitGoalScope } from './store.js';
 
@@ -98,7 +99,7 @@ export function goalNotifyTarget(scope: string): {
 
 /** One Telegram-legible piece, in Spanish, no JSON dumps. */
 export function formatGoalMessage(kind: string, goal: Pick<Goal, 'title'>, reason: string): string {
-  const r = reason.trim().slice(0, 600);
+  const r = sliceSafe(reason.trim(), 600);
   switch (kind) {
     case 'hito':
       return `🎯 ${goal.title}: ${r}`;

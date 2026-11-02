@@ -23,6 +23,7 @@
 import { batchQuestion } from './mail/cleanup.js';
 import { unsubQuestion } from './mail/unsubscribe.js';
 import type { ToolCall } from './permissions.js';
+import { sliceSafe } from './text.js';
 
 export interface ApprovalText {
   question: string;
@@ -143,7 +144,7 @@ export function formatApproval(
     const [element = '', ...ctxParts] = withCtx.split('\nCONTEXTO DEL ELEMENTO:\n');
     const context = ctxParts.join('\n').trim();
     const summary = rest.join('\n').trim();
-    const shown = element.split(' | ').filter(Boolean).slice(0, 6).join(' · ').slice(0, 300);
+    const shown = sliceSafe(element.split(' | ').filter(Boolean).slice(0, 6).join(' · '), 300);
     // Lo que el clic o el relleno VA A HACER (acción, texto a escribir, opción,
     // clave del vault) también se enseña: sin esto, aprobar «rellenar IBAN» no
     // decía qué IBAN se escribía.
@@ -154,8 +155,8 @@ export function formatApproval(
     const raw = [
       `¿Permito esta acción en el navegador?`,
       `Elemento: ${shown}`,
-      context ? `Parte de: ${context.slice(0, 300)}` : '',
-      summary ? `Datos de la página:\n${summary.slice(0, 700)}` : '',
+      context ? `Parte de: ${sliceSafe(context, 300)}` : '',
+      summary ? `Datos de la página:\n${sliceSafe(summary, 700)}` : '',
       params ? `Parámetros:\n${params}` : '',
       `Motivo: ${reason}`,
     ]
