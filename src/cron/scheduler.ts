@@ -316,6 +316,17 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     if (!hasTime || hours.split(',').length !== n) return null;
   }
 
+  // «mañana a las 9», «hoy a las 9», «esta tarde a las 5»: un día suelto, no una rutina
+  // (antes sonaba cada día). Se pregunta; «cada día … mañana» dentro de la tarea no cambia.
+  if (/^(?:hoy|manana|pasado manana|esta (?:manana|tarde|noche))\b/.test(normalised)) return null;
+  // «menos el 25 de diciembre», «salvo el día 15»: un cron no quita una fecha (antes se
+  // ignoraba y sonaba también ese día). Se pregunta, como los festivos.
+  if (
+    new RegExp(
+      `\\b(?:excepto|menos|salvo|quitando|sin contar) (?:el (?:dia )?\\d{1,2}(?: de (?:${MONTH}))?|dia \\d{1,2}(?: de (?:${MONTH}))?|\\d{1,2} de (?:${MONTH}))\\b(?! ?(?:h\\b|horas?|minutos?|min\\b))`,
+    ).test(normalised)
+  )
+    return null;
   // «el martes a las 10», «el próximo viernes a las 9»: un día suelto, no una rutina (antes
   // sonaba todos los días). Se pregunta.
   if (
