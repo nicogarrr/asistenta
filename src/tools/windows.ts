@@ -340,7 +340,7 @@ try {
         ' Si es Chrome, Edge, VS Code, WhatsApp desktop o cualquier app Electron/Chromium, ' +
         'usa el tool browser: su DOM tiene mucha mas informacion que este arbol. Tambien puede ' +
         'pasar si la ventana corre como administrador y este proceso no.'
-      : `${visible} controles visibles. Las coordenadas son el CENTRO de cada control, en pixeles reales de pantalla.`;
+      : `${visible} controles visibles. Las coordenadas son el CENTRO de cada control, en pixeles reales de pantalla (no las de la captura): para clicar, computer screenshot con map: true y click con element.`;
   return { window, visible, controls, note };
 }
 
@@ -368,10 +368,10 @@ export function createWindowsTool(): AgentTool<ReturnType<typeof Params>> {
       '',
       'action=list: every visible window with its title, process and pid.',
       'action=foreground: the window you are looking at right now.',
-      'action=controls: the clickable controls of a window, each with its EXACT screen',
-      'coordinates (the centre of the control) and its type. This is the reliable way to',
-      'find something to click: use these coordinates instead of guessing from a',
-      'screenshot.',
+      'action=controls: the controls of a window, each with its centre in REAL screen',
+      'pixels and its type. To click one, do not copy these numbers into computer x/y',
+      '(those are pixels of the downscaled screenshot): take computer screenshot with',
+      'map: true and click with element: N.',
       'action=focus: bring a window to the front by title.',
       '',
       'Pass match with a piece of the window title to pick which window.',

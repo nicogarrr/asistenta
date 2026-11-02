@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeRemote, pickLanAddress, serveFileToHost } from '../src/audio/lan-server.js';
 import {
-  AUDIO_TELE_KV_KEY,
   audioTeleEnabled,
   audioTeleOn,
   castAudioToTv,
