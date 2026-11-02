@@ -12,6 +12,7 @@ import type { Store } from '../db.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { createTvTool, type TvMemoryState, type TvToolDeps } from '../tools/tv.js';
+import { createTvAppCache } from '../tv/app-cache.js';
 import { discoverWebOsTvs } from '../tv/discover.js';
 import { runIntentOnDriver } from '../tv/drivers.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.js';
@@ -29,6 +30,7 @@ import { tvPower } from '../tv/power.js';
 import type { KnownTv } from '../tv/registry.js';
 import { rokuDriver } from '../tv/roku.js';
 import { samsungDriver } from '../tv/samsung.js';
+import { deepLaunchPayload } from '../tv/search-recipes.js';
 import { readTvStatus } from '../tv/status.js';
 import {
   currentTvTarget,
@@ -73,6 +75,8 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
   const frameDir = join(paths.screenshots, 'tv');
   mkdirSync(frameDir, { recursive: true });
   const STATE_KEY = 'tv:lastLook';
+  // Apps de cada tele guardadas (memoria + kv): ver src/tv/app-cache.ts.
+  const appCache = createTvAppCache({ store });
   // Si la tele olvido la client-key y Nico acepta el aviso de nuevo, la clave
   // nueva se guarda: sin esto cada orden volveria a sacar el aviso.
   const saveNewKey = async (key: string): Promise<void> => {
@@ -308,17 +312,30 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
       const p = res as { appId?: string; appCategory?: string[] };
       return { appId: p.appId ?? 'desconocida', category: p.appCategory ?? [] };
     },
-    apps: async () => {
+    apps: async (o) => {
       const { host, clientKey, allowPlaintext } = await paired();
-      const res = await tvRequest(
+      // Lista guardada por tele (src/tv/app-cache.ts): listLaunchPoints solo
+      // cuando no hay una válida o se pide fresca.
+      return appCache.get(
         host,
-        clientKey,
-        'com.webos.applicationManager/listLaunchPoints',
-        {},
-        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
+        async () => {
+          const res = await tvRequest(
+            host,
+            clientKey,
+            'com.webos.applicationManager/listLaunchPoints',
+            {},
+            { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
+          );
+          const points =
+            (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
+          return points.map((p) => ({ id: p.id, title: p.title }));
+        },
+        o,
       );
-      const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
-      return points.map((p) => ({ id: p.id, title: p.title }));
+    },
+    forgetApps: async () => {
+      const { host } = await paired();
+      appCache.invalidate(host);
     },
     launch: async (id) => {
       // Glasshouse primero (sin pairing); si la tele no lo tiene o no
@@ -351,7 +368,20 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
         host,
         clientKey,
         'system.launcher/launch',
-        { id, contentId },
+        // YouTube lee params.contentTarget, no contentId (src/tv/search-recipes.ts).
+        deepLaunchPayload(id, contentId),
+        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
+      );
+    },
+    launchParams: async (id, params) => {
+      // Recetas de búsqueda por app: también solo por SSAP (Glasshouse no
+      // pasa parámetros de arranque).
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvRequest(
+        host,
+        clientKey,
+        'system.launcher/launch',
+        { id, params },
         { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
     },
