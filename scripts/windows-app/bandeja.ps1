@@ -29,9 +29,13 @@ $Ordenes = @{
 }
 
 function Invoke-Pa([string[]] $Orden) {
+    # Por la entrada mínima (dist\pa.js): la consulta de estado de cada minuto ya no carga
+    # todo Asistenta (~265 ms de CPU por vez, ahora ~35). Una versión sin pa.js usa cli.js.
+    $entrada = Join-Path $app 'dist\pa.js'
+    if (-not (Test-Path -LiteralPath $entrada)) { $entrada = $cli }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $node
-    $psi.Arguments = '"' + $cli + '" ' + ($Orden -join ' ')
+    $psi.Arguments = '"' + $entrada + '" ' + ($Orden -join ' ')
     $psi.WorkingDirectory = $app
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
