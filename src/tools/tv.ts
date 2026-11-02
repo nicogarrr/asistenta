@@ -71,6 +71,11 @@ export interface TvToolDeps {
   /** Glasshouse GET /api/stats, optional for older installations. */
   stats?: () => Promise<unknown>;
   launch: (id: string) => Promise<void>;
+  // Deeplink con contenido (Netflix «m=https://www.netflix.com/watch/ID»,
+  // YouTube «v=VIDEO_ID»): va por SSAP system.launcher/launch directo.
+  launchDeep?: (id: string, contentId: string) => Promise<void>;
+  // Búsqueda universal de webOS (apps y contenido registrado). Solo lectura.
+  search?: (key: string) => Promise<unknown>;
   /**
    * Ráfaga de teclas por UNA conexión (src/tv/lgtv.ts tvKeys). Sin ella, la
    * tool encadena `key` una a una (mismo resultado, mucho más lento).
@@ -117,6 +122,7 @@ const Params = lazySchema(() =>
       Type.Literal('apps'),
       Type.Literal('inspect'),
       Type.Literal('launch'),
+      Type.Literal('search'),
       Type.Literal('key'),
       Type.Literal('type'),
       Type.Literal('toast'),
@@ -143,6 +149,12 @@ const Params = lazySchema(() =>
           'Para launch: el id de la app (sacalo de action=apps) o su nombre ("Netflix", "YouTube", "Disney+"): se resuelve al id instalado.',
       }),
     ),
+    contentId: Type.Optional(
+      Type.String({
+        description:
+          'Para launch: deeplink al contenido exacto. Netflix: "m=https://www.netflix.com/watch/ID" (el ID sale de la URL del título). YouTube: "v=VIDEO_ID". Otras apps no lo documentan.',
+      }),
+    ),
     name: Type.Optional(
       Type.String({
         description: 'Para key: HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN, VOLUP, VOLDOWN.',
@@ -152,6 +164,12 @@ const Params = lazySchema(() =>
       Type.Array(Type.String(), {
         description:
           'Para key: varias teclas seguidas por UNA conexión (navegar menús mucho más rápido), p.ej. ["RIGHT","RIGHT","DOWN","ENTER"]. Máx 40. Si está, se ignora name.',
+      }),
+    ),
+    look: Type.Optional(
+      Type.Boolean({
+        description:
+          'Para key/type: true devuelve además una captura de la tele tras la acción, para verificar dónde quedó el foco sin gastar otro turno. Por defecto true en ráfagas y type, false en una tecla suelta.',
       }),
     ),
     message: Type.Optional(Type.String({ description: 'Para toast: el texto a mostrar.' })),
@@ -291,6 +309,14 @@ export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Para
       'action=apps lista los ids y titulos instalados (los nuestras tienen id tipo org.webosbrew.hbchannel).',
       'action=launch arranca una app, action=key pulsa el mando, action=toast muestra un aviso,',
       'action=power apaga o enciende (si esta apagada del todo y hay MAC guardada, por red).',
+      'action=type escribe texto en el campo enfocado (buscadores); key con names es una rafaga de teclas.',
+      'Rafagas y type devuelven una captura de la tele (look=true por defecto): mirala para verificar',
+      'donde quedo el foco ANTES de seguir o de dar algo por hecho; navegar a ciegas falla.',
+      'Para buscar contenido (Netflix, Movistar Plus+, YouTube): screenshot para ver el mapa, rafaga',
+      'hasta el buscador, type con el titulo, ENTER, y confirma los resultados en la captura devuelta.',
+      'action=launch con contentId abre el contenido exacto de una vez (Netflix/YouTube, ver contentId).',
+      'action=search busca texto en la búsqueda universal de la tele (apps y contenido registrado),',
+      'sin tocar nada; lo que devuelve depende de lo que cada app registre en webOS.',
       'action=volumeHalf lee el volumen real y lo deja en la mitad (nunca sube; si no puede leerlo, no toca nada).',
       'action=volumeStep sube/baja el volumen por pasos del mando (steps), action=channel cambia de canal (up/down/numero).',
       'action=command entiende una orden natural en castellano (text) y la ejecuta: "apaga la tele", "abre Netflix",',
@@ -374,6 +400,60 @@ export function explainTvError(err: unknown): unknown {
   return err;
 }
 
+interface TvFrame {
+  state: TvMemoryState;
+  blank: boolean;
+  lines: string[];
+  imageBlock: { type: 'image'; mimeType: string; data: string };
+}
+
+// Dispara la captura y actualiza la memoria de la sesión. La app se lee
+// DESPUÉS del disparo (ventana menor), pero ni así es pareja atómica con el
+// frame: otra acción puede cambiarla entre ambas.
+async function captureFrame(deps: TvToolDeps): Promise<TvFrame> {
+  const { image, mimeType, ext = 'jpg' } = await deps.shot();
+  const fg = await deps.foreground().catch(() => null);
+  const path = deps.saveFrame(image, ext);
+  const state: TvMemoryState = {
+    appId: fg?.appId ?? 'desconocida',
+    category: fg?.category ?? [],
+    at: new Date().toISOString(),
+    framePath: path,
+    bytes: image.length,
+  };
+  deps.setState(state);
+  const blank = image.length < SUSPECT_BLANK_BYTES;
+  const lines = [
+    `Tele 960x540 (${image.length} bytes).`,
+    fg
+      ? `App en primer plano al terminar la captura: ${fg.appId}${fg.category.length ? ` (${fg.category.join(', ')})` : ''} (lectura no atomica con el frame).`
+      : 'No he podido leer la app en primer plano.',
+    `Guardado en ${path}.`,
+  ];
+  if (blank) {
+    lines.push(
+      'AVISO: el frame comprimido es mucho mas pequeno de lo habitual. Puede ser una ' +
+        'pantalla oscura, una app con poco contenido o video protegido (DRM): el tamano ' +
+        'NO lo prueba. No deduzcas el estado de la tele ni lo que se ve de este dato.',
+    );
+  }
+  return {
+    state,
+    blank,
+    lines,
+    imageBlock: { type: 'image', mimeType, data: image.toString('base64') },
+  };
+}
+
+// Versión corta para adjuntar la captura tras una ráfaga o un type: la tele
+// se ve sin gastar otro turno y el modelo verifica dónde quedó el foco.
+function frameSummary(frame: TvFrame): string {
+  const base = `Captura tras la acción: app ${frame.state.appId} (${frame.state.bytes} bytes).`;
+  return frame.blank
+    ? `${base} AVISO: frame muy pequeño (pantalla oscura o DRM); no deduzcas lo que se ve de este dato.`
+    : base;
+}
+
 async function runTvAction(
   deps: TvToolDeps,
   args: TvArgs,
@@ -383,43 +463,37 @@ async function runTvAction(
       // La captura entera va por la MISMA cola que las mutaciones: dos
       // agentes nunca intercalan key/shot (auditor: key-start,shot,key-end).
       return enqueueTvMutation(async () => {
-        const { image, mimeType, ext = 'jpg' } = await deps.shot();
-        // La app se lee DESPUES del disparo (ventana menor), pero ni asi es
-        // pareja atomica con el frame: otra accion puede cambiarla entre ambas.
-        const fg = await deps.foreground().catch(() => null);
-        const path = deps.saveFrame(image, ext);
-        const state: TvMemoryState = {
-          appId: fg?.appId ?? 'desconocida',
-          category: fg?.category ?? [],
-          at: new Date().toISOString(),
-          framePath: path,
-          bytes: image.length,
-        };
-        deps.setState(state);
-        log.info('tv screenshot', { appId: state.appId, bytes: state.bytes });
-        const blank = image.length < SUSPECT_BLANK_BYTES;
-        const lines = [
-          `Tele 960x540 (${image.length} bytes).`,
-          fg
-            ? `App en primer plano al terminar la captura: ${fg.appId}${fg.category.length ? ` (${fg.category.join(', ')})` : ''} (lectura no atomica con el frame).`
-            : 'No he podido leer la app en primer plano.',
-          `Guardado en ${path}.`,
-        ];
-        if (blank) {
-          lines.push(
-            'AVISO: el frame comprimido es mucho mas pequeno de lo habitual. Puede ser una ' +
-              'pantalla oscura, una app con poco contenido o video protegido (DRM): el tamano ' +
-              'NO lo prueba. No deduzcas el estado de la tele ni lo que se ve de este dato.',
-          );
-        }
+        const frame = await captureFrame(deps);
+        log.info('tv screenshot', { appId: frame.state.appId, bytes: frame.state.bytes });
         return {
-          content: [
-            { type: 'text' as const, text: lines.join(' ') },
-            { type: 'image' as const, mimeType, data: image.toString('base64') },
-          ],
-          details: { ...state, blank },
+          content: [{ type: 'text' as const, text: frame.lines.join(' ') }, frame.imageBlock],
+          details: { ...frame.state, blank: frame.blank },
         };
       });
+    }
+    case 'search': {
+      // Búsqueda universal de webOS: solo lectura, nada cambia en la tele.
+      const key = (args.text ?? '').trim();
+      if (!key) throw new Error('action=search necesita text: lo que se busca en la tele.');
+      if (!deps.search) {
+        throw new Error(
+          'Esta instalación no tiene la búsqueda universal de la tele: usa key/type sobre el buscador de la app.',
+        );
+      }
+      const raw = await deps.search(key);
+      const textOut =
+        typeof raw === 'string'
+          ? raw
+          : JSON.stringify(raw, null, 0).slice(0, 4000);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Búsqueda universal de la tele para «${key}»: ${textOut}`,
+          },
+        ],
+        details: { query: key, results: raw as Record<string, unknown> },
+      };
     }
     case 'state': {
       const state = deps.getState();
@@ -481,6 +555,24 @@ async function runTvAction(
       const installed = needsAppLookup(asked) ? await deps.apps().catch(() => null) : null;
       const resolved = resolveAppId(asked, installed);
       const appId = resolved.id;
+      const contentId = (args.contentId ?? '').trim();
+      if (contentId) {
+        if (!deps.launchDeep) {
+          throw new Error(
+            'Esta instalación no sabe abrir deeplinks todavía: abre la app con action=launch y navega con key/type.',
+          );
+        }
+        await enqueueTvMutation(() => deps.launchDeep?.(appId, contentId) ?? Promise.resolve());
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `He abierto ${resolved.title ?? APP_NAMES[appId] ?? asked} directamente en ese contenido. Verifícalo con la captura (look o action=screenshot).`,
+            },
+          ],
+          details: { appId, contentId },
+        };
+      }
       await enqueueTvMutation(() => deps.launch(appId));
       // A la persona, el nombre de la app; el id técnico (youtube.leanback.v4) va en details.
       const label = resolved.title ?? APP_NAMES[appId] ?? asked;
@@ -737,22 +829,46 @@ async function runTvAction(
           }
         }
         const ssapNames = batch.map((n) => KEY_ALIASES[n] ?? n);
-        if (deps.keys) {
-          await enqueueTvMutation(() => deps.keys?.(ssapNames) ?? Promise.resolve());
-        } else {
-          // Sin ráfaga en el driver: la misma secuencia, tecla a tecla.
-          for (const n of ssapNames) {
-            await enqueueTvMutation(() => deps.key(n));
+        // Navegar a ciegas fue el fallo con Movistar Plus+ (2-nov-2026): la
+        // ráfaga devuelve la captura por defecto para verificar el foco.
+        const look = args.look ?? true;
+        const frames: TvFrame[] = [];
+        await enqueueTvMutation(async () => {
+          if (deps.keys) {
+            await deps.keys(ssapNames);
+          } else {
+            // Sin ráfaga en el driver: la misma secuencia, tecla a tecla.
+            for (const n of ssapNames) {
+              await deps.key(n);
+            }
+          }
+          if (look) {
+            const shot = await captureFrame(deps).catch(() => null);
+            if (shot) frames.push(shot);
+          }
+        });
+        const frame = frames[0] as TvFrame | undefined;
+        const content: Array<
+          { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
+        > = [
+          {
+            type: 'text' as const,
+            text: `He enviado ${ssapNames.length} teclas seguidas (${batch.join(', ')}) por una sola conexión.`,
+          },
+        ];
+        if (look) {
+          if (frame) {
+            content.push({ type: 'text' as const, text: frameSummary(frame) }, frame.imageBlock);
+          } else {
+            content.push({
+              type: 'text' as const,
+              text: 'No pude capturar la tele tras la ráfaga; usa action=screenshot para mirarla.',
+            });
           }
         }
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `He enviado ${ssapNames.length} teclas seguidas (${batch.join(', ')}) por una sola conexión.`,
-            },
-          ],
-          details: { names: batch },
+          content,
+          details: { names: batch, ...(frame ? { ...frame.state, blank: frame.blank } : {}) },
         };
       }
       const name = (args.name ?? '').trim().toUpperCase();
@@ -762,15 +878,37 @@ async function runTvAction(
       // La whitelist real (lgtv.ts) usa VOLUMEUP/VOLUMEDOWN: los alias
       // publicos se traducen AQUI, en un solo sitio.
       const ssapName = KEY_ALIASES[name] ?? name;
-      await enqueueTvMutation(() => deps.key(ssapName));
-      return {
-        content: [
-          {
+      const look = args.look ?? false;
+      const frames: TvFrame[] = [];
+      await enqueueTvMutation(async () => {
+        await deps.key(ssapName);
+        if (look) {
+            const shot = await captureFrame(deps).catch(() => null);
+            if (shot) frames.push(shot);
+          }
+      });
+      const frame = frames[0] as TvFrame | undefined;
+      const content: Array<
+        { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
+      > = [
+        {
+          type: 'text' as const,
+          text: `He enviado la tecla ${name} (sin confirmación de la tele).`,
+        },
+      ];
+      if (look) {
+        if (frame) {
+          content.push({ type: 'text' as const, text: frameSummary(frame) }, frame.imageBlock);
+        } else {
+          content.push({
             type: 'text' as const,
-            text: `He enviado la tecla ${name} (sin confirmación de la tele).`,
-          },
-        ],
-        details: { name },
+            text: 'No pude capturar la tele tras la tecla; usa action=screenshot para mirarla.',
+          });
+        }
+      }
+      return {
+        content,
+        details: { name, ...(frame ? { ...frame.state, blank: frame.blank } : {}) },
       };
     }
     case 'type': {
@@ -784,8 +922,16 @@ async function runTvAction(
           'Esta instalación no sabe escribir texto en la tele todavía: usa action=key con names para teclear.',
         );
       }
+      const look = args.look ?? true;
+      const frames: TvFrame[] = [];
       try {
-        await enqueueTvMutation(() => deps.typeText?.(text) ?? Promise.resolve());
+        await enqueueTvMutation(async () => {
+          await deps.typeText?.(text);
+          if (look) {
+            const shot = await captureFrame(deps).catch(() => null);
+            if (shot) frames.push(shot);
+          }
+        });
       } catch (err) {
         throw new Error(
           `No se pudo escribir en la tele: ¿hay un campo de texto enfocado? ` +
@@ -793,14 +939,27 @@ async function runTvAction(
             `Detalle: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      return {
-        content: [
-          {
+      const frame = frames[0] as TvFrame | undefined;
+      const content: Array<
+        { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
+      > = [{ type: 'text' as const, text: `He escrito «${text}» en el campo de la tele.` }];
+      if (look) {
+        if (frame) {
+          content.push({ type: 'text' as const, text: frameSummary(frame) }, frame.imageBlock);
+        } else {
+          content.push({
             type: 'text' as const,
-            text: `He escrito «${text}» en el campo de la tele.`,
-          },
-        ],
-        details: { typed: true, chars: text.length },
+            text: 'No pude capturar la tele tras escribir; usa action=screenshot para mirarla.',
+          });
+        }
+      }
+      return {
+        content,
+        details: {
+          typed: true,
+          chars: text.length,
+          ...(frame ? { ...frame.state, blank: frame.blank } : {}),
+        },
       };
     }
     case 'toast': {

@@ -273,6 +273,30 @@ export function tvToolDeps(store: Store): TvToolDeps {
         { allowPlaintext, onNewClientKey: saveNewKey },
       );
     },
+    launchDeep: async (id, contentId) => {
+      // Deeplinks solo por SSAP: Glasshouse no admite parámetros de contenido
+      // y el payload documentado es { id, contentId } en system.launcher/launch.
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvRequest(
+        host,
+        clientKey,
+        'system.launcher/launch',
+        { id, contentId },
+        { allowPlaintext, onNewClientKey: saveNewKey },
+      );
+    },
+    search: async (key) => {
+      // Búsqueda universal de webOS (com.webos.service.unifiedsearch):
+      // lectura pura, no cambia nada en la tele.
+      const { host, clientKey, allowPlaintext } = await paired();
+      return tvRequest(
+        host,
+        clientKey,
+        'com.webos.service.unifiedsearch/search',
+        { key },
+        { allowPlaintext, onNewClientKey: saveNewKey },
+      );
+    },
     key: async (name) => {
       const { host, clientKey, allowPlaintext } = await paired();
       await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey: saveNewKey });
