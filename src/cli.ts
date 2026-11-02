@@ -7352,6 +7352,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         prompt,
         isOwnerDm(inboundFor(thread), vigilanteOwnerId),
         projectContexts,
+        { consumeInterrupted: !opts.external },
       );
       // Primer turno de un hilo: qué otras conversaciones de este chat siguen vivas, en
       // pocas líneas (va en la nota del turno, nunca en el system prompt).
