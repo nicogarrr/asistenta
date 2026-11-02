@@ -19,6 +19,8 @@ import { SPK_SAMPLE_RATE, SpeakerVerifier, speakerGateConfigFromEnv } from './sp
 
 export const speakerProfilesFile = (): string => join(paths.voice, 'speaker-profiles.json');
 
+const muestras = (n: number): string => `${n} ${n === 1 ? 'muestra' : 'muestras'}`;
+
 const USAGE =
   'uso: pa voice enroll <nombre> <audio...> | pa voice verify <audio> | ' +
   'pa voice list | pa voice remove <nombre>\n';
@@ -52,7 +54,7 @@ export async function voiceCommand(args: string[]): Promise<number> {
         for (const f of files) samples.push(await decode(f));
         const info = await verifier.enroll(name, samples);
         process.stdout.write(
-          `Voz enrolada: ${info.name} (${info.utterances} muestras). ` +
+          `Voz enrolada: ${info.name} (${muestras(info.utterances)}). ` +
             'Activa la puerta con PA_SPEAKER_VERIFY=1.\n',
         );
         return 0;
@@ -81,7 +83,7 @@ export async function voiceCommand(args: string[]): Promise<number> {
           return 0;
         }
         for (const p of profiles) {
-          process.stdout.write(`${p.name}\t${p.utterances} muestras\tenrolada ${p.enrolledAt}\n`);
+          process.stdout.write(`${p.name}\t${muestras(p.utterances)}\tenrolada ${p.enrolledAt}\n`);
         }
         return 0;
       }
