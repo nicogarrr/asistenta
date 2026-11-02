@@ -21,6 +21,7 @@ import type { Store } from '../db.js';
 import { type GoalWorkstreamProjection, projectGoal } from '../goals/projection.js';
 import { goalRoutineName } from '../goals/runner.js';
 import { type Goal, type GoalStore, MAX_ACTIVE_GOALS, MAX_PROPOSED_GOALS } from '../goals/store.js';
+import { sliceSafe } from '../text.js';
 import { fechaCortaEs } from './reminder.js';
 
 /** Two ticks of one goal never land closer than this: autonomy, not a spin loop. */
@@ -455,7 +456,9 @@ export function createGoalTool(deps: GoalToolDeps): AgentTool<ReturnType<typeof 
             return reply(`paso debe ser un número entre 1 y ${goal.plan.length}.`, true);
           }
           const plan = goal.plan.map((s, i) =>
-            i === idx ? { ...s, done: true, note: args.nota?.slice(0, 200) || s.note } : s,
+            i === idx
+              ? { ...s, done: true, note: (args.nota && sliceSafe(args.nota, 200)) || s.note }
+              : s,
           );
           deps.goals.updatePlan(goal.id, plan);
           projectGoal(deps.goals.read(goal.id) ?? goal, deps.workstreams);

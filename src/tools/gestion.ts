@@ -43,6 +43,7 @@ import {
 } from '../gestor/playbooks.js';
 import type { Gestion, GestionStep, GestorStore } from '../gestor/store.js';
 import { buildMacroPrompt, isMacroName } from '../routines.js';
+import { sliceSafe } from '../text.js';
 import { vaultList, vaultSnapshotValues } from '../vault.js';
 
 /**
@@ -520,7 +521,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<ReturnType<t
         case 'paso': {
           const idx = (args.paso ?? 0) - 1;
           try {
-            deps.gestor.recordStep(gestion.id, idx, args.nota?.slice(0, 200) ?? '');
+            deps.gestor.recordStep(gestion.id, idx, sliceSafe(args.nota ?? '', 200));
           } catch (err) {
             return reply(err instanceof Error ? err.message : String(err), true);
           }

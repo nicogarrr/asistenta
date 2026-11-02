@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
+import { sliceSafe } from './text.js';
 
 export type ModeloAction =
   | { kind: 'show' }
@@ -31,7 +32,7 @@ export function parseModelo(args: string, available: readonly string[]): ModeloA
   if (id) return { kind: 'set', id };
   return {
     kind: 'error',
-    text: `«${raw.slice(0, 60)}» no está entre los modelos configurados. Tengo: ${available.join(', ')}.`,
+    text: `«${sliceSafe(raw, 60)}» no está entre los modelos configurados. Tengo: ${available.join(', ')}.`,
   };
 }
 

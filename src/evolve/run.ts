@@ -7,6 +7,7 @@ import { loadConfig } from '../config.js';
 import { isGoogleEndpoint, isOpenCodeEndpoint, isOpenRouterEndpoint } from '../core/provider.js';
 import { wallClock } from '../datecontext.js';
 import { EVOLVE_HOW } from '../palabras-vigilancia.js';
+import { sliceSafe } from '../text.js';
 import { envSecretName, vaultGet } from '../vault.js';
 import { Archive, isoWeek } from './archive.js';
 import {
@@ -56,7 +57,7 @@ function hypothesesFile(stateDir: string): string {
 
 /** One idea per line. Added with `/evolucion idea <texto>`, read by the next cycle. */
 export function addHypothesis(stateDir: string, text: string): void {
-  const clean = text.replace(/\s+/g, ' ').trim().slice(0, 300);
+  const clean = sliceSafe(text.replace(/\s+/g, ' ').trim(), 300);
   if (!clean) throw new Error('la idea está vacía');
   mkdirSync(join(stateDir, 'evolve'), { recursive: true });
   appendFileSync(hypothesesFile(stateDir), `${clean}\n`, 'utf8');
