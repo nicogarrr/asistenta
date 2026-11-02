@@ -329,6 +329,19 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   )
     return null;
   if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
+  // «a partir de marzo», «hasta marzo», «hasta el 15 de marzo», «desde el 1 de diciembre»:
+  // un cron no tiene inicio ni fin y la rutina sonaba ya y para siempre. Se pregunta. Un
+  // rango («de marzo a mayo») ya se ha leído antes; una fecha dentro de la tarea («cuenta
+  // los días hasta el 25 de diciembre») no es un fin.
+  if (
+    new RegExp(
+      `\\b(?:a partir de|desde|hasta)(?: (?:el )?(?:mes|final|finales|principios|mediados|primeros) de)? (?:${MONTH})\\b`,
+    ).test(normalised) ||
+    new RegExp(
+      `(?:^|\\ba las? \\d{1,2}(?:[:.]\\d{2})?(?: ?h)?(?: de la (?:manana|tarde|noche))? |\\b(?:${DAY}) |\\b(?:cada|todos los) dias? )(?:a partir del?|desde(?: el)?|hasta(?: el)?) (?:\\d{1,2} de (?:${MONTH})|(?:ano )?20\\d\\d)\\b`,
+    ).test(normalised)
+  )
+    return null;
   // «excepto festivos», «salvo los festivos», «los festivos a las 10»: un cron no sabe qué
   // días son festivos y antes se ignoraba (sonaba también en Navidad). Se pregunta.
   if (
