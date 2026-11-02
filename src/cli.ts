@@ -560,7 +560,7 @@ import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createTasksTool } from './tools/tasks.js';
 import { createTraficoTool, TraficoVistosStore } from './tools/trafico.js';
-import { createTvTool, tvLastOrderAt } from './tools/tv.js';
+import { createTvTool, explainTvError, tvLastOrderAt } from './tools/tv.js';
 import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
@@ -568,6 +568,7 @@ import { startTvButtonListener, type TvButtonListener } from './tv/button-listen
 import { tvFastPathIntent } from './tv/fast-path.js';
 import { tvRequest } from './tv/lgtv.js';
 import { describeTvIntent, tvIntentNotice } from './tv/natural.js';
+import { screenTvCapture } from './tv/screen-tv.js';
 import { staleGuardedCaster, staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
@@ -3947,6 +3948,41 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /**
+   * /screen tv: captura de la TELE por SSAP. Antes mandaba la pantalla del PC
+   * (bug: el arg se ignoraba). Un frame en negro (streaming con DRM bloquea la
+   * captura en las LG de 2020+) NO se envia: se explica claro y se da la
+   * alternativa util (que hay delante y volumen, leido en vivo).
+   */
+  const cmdScreenTv = async (inbound: Inbound): Promise<void> => {
+    const deps = tvToolDeps(store, { keepAlive: true });
+    try {
+      const res = await screenTvCapture(deps);
+      if (res.kind === 'text') {
+        await say(inbound, res.text, { quote: true });
+        return;
+      }
+      await telegram.action(inbound.chatId, 'upload_photo');
+      const sent = await telegram
+        .sendPhotoBytes(Number(inbound.chatId), res.image, inbound.threadId)
+        .then(() => true)
+        .catch((err: unknown) => {
+          log.warn('tv screen send failed', { err });
+          return false;
+        });
+      await say(
+        inbound,
+        sent ? 'Captura de la tele de ahora mismo.' : 'No he podido enviar la captura de la tele.',
+        { quote: true },
+      );
+    } catch (err) {
+      const explained = explainTvError(err);
+      await say(inbound, explained instanceof Error ? explained.message : String(explained), {
+        quote: true,
+      }).catch(() => {});
+    }
+  };
+
   const cmdScreen = async (inbound: Inbound, args = ''): Promise<void> => {
     if (!desktop) {
       await say(inbound, DESKTOP_OFF_MESSAGE, { quote: true });
@@ -3961,6 +3997,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (sub === 'off' || sub === 'stop') {
       stopLiveView(inbound.chatId);
       await say(inbound, 'Vista en directo detenida.', { quote: true });
+      return;
+    }
+    if (sub === 'tv' || sub === 'tele') {
+      await cmdScreenTv(inbound);
       return;
     }
     await telegram.action(inbound.chatId, 'upload_photo');
