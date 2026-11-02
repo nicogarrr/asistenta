@@ -76,6 +76,17 @@ export interface TvToolDeps {
   launchDeep?: (id: string, contentId: string) => Promise<void>;
   // Búsqueda universal de webOS (apps y contenido registrado). Solo lectura.
   search?: (key: string) => Promise<unknown>;
+  // Guía pública de Movistar Plus+: qué echan y en qué canal (sin login).
+  guide?: (query: string) => Promise<
+    Array<{
+      channelName: string;
+      title: string;
+      desc: string;
+      start: Date;
+      stop: Date;
+      live: boolean;
+    }>
+  >;
   /**
    * Ráfaga de teclas por UNA conexión (src/tv/lgtv.ts tvKeys). Sin ella, la
    * tool encadena `key` una a una (mismo resultado, mucho más lento).
@@ -123,6 +134,7 @@ const Params = lazySchema(() =>
       Type.Literal('inspect'),
       Type.Literal('launch'),
       Type.Literal('search'),
+      Type.Literal('guide'),
       Type.Literal('key'),
       Type.Literal('type'),
       Type.Literal('toast'),
@@ -329,6 +341,9 @@ export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Para
       'action=launch con contentId abre el contenido exacto de una vez (Netflix/YouTube, ver contentId).',
       'action=search busca texto en la búsqueda universal de la tele (apps y contenido registrado),',
       'sin tocar nada; lo que devuelve depende de lo que cada app registre en webOS.',
+      'action=guide con text dice QUÉ ECHAN en Movistar Plus+ y en qué canal (fuente pública, sin',
+      'login): úsala cuando pidan un partido, una peli o un programa de Movistar. Luego para verlo:',
+      'abre la app con launch y busca el CANAL por su nombre exacto con type, verificando con look.',
       'action=volumeHalf lee el volumen real y lo deja en la mitad (nunca sube; si no puede leerlo, no toca nada).',
       'action=volumeStep sube/baja el volumen por pasos del mando (steps), action=channel cambia de canal (up/down/numero).',
       'action=command entiende una orden natural en castellano (text) y la ejecuta: "apaga la tele", "abre Netflix",',
@@ -502,6 +517,61 @@ async function runTvAction(
           },
         ],
         details: { query: key, results: raw as Record<string, unknown> },
+      };
+    }
+    case 'guide': {
+      // Qué echan en Movistar Plus+: fuente pública, la tele no se entera.
+      const query = (args.text ?? '').trim();
+      if (!query) throw new Error('action=guide necesita text: el partido, peli o programa a buscar.');
+      if (!deps.guide) {
+        throw new Error(
+          'Esta instalación no tiene la guía de Movistar Plus+: pregunta qué quieren ver y busca el canal a mano.',
+        );
+      }
+      const matches = await deps.guide(query);
+      if (matches.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `No encuentro «${query}» en la parrilla de Movistar Plus+ de las próximas 48 horas.`,
+            },
+          ],
+          details: { query, matches: 0 },
+        };
+      }
+      const fmt = (d: Date) =>
+        d.toLocaleString('es-ES', {
+          timeZone: 'Europe/Madrid',
+          weekday: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      const lines = matches.map((m) => {
+        const cuando = m.live
+          ? `AHORA (hasta ${m.stop.toLocaleString('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit' })})`
+          : `${fmt(m.start)} a ${m.stop.toLocaleString('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit' })}`;
+        return `«${m.title}» en ${m.channelName}, ${cuando}.`;
+      });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `En Movistar Plus+: ${lines.join(' ')} ` +
+              'Para verlo: abre Movistar Plus+ (launch) y busca el canal por su nombre con type, verificando con la captura.',
+          },
+        ],
+        details: {
+          query,
+          matches: matches.map((m) => ({
+            canal: m.channelName,
+            titulo: m.title,
+            empieza: m.start.toISOString(),
+            acaba: m.stop.toISOString(),
+            enEmision: m.live,
+          })),
+        },
       };
     }
     case 'state': {
