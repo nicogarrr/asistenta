@@ -41,22 +41,37 @@ function unicodeWords(re: RegExp): RegExp {
   return new RegExp(re.source.replaceAll('\\b', UNICODE_BOUNDARY), re.flags);
 }
 
-const CATEGORIES: RegExp[][] = [
-  // Corrección: the user is fixing something the agent believes.
-  [/\bme llamo\b/iu, /\ben realidad\b/iu, /\bmejor dicho\b/iu, /\bno es\b[^.!?]*?\bsino\b/iu],
-  // Preferencia.
-  [/\bprefiero\b/iu, /\bme gustan?\b/iu, /\bodio\b/iu, /\bsiempre\b/iu, /\bnunca\b/iu],
-  // Dato personal.
+/**
+ * Las regex se compilan la primera vez que hacen falta, no al importar: cada
+ * una con `\p{L}` y lookbehind cuesta ~0,5 ms y son 16, que pagaba cada
+ * arranque de `pa` aunque nunca llegara un mensaje.
+ */
+function lazy<T>(build: () => T): () => T {
+  let value: T | undefined;
+  return () => {
+    if (value === undefined) value = build();
+    return value;
+  };
+}
+
+const CATEGORIES = lazy((): RegExp[][] =>
   [
-    /(?<!\bque\s)\btengo\s/iu, // not "el correo que tengo"
-    /\bmi\s+[\p{L}\p{N}_]+\s+es\b/iu,
-    /\bvivo en\b/iu,
-    /\btrabajo en\b/iu,
-    /\bmi objetivo\b/iu,
-  ],
-  // Decisión.
-  [/\bhe decidido\b/iu, /\bvoy a\b/iu, /\bempezar[ée](?!\p{L})/iu],
-].map((patterns) => patterns.map(unicodeWords));
+    // Corrección: the user is fixing something the agent believes.
+    [/\bme llamo\b/iu, /\ben realidad\b/iu, /\bmejor dicho\b/iu, /\bno es\b[^.!?]*?\bsino\b/iu],
+    // Preferencia.
+    [/\bprefiero\b/iu, /\bme gustan?\b/iu, /\bodio\b/iu, /\bsiempre\b/iu, /\bnunca\b/iu],
+    // Dato personal.
+    [
+      /(?<!\bque\s)\btengo\s/iu, // not "el correo que tengo"
+      /\bmi\s+[\p{L}\p{N}_]+\s+es\b/iu,
+      /\bvivo en\b/iu,
+      /\btrabajo en\b/iu,
+      /\bmi objetivo\b/iu,
+    ],
+    // Decisión.
+    [/\bhe decidido\b/iu, /\bvoy a\b/iu, /\bempezar[ée](?!\p{L})/iu],
+  ].map((patterns) => patterns.map(unicodeWords)),
+);
 
 /**
  * What survives the question filter. "¿siempre llegas tarde?" is about the
@@ -64,8 +79,10 @@ const CATEGORIES: RegExp[][] = [
  * tarde" carries a real preference in its own clause and does. A question that
  * names the user ("me llamo…", "tengo…") is an affirmation in disguise.
  */
-const STRONG_AFFIRMATION = unicodeWords(
-  /\b(?:me llamo|me llaman|prefiero|me gustan?|tengo|vivo en|trabajo en|mi objetivo|he decidido|voy a|mi\s+[\p{L}\p{N}_]+\s+es)\b/iu,
+const STRONG_AFFIRMATION = lazy(() =>
+  unicodeWords(
+    /\b(?:me llamo|me llaman|prefiero|me gustan?|tengo|vivo en|trabajo en|mi objetivo|he decidido|voy a|mi\s+[\p{L}\p{N}_]+\s+es)\b/iu,
+  ),
 );
 
 /** Everything that is only a greeting, so "hola, ¿qué tal?" is not a fact. */
@@ -99,8 +116,10 @@ const GREETINGS = new Set([
  * "porque" and "como" are deliberately absent: "porque prefiero el té" is an
  * affirmation.
  */
-const QUESTION_START = unicodeWords(
-  /^(?:qué|cómo|cuándo|dónde|quién|cuál|cuánto|cuántos|cuántas|por qué|puedes|podrías|podrias|sabes|dime|what|how|when|where|why|who|which|can you|could you|would you|do you)\b/iu,
+const QUESTION_START = lazy(() =>
+  unicodeWords(
+    /^(?:qué|cómo|cuándo|dónde|quién|cuál|cuánto|cuántos|cuántas|por qué|puedes|podrías|podrias|sabes|dime|what|how|when|where|why|who|which|can you|could you|would you|do you)\b/iu,
+  ),
 );
 
 /**
@@ -111,7 +130,7 @@ const QUESTION_START = unicodeWords(
  */
 const REQUEST_VERB =
   '(?:resúmeme|resume|resumen|busca|búscame|dame|dime|haz|hazme|crea|créame|abre|ábreme|envía|envíame|manda|mándame|redacta|escribe|recuérdame|pon|ponme|lista|cancela|mira|llévame|reserva|compra|ayúdame|revisa|calcula|compara|traduce|explícame|genera|prepara|organiza)';
-const REQUEST_REGION = new RegExp(`(?:^|[:,;]\\s*)${REQUEST_VERB}(?![\\p{L}])`, 'iu');
+const REQUEST_REGION = lazy(() => new RegExp(`(?:^|[:,;]\\s*)${REQUEST_VERB}(?![\\p{L}])`, 'iu'));
 /** Where a quote cuts. Commas too: a quote is what the user recognises. */
 const CLAUSE_MARK = /[.!?,;:…¡¿\n]/;
 
@@ -125,7 +144,7 @@ function trimClause(raw: string): string {
 }
 
 function startsLikeQuestion(body: string): boolean {
-  return QUESTION_START.test(body);
+  return QUESTION_START().test(body);
 }
 
 /**
@@ -186,11 +205,11 @@ export function detectMemoryWorthy(text: string): MemoryNudge {
   if (words && words.length > 0 && words.every((word) => GREETINGS.has(word))) return NOTHING;
 
   const regions = regionsOf(text);
-  for (const patterns of CATEGORIES) {
+  for (const patterns of CATEGORIES()) {
     for (const pattern of patterns) {
       for (const region of regions) {
-        if (region.question && !STRONG_AFFIRMATION.test(region.text)) continue;
-        if (REQUEST_REGION.test(region.text)) continue;
+        if (region.question && !STRONG_AFFIRMATION().test(region.text)) continue;
+        if (REQUEST_REGION().test(region.text)) continue;
         const match = pattern.exec(region.text);
         if (!match) continue;
         return { worth: true, suggestion: suggest(clauseAround(region.text, match)) };
