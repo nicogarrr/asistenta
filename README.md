@@ -422,7 +422,7 @@ npm test
 The suite has 1,200+ test files; the runner executes a general phase and a serial phase for resource tests. CI runs on every push on Linux (`CI` workflow) and Windows (`Windows` workflow), and the installer workflow attaches the `.exe` installer to each GitHub release. Browser/desktop tests require their dependencies; Linux tests do not replace Windows verification. A test with a simulated process does not prove a real daemon stopped.
 
 - [`ROADMAP.md`](ROADMAP.md): work context and debts; may contain plans not yet implemented.
-- [`docs/voz-piper.md`](docs/voz-piper.md): local fallback voice with Piper (opt-in `PA_PIPER_MODEL`).
+- [`docs/voz-piper.md`](docs/voz-piper.md): local neural voice (sherpa-onnx) that downloads itself, with SAPI/Piper as fallback.
 - [`docs/resumen-diario.md`](docs/resumen-diario.md): morning briefing (opt-in `PA_BRIEFING=1`) and `/resumen hoy`.
 - [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): startup validation and its limits.
 - [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): local diagnostics and QA.
@@ -466,7 +466,7 @@ Propose small changes, explain the problem and add a check that reproduces it. U
 
 ## License and credits
 
-MIT, the same license `package.json` declares: full text in [LICENSE](LICENSE). Dependencies keep their own licenses; for example, `ffmpeg-static` ships an ffmpeg binary (GPL-3.0 or later) and `lamejs` is LGPL-3.0.
+MIT, the same license `package.json` declares: full text in [LICENSE](LICENSE). Dependencies keep their own licenses; for example, `ffmpeg-static` ships an ffmpeg binary (GPL-3.0 or later) and `lamejs` is LGPL-3.0. The local voice uses `sherpa-onnx-node` (Apache-2.0; its native build includes espeak-ng, GPL-3.0, for phonemes) and downloads a voice model on first use from the official sherpa-onnx `tts-models` release: by default `es_ES-sharvard-medium` (Piper voice trained on the Sharvard corpus, University of Edinburgh, CC BY 3.0), or optionally `es_ES-davefx-medium` (dataset CC0).
 
 - The question and explanation skills are inspired by [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock (MIT), rewritten in Spanish ([docs/skills-matt.md](docs/skills-matt.md)).
 - [REA](https://github.com/morluto/rea) (MIT) is a separate tool; Asistenta only uses it if you have it installed ([docs/rea.md](docs/rea.md)).

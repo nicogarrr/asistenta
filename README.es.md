@@ -423,7 +423,7 @@ npm test
 La suite tiene más de 1.200 archivos de test; el runner ejecuta una fase general y una fase serial para pruebas de recursos. CI corre en cada push en Linux (workflow `CI`) y en Windows (workflow `Windows`), y el workflow del instalador adjunta el `.exe` en cada release de GitHub. Las pruebas de navegador/escritorio requieren sus dependencias; las pruebas Linux no sustituyen la verificación de Windows. Un test con un proceso simulado no prueba que un daemon real se haya detenido.
 
 - [`ROADMAP.md`](ROADMAP.md): contexto de trabajo y deudas; puede contener planes aún no implementados.
-- [`docs/voz-piper.md`](docs/voz-piper.md): voz local de respaldo con Piper (opt-in `PA_PIPER_MODEL`).
+- [`docs/voz-piper.md`](docs/voz-piper.md): voz local neuronal (sherpa-onnx) que se descarga sola, con SAPI/Piper de respaldo.
 - [`docs/resumen-diario.md`](docs/resumen-diario.md): resumen de la mañana (opt-in `PA_BRIEFING=1`) y `/resumen hoy`.
 - [`docs/startup-preflight-qa.md`](docs/startup-preflight-qa.md): validación de arranque y sus límites.
 - [`docs/diagnose-cli-qa.md`](docs/diagnose-cli-qa.md): diagnóstico local y QA.
@@ -456,7 +456,7 @@ Propón cambios pequeños, explica el problema y añade una comprobación que lo
 
 ## Licencia y créditos
 
-MIT, la misma que declara `package.json`: texto completo en [LICENSE](LICENSE). Las dependencias conservan sus propias licencias; por ejemplo, `ffmpeg-static` trae un binario de ffmpeg (GPL-3.0 o posterior) y `lamejs` es LGPL-3.0.
+MIT, la misma que declara `package.json`: texto completo en [LICENSE](LICENSE). Las dependencias conservan sus propias licencias; por ejemplo, `ffmpeg-static` trae un binario de ffmpeg (GPL-3.0 o posterior) y `lamejs` es LGPL-3.0. La voz local usa `sherpa-onnx-node` (Apache-2.0; su binario nativo incluye espeak-ng, GPL-3.0, para la fonética) y descarga un modelo de voz la primera vez desde la release oficial `tts-models` de sherpa-onnx: por defecto `es_ES-sharvard-medium` (voz Piper entrenada con el corpus Sharvard, Universidad de Edimburgo, CC BY 3.0) u, opcionalmente, `es_ES-davefx-medium` (dataset CC0).
 
 - Las skills de preguntas y explicaciones se inspiran en [mattpocock/skills](https://github.com/mattpocock/skills), de Matt Pocock (MIT), con redacción propia en castellano ([docs/skills-matt.md](docs/skills-matt.md)).
 - [REA](https://github.com/morluto/rea) (MIT) es una herramienta aparte; Asistenta solo la usa si la tienes instalada ([docs/rea.md](docs/rea.md)).
