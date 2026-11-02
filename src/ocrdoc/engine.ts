@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PDFDocument, PDFFont, PDFPage } from 'pdf-lib';
+import { wallDateMinute } from '../datecontext.js';
 import { log } from '../log.js';
 import type { PageProgress } from '../pdfmd/progress.js';
 import type { OcrResult } from '../screen/ocr.js';
@@ -159,7 +160,7 @@ export function buildMarkdown(opts: {
   const out: string[] = [
     `# ${safeTitle(opts.name)}`,
     '',
-    `> Convertido: ${opts.at.toISOString().slice(0, 16).replace('T', ' ')} UTC · Páginas: ${opts.pages.length}`,
+    `> Convertido: ${wallDateMinute(opts.at) || `${opts.at.toISOString().slice(0, 16).replace('T', ' ')} UTC`} · Páginas: ${opts.pages.length}`,
     '> Aviso: parte del texto se ha reconocido automáticamente (OCR) y puede tener errores en cifras, nombres y tildes. No entiende tablas ni columnas, y el orden de lectura no está garantizado. Compruébalo con el original antes de fiarte de un dato.',
     '',
   ];
