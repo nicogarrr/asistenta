@@ -183,6 +183,7 @@ import { listReplyInbox, readReplyThread, resolveReplyCard, searchInbox } from '
 import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { mailStatus } from './mail/status.js';
 import { mailAttentionText } from './mail/triage.js';
+import { createMailTriggerFeed, kvSeenIds } from './mail/trigger.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
@@ -2924,7 +2925,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // agenda) corre en paralelo con el resto del apagado y se espera justo
       // antes de cerrar las bases de datos.
       const vigilanteDrain = vigilante.stop();
-      const idleDrain = mailIdle?.stop();
+      const idleDrain = mailIdle.stop();
       const attentionDrain = attention.stop();
       const channelDrain = registry.stopAll(true);
       // Observe early rejection while aborting turns; propagate it after drains.
@@ -3132,36 +3133,53 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return true;
     },
   });
+  // Disparador «correo» (token-cero): un correo nuevo de tal remitente y/o asunto
+  // dispara una rutina guardada. Usa la misma conexión IDLE (solo lectura) que el ojo.
+  const hasMailTrigger = (): boolean =>
+    store.listTriggers().some((t) => t.enabled && t.event === 'correo');
+  const mailTriggers = createMailTriggerFeed({
+    emit: (event) => triggerEngine.emit(event),
+    seen: kvSeenIds(
+      { get: (k) => store.kvGet(k), set: (k, v) => store.kvSet(k, v) },
+      'trigger:correo:seen',
+    ),
+    active: hasMailTrigger,
+    onError: (err) => log.warn('trigger correo falló', { err: String(err) }),
+  });
   // IDLE requires existing mail credentials and a verified owner DM. No new account or scope.
-  const mailIdle = attentionFreeConfig(config)
-    ? new MailIdleTransport({
-        account: loadReadMailAccount,
-        load: (scope) => {
-          try {
-            const raw = store.kvGet(`attention:imap:${scope}`);
-            return raw ? (JSON.parse(raw) as IdleCursor) : null;
-          } catch {
-            return null;
-          }
-        },
-        save: (scope, cursor) => store.kvSet(`attention:imap:${scope}`, JSON.stringify(cursor)),
-        deliver: async (messages, scope) => {
-          if (!getOjoEnabled(memoryDb)) throw new Error('Attention disabled');
-          const deliveries = messages.map((m) => ({
-            source: 'mail' as const,
-            id: `${scope}:${m.id}`,
-            text: mailAttentionText(m),
-            at: m.at,
-          }));
-          await attention.offer(deliveries);
-          if (!deliveries.every((event) => attention.accepted(event))) {
-            throw new Error('Attention queue did not accept delivery');
-          }
-        },
-        status: (state) => log.info('attention IMAP', { state }),
-      })
-    : null;
-  mailIdle?.start();
+  // Without the free attention model it only runs when a «correo» trigger exists.
+  const mailIdle = new MailIdleTransport({
+    account: loadReadMailAccount,
+    load: (scope) => {
+      try {
+        const raw = store.kvGet(`attention:imap:${scope}`);
+        return raw ? (JSON.parse(raw) as IdleCursor) : null;
+      } catch {
+        return null;
+      }
+    },
+    save: (scope, cursor) => store.kvSet(`attention:imap:${scope}`, JSON.stringify(cursor)),
+    deliver: async (messages, scope) => {
+      await mailTriggers(messages, scope);
+      if (!attentionFreeConfig(config) || !getOjoEnabled(memoryDb)) {
+        // Solo disparadores: el correo ya se ofreció; el ojo no lo quiere.
+        if (hasMailTrigger()) return;
+        throw new Error('Attention disabled');
+      }
+      const deliveries = messages.map((m) => ({
+        source: 'mail' as const,
+        id: `${scope}:${m.id}`,
+        text: mailAttentionText(m),
+        at: m.at,
+      }));
+      await attention.offer(deliveries);
+      if (!deliveries.every((event) => attention.accepted(event))) {
+        throw new Error('Attention queue did not accept delivery');
+      }
+    },
+    status: (state) => log.info('attention IMAP', { state }),
+  });
+  if (attentionFreeConfig(config) || hasMailTrigger()) mailIdle.start();
   // Descargas: nace apagado (/ojo descargas on). Un vigilante de carpeta por encendido.
   const downloadsCtl = createDownloadsController({
     db: memoryDb,
@@ -4356,6 +4374,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       match,
       args: macroArgs,
     });
+    // Un disparador de correo necesita la conexión IDLE: arranca ya, sin reiniciar
+    // (start() no hace nada si ya estaba en marcha).
+    if (event === 'correo') mailIdle.start();
     await say(
       inbound,
       `Disparador guardado: cuando [${event}] contenga "${match}", disparo "${routine.name}" ` +
