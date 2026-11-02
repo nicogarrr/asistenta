@@ -45,8 +45,9 @@ describe('/estado con títulos en negrita', () => {
   it('cmdEstado manda el texto con marksWithTitles(…, isStatusTitle) y formato marks', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const body = src.slice(src.indexOf('const cmdEstado = async'));
-    expect(body.slice(0, 6000)).toContain(
-      "await say(inbound, marksWithTitles(text, isStatusTitle), { quote: true, format: 'marks' });",
+    // Con «🔄 Buscar actualización ahora» debajo para el dueño (botonupd), mismo formato.
+    expect(body.slice(0, 6000)).toMatch(
+      /await say\(inbound, marksWithTitles\(text, isStatusTitle\), \{\s*quote: true,\s*format: 'marks',/,
     );
   });
 });

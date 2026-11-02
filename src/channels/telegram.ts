@@ -1,4 +1,5 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
+import { UPDATE_CALLBACK_PREFIX } from '../autoupdate-boton.js';
 import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
 import { sliceSafe } from '../text.js';
@@ -813,6 +814,13 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // «🔄 Buscar actualización ahora»: su propio camino, nunca toca aprobaciones.
+    // Dueño + chat privado lo comprueba el daemon.
+    if (data.startsWith(UPDATE_CALLBACK_PREFIX)) {
+      await this.#onUpdatePress(ctx, handlers, data, userId);
+      return;
+    }
+
     // Áreas de /funciones: solo cambian el texto del mensaje, nunca tocan
     // aprobaciones. Quién ve qué lo decide el daemon (dueño en privado o no).
     if (data.startsWith(FUNCIONES_CALLBACK_PREFIX)) {
@@ -949,6 +957,49 @@ export class TelegramChannel implements ChannelAdapter {
       ),
     ).catch(() => {
       handlers.log('warn', 'tv button result not sent', { data: data.slice(0, 64) });
+    });
+  }
+
+  /**
+   * «🔄 Buscar actualización ahora»: el daemon decide en el acto (lanza la búsqueda
+   * aparte o explica por qué no) y el aviso del botón sale enseguida; la respuesta de
+   * la búsqueda llega luego como mensaje del proceso que la hace.
+   */
+  async #onUpdatePress(
+    ctx: Context,
+    handlers: ChannelHandlers,
+    data: string,
+    userId: number,
+  ): Promise<void> {
+    const chatId = ctx.callbackQuery?.message?.chat?.id;
+    if (chatId === undefined || !handlers.onUpdateButton) {
+      await ctx.answerCallbackQuery({ text: UPDATE_BUTTON_STALE }).catch(() => {});
+      return;
+    }
+    const result = await handlers
+      .onUpdateButton({
+        channel: 'telegram',
+        chatId: String(chatId),
+        userId: String(userId),
+        data: data.slice(0, 64),
+      })
+      .catch(() => {
+        handlers.log('warn', 'update button failed', {});
+        return { notice: UPDATE_BUTTON_FAILED, reply: undefined };
+      });
+    await ctx
+      .answerCallbackQuery({ text: clipTelegramText(result.notice, TV_BUTTON_NOTICE_MAX) })
+      .catch(() => {});
+    if (!result.reply) return;
+    const reply = result.reply;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.sendMessage(chatId, clipTelegramText(reply)),
+        20_000,
+        'sendMessage timed out',
+      ),
+    ).catch(() => {
+      handlers.log('warn', 'update button reply not sent', {});
     });
   }
 
@@ -2264,6 +2315,8 @@ const TV_BUTTON_ACK_MS = 2500;
 /** Lo que cabe en el aviso de un botón (Telegram corta en 200). */
 const TV_BUTTON_NOTICE_MAX = 190;
 const TV_BUTTON_SENDING = 'Enviando a la tele…';
+const UPDATE_BUTTON_STALE = 'Este botón ya no sirve. Escribe /actualizacion para ver cómo va.';
+const UPDATE_BUTTON_FAILED = 'No he podido buscar la actualización. En el PC: pa autoupdate now.';
 const TV_BUTTON_STALE =
   'Este botón ya no sirve. Dime qué hago con la tele, por ejemplo «abre Netflix».';
 /**

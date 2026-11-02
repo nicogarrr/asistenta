@@ -31,6 +31,7 @@ export class ChannelRegistry {
     this.#handlers = handlers;
     const onTvButton = handlers.onTvButton?.bind(handlers);
     const onFuncionesButton = handlers.onFuncionesButton?.bind(handlers);
+    const onUpdateButton = handlers.onUpdateButton?.bind(handlers);
     for (const adapter of this.#adapters.values()) {
       await adapter.start({
         onMessage: (inbound) => handlers.onMessage(inbound),
@@ -42,6 +43,7 @@ export class ChannelRegistry {
         // contestaba «Este botón ya no sirve» y no mandaba nada a la tele.
         onTvButton,
         onFuncionesButton,
+        onUpdateButton,
         log: (level, msg, fields) => log[level](`[${adapter.name}] ${msg}`, fields ?? {}),
       });
       log.info('channel started', { channel: adapter.name });
