@@ -32,12 +32,13 @@ export interface AltavozInboundDeps {
 export type AltavozInboundResult = 'skipped' | 'queued' | 'full';
 
 /**
- * Confirmación corta cuando la nota solo sonó (modo megáfono, Nico 2 nov 2026: con el
+ * Confirmación corta al encolar la nota, antes de que suene: «Sonando…», no «Sonó» (Nico,
+ * 2 nov 23:04), porque si la descarga falla después llega «No he podido soltarla» (modo megáfono, Nico 2 nov 2026: con el
  * altavoz encendido su nota SUENA y nada más; no se transcribe ni se contesta. Para
  * hablarle al asistente: /altavoz off o escribir).
  */
 export function altavozConfirmText(mode: 'pc' | 'tele'): string {
-  return mode === 'tele' ? '📺 Sonó en la tele.' : '🔊 Sonó en el PC.';
+  return mode === 'tele' ? '📺 Sonando en la tele…' : '🔊 Sonando…';
 }
 
 /**
