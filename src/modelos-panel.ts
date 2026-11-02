@@ -67,10 +67,7 @@ export type AplicarModeloResult =
   | { ok: true; mensaje: string; modelo: string }
   | { ok: false; mensaje: string };
 
-export function aplicarModeloPanel(
-  id: string,
-  deps: AplicarModeloDeps = {},
-): AplicarModeloResult {
+export function aplicarModeloPanel(id: string, deps: AplicarModeloDeps = {}): AplicarModeloResult {
   const opcion = MODELOS_PANEL.find((m) => m.id === id);
   if (!opcion) {
     return {

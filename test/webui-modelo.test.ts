@@ -16,7 +16,10 @@ const deps: WebUiDeps = {
   sessions: () => ({ sessions: [] }),
   memory: () => ({ items: [] }),
   auditVerify: async () => ({ ok: true }),
-  setClave: async (clave) => ({ ok: true, mensaje: `Clave guardada (${clave.length} caracteres).` }),
+  setClave: async (clave) => ({
+    ok: true,
+    mensaje: `Clave guardada (${clave.length} caracteres).`,
+  }),
   setModelo: async (id) => {
     recibido = id;
     if (id === 'glm-5.3') {

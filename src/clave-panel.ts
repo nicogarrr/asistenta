@@ -23,7 +23,8 @@ export async function aplicarClaveGo(
   if (limpia.length < 10 || /\s/.test(limpia)) {
     return {
       ok: false,
-      mensaje: 'Esa clave no tiene buena pinta (corta o con espacios). Cópiala entera de tu cuenta de OpenCode (apartado Go) y prueba otra vez.',
+      mensaje:
+        'Esa clave no tiene buena pinta (corta o con espacios). Cópiala entera de tu cuenta de OpenCode (apartado Go) y prueba otra vez.',
     };
   }
   const fetchFn = deps.fetchFn ?? fetch;
@@ -36,13 +37,15 @@ export async function aplicarClaveGo(
   } catch {
     return {
       ok: false,
-      mensaje: 'No puedo comprobar la clave ahora mismo (sin conexión o Go no responde). No la he guardado: prueba en un momento.',
+      mensaje:
+        'No puedo comprobar la clave ahora mismo (sin conexión o Go no responde). No la he guardado: prueba en un momento.',
     };
   }
   if (res.status === 401 || res.status === 403) {
     return {
       ok: false,
-      mensaje: 'OpenCode Go dice que esa clave no vale. Cópiala de nuevo de tu cuenta (opencode.ai, apartado Go). No la he guardado.',
+      mensaje:
+        'OpenCode Go dice que esa clave no vale. Cópiala de nuevo de tu cuenta (opencode.ai, apartado Go). No la he guardado.',
     };
   }
   if (!res.ok) {
@@ -58,6 +61,7 @@ export async function aplicarClaveGo(
   await setKey('provider:apiKey', limpia);
   return {
     ok: true,
-    mensaje: 'Clave guardada y comprobada con OpenCode Go. Las conversaciones nuevas ya la usan; si alguna abierta sigue fallando, escribe cualquier cosa de nuevo.',
+    mensaje:
+      'Clave guardada y comprobada con OpenCode Go. Las conversaciones nuevas ya la usan; si alguna abierta sigue fallando, escribe cualquier cosa de nuevo.',
   };
 }

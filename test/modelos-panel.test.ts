@@ -1,11 +1,7 @@
 // Selector de modelo de la tarjeta Estado: solo opciones de coste cero
 // verificadas (medición 2-nov-2026: cost 0 + tool-calling en cada una).
 import { describe, expect, it } from 'vitest';
-import {
-  aplicarModeloPanel,
-  MODELOS_PANEL,
-  upsertEnvLines,
-} from '../src/modelos-panel.js';
+import { aplicarModeloPanel, MODELOS_PANEL, upsertEnvLines } from '../src/modelos-panel.js';
 
 describe('upsertEnvLines', () => {
   it('sustituye la línea activa existente', () => {
