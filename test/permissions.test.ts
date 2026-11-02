@@ -474,7 +474,11 @@ describe('Gate: repeat after an unsettled call', () => {
   // Con `write` (sin ventana de tarea): shell ya no sirve para probar el memo,
   // porque desde la regla «la tarea que él pidió no repregunta» (2-nov-2026)
   // los comandos no destructivos se cubren entre sí durante la ventana.
-  const call = { tool: 'write', args: { path: 'notas.txt', content: 'hi' }, actor: 'local' } as const;
+  const call = {
+    tool: 'write',
+    args: { path: 'notas.txt', content: 'hi' },
+    actor: 'local',
+  } as const;
   const make = () => {
     let asked = 0;
     const gate = new Gate({
