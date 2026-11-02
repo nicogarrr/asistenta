@@ -50,7 +50,10 @@ if not defined NODE_EXE (
 
 rem pa iniciar comprueba todo (verde/rojo, con el arreglo al lado) y, si nada lo
 rem impide, arranca igual que pa serve. Si algo falla, la lista queda en pantalla.
-"%NODE_EXE%" dist\cli.js iniciar
+rem dist\pa.js es la entrada con cache de compilacion (arranca antes); sin ella, dist\cli.js.
+set "PA_JS=dist\cli.js"
+if exist dist\pa.js set "PA_JS=dist\pa.js"
+"%NODE_EXE%" %PA_JS% iniciar
 if errorlevel 1 (
     echo [levantar] No ha arrancado o termino con error: revisa la lista de arriba.
     pause

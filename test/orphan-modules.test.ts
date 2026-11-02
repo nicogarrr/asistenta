@@ -55,7 +55,11 @@ function reachableFrom(entry: string, all: Set<string>): Set<string> {
 
 describe('módulos sueltos (no conectados a `pa`)', () => {
   const all = new Set(walk('src').map((p) => posix(relative('.', p))));
-  const reachable = reachableFrom('src/cli.ts', all);
+  // src/pa.ts es la entrada de `pa` (caché de compilación) y carga src/cli.ts.
+  const reachable = new Set([
+    ...reachableFrom('src/cli.ts', all),
+    ...reachableFrom('src/pa.ts', all),
+  ]);
   const unwired = [...all].filter((f) => !reachable.has(f)).sort();
 
   it('cada módulo de src/ está conectado o explicado en KNOWN_UNWIRED', () => {
