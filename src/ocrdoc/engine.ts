@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PDFDocument, type PDFFont, type PDFPage, StandardFonts } from 'pdf-lib';
+import type { PDFDocument, PDFFont, PDFPage } from 'pdf-lib';
 import { log } from '../log.js';
 import type { PageProgress } from '../pdfmd/progress.js';
 import type { OcrResult } from '../screen/ocr.js';
@@ -196,10 +196,12 @@ export async function ocrPdf(
   deps: EngineDeps,
   now: () => Date = () => new Date(),
 ): Promise<OcrDocResult> {
+  // pdf-lib tarda en cargarse: solo se carga al tratar un documento, no al arrancar.
+  const pdfLib = await import('pdf-lib');
   let doc: PDFDocument;
   let total: number;
   try {
-    doc = await PDFDocument.load(bytes);
+    doc = await pdfLib.PDFDocument.load(bytes);
     total = doc.getPageCount();
   } catch (err) {
     if (/encrypt/i.test(errMsg(err)))
@@ -226,7 +228,7 @@ export async function ocrPdf(
     );
   }
 
-  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
   const reports: PageReport[] = [];
   const texts: string[] = [];
   const pdfPath = join(deps.workDir, 'entrada.pdf');
@@ -402,7 +404,8 @@ export async function ocrPhoto(
       `La imagen es demasiado grande (${size.width}x${size.height}). Reduce su tamaño y vuelve a mandarla.`,
     );
   }
-  const doc = await PDFDocument.create();
+  const pdfLib = await import('pdf-lib');
+  const doc = await pdfLib.PDFDocument.create();
   let image: Awaited<ReturnType<PDFDocument['embedPng']>>;
   try {
     image = mime === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
@@ -415,7 +418,7 @@ export async function ocrPhoto(
   // 0,75 pt por píxel (96 dpi): una foto de móvil sale como página grande pero proporcionada.
   const page = doc.addPage([image.width * 0.75, image.height * 0.75]);
   page.drawImage(image, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
-  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
   const file = join(deps.workDir, mime === 'image/png' ? 'foto.png' : 'foto.jpg');
   await writeFile(file, bytes);
   const reports: PageReport[] = [];
