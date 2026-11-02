@@ -29,6 +29,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { type ActionEntry, ActionLog } from './audit/log.js';
 import type { Config } from './config.js';
 import { wallHourMinute } from './datecontext.js';
+import { describeBusy, readBusyDetail } from './ocupada.js';
 import { paths, REPO_DIR } from './paths.js';
 import { loadDatabaseSync } from './sqlite.js';
 import { sliceSafe } from './text.js';
@@ -93,6 +94,10 @@ export interface DiagnoseState {
   heartbeatAgeMs: number | null;
   version: string | null;
   node: string;
+  /** Por qué se cerró la vez anterior (ultimo-cierre.json), con el error si lo hubo. */
+  lastExit?: { at: string; reason: string; error?: string; stack?: string };
+  /** Qué tarea o permiso mantiene a Asistenta «ocupada» ahora (misma fuente que la actualización). */
+  busy?: string;
 }
 
 export interface ToolHealth {
@@ -507,6 +512,32 @@ export async function diagnose(deps: DiagnoseInput = {}): Promise<DiagnoseReport
     version: null,
     node: process.version,
   };
+  try {
+    const ex = JSON.parse(readFileSync(join(stateDir, 'ultimo-cierre.json'), 'utf8')) as {
+      at?: string;
+      reason?: string;
+      error?: { name?: string; message?: string; stack?: string; repeated?: number };
+    };
+    if (typeof ex.at === 'string' && typeof ex.reason === 'string') {
+      state.lastExit = {
+        at: ex.at,
+        reason: ex.reason,
+        error: ex.error ? `${ex.error.name ?? 'Error'}: ${ex.error.message ?? ''}` : undefined,
+        stack: ex.error?.stack,
+      };
+    }
+  } catch {
+    // sin cierre anterior registrado
+  }
+  try {
+    const detail = readBusyDetail(stateDir, at);
+    if (detail.items.length > 0) state.busy = describeBusy(detail.items, at);
+    else if (detail.hung.length > 0) {
+      state.busy = `colgado (no frena la actualización): ${describeBusy(detail.hung, at)}`;
+    }
+  } catch {
+    // sin fichero de ocupada
+  }
   const pkgText = readFileSafe(pathsOf.pkg);
   if (pkgText) {
     try {
@@ -756,6 +787,18 @@ function renderText(data: DiagnoseData): string {
       : 'última señal de vida: ninguna, Asistenta no está dando señales de vida',
   );
   stateLines.push(`versión: ${state.version ?? 'desconocida'} · node ${state.node}`);
+  stateLines.push(`ocupada con: ${state.busy ?? 'nada'}`);
+  if (state.lastExit) {
+    const ex = state.lastExit;
+    stateLines.push(`último cierre: ${ex.at} (${ex.reason})${ex.error ? `: ${ex.error}` : ''}`);
+    if (ex.stack)
+      stateLines.push(
+        ...ex.stack
+          .split('\n')
+          .slice(0, 6)
+          .map((l) => `  ${l}`),
+      );
+  }
   stateLines.push(
     `hilos activos: ${context.threads === null ? 'no informado (desde aquí no veo a Asistenta en marcha)' : context.threads}`,
   );

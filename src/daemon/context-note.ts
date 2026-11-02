@@ -15,6 +15,7 @@ import type { SessionStore } from '../memory/sessions.js';
 import type { MemorySnapshot } from '../memory/snapshot.js';
 import type { WorkstreamStore } from '../memory/workstreams.js';
 import { type MemoryStore, memoryScopesFor } from '../memory.js';
+import { describeBusy, interruptedTasks, openBusyItems } from '../ocupada.js';
 import { renderPersonality } from '../personality.js';
 import type { ProjectContextStore } from '../project-context.js';
 import { skillsForContext } from '../skills/builtin.js';
@@ -119,6 +120,22 @@ export function buildContextNote(
     } catch (err) {
       log.warn('recent sessions failed', { err: String(err) });
     }
+  }
+  // Estado real de las tareas (misma fuente que /estado y que la actualización): qué sigue
+  // abierto en otro turno y qué cortó el último reinicio. Sin esto, «¿cómo vas?» se
+  // contestaba de memoria («sin nada a medias») con la tarea colgada o cortada.
+  if (ownerView) {
+    const mine = (request ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const running = openBusyItems().filter((i) => i.kind !== 'turnos' || i.label !== mine);
+    const cut = interruptedTasks();
+    const lines: string[] = [];
+    if (running.length) lines.push(`Abierto ahora: ${describeBusy(running)}.`);
+    if (cut.length) {
+      lines.push(
+        `El último reinicio CORTÓ: ${describeBusy(cut)}. Ya no sigue en marcha: dilo tal cual, no digas que no hay nada a medias, y si te pide seguir retómalo sin repreguntar lo que ya autorizó.`,
+      );
+    }
+    if (lines.length) parts.push(`<tareas>\n${lines.join('\n')}\n</tareas>`);
   }
   const routines = store.listRoutines(thread.key).filter((r) => r.enabled);
   if (routines.length) {

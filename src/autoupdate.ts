@@ -209,6 +209,8 @@ export interface AutoupdateDeps {
   npm(args: string[], timeoutMs?: number): Promise<CmdResult>;
   daemonState(): DaemonRunState;
   busy(): BusyState;
+  /** Qué tarea o permiso espera exactamente (para el aviso de «lo dejo para luego»). */
+  busyWhy?(): string;
   /** Cierre limpio del daemon, SIN marcarlo como parado a propósito. */
   stopDaemon(): Promise<void>;
   /** Arranca la tarea del daemon, igual que el vigilante. */
@@ -462,6 +464,10 @@ export async function runAutoupdate(
     }
     if (deps.daemonState() !== 'running') return skip('no-en-marcha', 'aplazada');
     const busy = deps.busy();
+    if (busy === 'ocupada') {
+      const why = deps.busyWhy?.() ?? '';
+      return skip(why ? `${SKIPS.ocupada ?? ''}. Espera: ${why}` : busy, 'aplazada');
+    }
     if (busy !== 'libre') return skip(busy, 'aplazada');
 
     const log = await git(['log', '--no-merges', '--format=%s', `${old}..${remote}`]);

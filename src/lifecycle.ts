@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { writeFileReplacing } from './fs-tmp.js';
-import { log } from './log.js';
+import { log, scrubLogValue } from './log.js';
 import { paths } from './paths.js';
 import { formatStartRecord, ownIdentity, sameProcessAsRecorded } from './process-identity.js';
 
@@ -280,6 +280,7 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   const stop = (reason: string, code = 0): void => {
     if (closing) return;
     closing = true;
+    if (reason !== 'uncaughtException') writeLastExit(stateDir, reason);
     // Mark the exit as unconfirmed first; the marker is only removed on a clean finish.
     try {
       writeFileSync(stale, `${process.pid} ${reason}\n`, 'utf8');
@@ -336,12 +337,38 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   process.on('message', (m) => {
     if (m === 'shutdown') stop('scm-shutdown');
   });
+  // Un fallo en bucle (un temporizador que lanza en cada vuelta) llegó a escribir 342 mil
+  // líneas «uncaught exception» durante el cierre. Solo la primera se registra entera, con
+  // su traza; las demás se cuentan, y si no paran el proceso sale ya.
+  let uncaughtCount = 0;
   process.on('uncaughtException', (err) => {
-    log.error('uncaught exception, shutting down', { err });
-    stop('uncaughtException', 1);
+    uncaughtCount += 1;
+    if (uncaughtCount === 1) {
+      const detail = errorDetail(err);
+      log.error('uncaught exception, shutting down', { err, stack: detail.stack });
+      writeLastExit(stateDir, 'uncaughtException', detail);
+      stop('uncaughtException', 1);
+    } else if (uncaughtCount === 10 || uncaughtCount === 100) {
+      log.error('uncaught exception repeated', { times: uncaughtCount });
+    }
+    if (uncaughtCount >= 200) {
+      writeLastExit(stateDir, 'uncaughtException', {
+        ...errorDetail(err),
+        repeated: uncaughtCount,
+      });
+      process.exit(1);
+    }
   });
+  let rejections = 0;
   process.on('unhandledRejection', (reason) => {
-    log.error('unhandled rejection', { err: reason });
+    rejections += 1;
+    if (rejections <= 5 || rejections % 1000 === 0) {
+      log.error('unhandled rejection', {
+        err: reason,
+        stack: errorDetail(reason).stack,
+        times: rejections,
+      });
+    }
   });
 
   const timer = setInterval(() => void heartbeat(), 15_000);
@@ -358,4 +385,34 @@ export function installLifecycle(deps: LifecycleDeps): Lifecycle {
   })();
 
   return { done, heartbeat, stop, outcome: () => outcome };
+}
+
+/** Error con las primeras líneas de su traza, sin secretos ni URLs (para el log y /estado). */
+export function errorDetail(err: unknown): { name: string; message: string; stack?: string } {
+  if (err instanceof Error) {
+    const stack = err.stack
+      ?.split('\n')
+      .slice(0, 12)
+      .map((l) => scrubLogValue(l.trim()))
+      .join('\n');
+    return { name: err.name, message: scrubLogValue(err.message).slice(0, 300), stack };
+  }
+  return { name: 'NonError', message: scrubLogValue(String(err)).slice(0, 300) };
+}
+
+export const LAST_EXIT_FILE = 'ultimo-cierre.json';
+
+/** Por qué y cuándo se cerró el daemon: lo lee /estado en el arranque siguiente. */
+export function writeLastExit(
+  stateDir: string,
+  reason: string,
+  error?: { name: string; message: string; stack?: string; repeated?: number },
+): void {
+  try {
+    writeFileSync(
+      `${stateDir}/${LAST_EXIT_FILE}`,
+      JSON.stringify({ at: new Date().toISOString(), pid: process.pid, reason, error }),
+      'utf8',
+    );
+  } catch {}
 }

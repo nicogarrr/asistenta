@@ -41,7 +41,7 @@ import {
 } from './autoupdate-boton.js';
 import { stopDaemon } from './daemon-control.js';
 import { daemonStatus } from './daemon-status.js';
-import { readBusy } from './ocupada.js';
+import { describeBusy, readBusy, readBusyDetail } from './ocupada.js';
 import { sameProcessAsRecorded } from './process-identity.js';
 import { futureDated, span, withPeriod } from './startup-record.js';
 import { unlock as unlockVault, vaultGet } from './vault.js';
@@ -200,6 +200,7 @@ export function realAutoupdateDeps(
     npm: (args, t) => run(...npmInvocation(args), t),
     daemonState: () => daemonRunState(stateDir),
     busy: () => readBusy(stateDir),
+    busyWhy: () => describeBusy(readBusyDetail(stateDir).items),
     stopDaemon: async () => {
       await stopDaemon(stateDir);
     },
