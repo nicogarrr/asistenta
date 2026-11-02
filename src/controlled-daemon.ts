@@ -4,6 +4,27 @@ import type { Lifecycle } from './lifecycle.js';
 import { paths } from './paths.js';
 import { desktopEnabled } from './platform.js';
 
+/**
+ * Tras un cierre ya terminado (control liberado), cuánto se deja a Node para salir solo.
+ * Un servidor, socket o intervalo que alguien olvidó cerrar mantenía vivo el proceso: en
+ * Windows la tarea seguía «en ejecución», Start-ScheduledTask no abría otra y la
+ * autoactualización fallaba con «Windows no llegó a abrir la versión nueva» (2 nov, el
+ * panel web). La red de seguridad no retiene el proceso (unref): solo actúa si algo más lo
+ * retiene, y dice qué era en el log del lanzador.
+ */
+export const DAEMON_EXIT_GRACE_MS = 10_000;
+
+export function exitIfStillOpen(code: number, graceMs = DAEMON_EXIT_GRACE_MS): void {
+  const timer = setTimeout(() => {
+    const left = process.getActiveResourcesInfo().filter((r) => r !== 'TTYWrap');
+    process.stderr.write(
+      `Asistenta ya se había parado, pero algo seguía abierto (${left.join(', ') || 'nada visible'}): salgo para que pueda volver a arrancar.\n`,
+    );
+    process.exit(code);
+  }, graceMs);
+  timer.unref();
+}
+
 export interface ControlStartup {
   beginResources(): void;
   attach(lifecycle: Lifecycle): void;
@@ -44,7 +65,9 @@ export async function controlledDaemon(
       await lifecycle.done;
     }
     await control.close(lifecycle ? lifecycle.outcome() === 'clean' : undefined);
-    return lifecycle?.outcome() === 'failed' ? 1 : result;
+    const code = lifecycle?.outcome() === 'failed' ? 1 : result;
+    if (lifecycle) exitIfStillOpen(code);
+    return code;
   } catch (error) {
     if (lifecycle) {
       lifecycle.stop('startup-failed');

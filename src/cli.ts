@@ -1901,6 +1901,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // apaga). Sin PA_WEB_TOKEN usa un token guardado en el estado; `pa panel` lo abre.
   const panelPlan = panelStartPlan(process.env, () => ensurePanelToken(paths.state));
   let panelStarted: Promise<string | PanelListenProblem> | undefined;
+  // Cierre del panel al parar: un servidor abierto dejaba vivo el proceso tras un cierre
+  // limpio, la tarea de Windows seguía «en ejecución» y la autoactualización no podía
+  // abrir la versión nueva (2 nov).
+  let closePanel: (() => Promise<void>) | undefined;
   if (panelPlan.kind !== 'off') {
     if (panelPlan.kind === 'problem') {
       log.warn(panelPlan.message);
@@ -2062,6 +2066,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       )
         .then((ui) => {
+          closePanel = ui.close;
           log.info('panel web listo', { url: ui.url });
           return ui.url;
         })
@@ -2955,6 +2960,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // mientras el resto de la maquinaria se desmonta.
       await stopTvButton(true);
       await stopAlerts();
+      // El panel web también: si sigue escuchando, node no termina y Windows no puede
+      // volver a lanzar la tarea (ni la versión nueva de una autoactualización).
+      await panelStarted;
+      await closePanel?.().catch(() => {});
       // Every Chromium, or the next start refuses to claim the profile dir.
       await Promise.all([...browsers.values()].map((b) => b.closeAll(true)));
       await screen.dispose();
