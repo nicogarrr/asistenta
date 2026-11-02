@@ -1,6 +1,6 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CAPABILITIES } from '../src/core/capabilities.js';
 import { addRule, deleteRule, loadRules, matchRule } from '../src/mail/rules.js';
@@ -8,6 +8,18 @@ import { type ImapLike, parseHeaders } from '../src/mail/scan.js';
 import { createMailRulesTool, NO_MAIL_ACCOUNT } from '../src/tools/mail-rules.js';
 
 const tmpFile = () => join(mkdtempSync(join(tmpdir(), 'mailrules-')), 'rules.json');
+
+describe('fichero de reglas corrupto', () => {
+  it('se aparta con su contenido y la escritura siguiente no pierde rastro', () => {
+    const file = tmpFile();
+    writeFileSync(file, '{roto', 'utf8');
+    expect(loadRules(file)).toEqual([]);
+    expect(existsSync(file)).toBe(false);
+    const aside = readdirSync(dirname(file)).filter((f) => f.includes('.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dirname(file), aside[0] as string), 'utf8')).toBe('{roto');
+  });
+});
 const account = {
   address: 'n@x.example',
   password: 'p',
