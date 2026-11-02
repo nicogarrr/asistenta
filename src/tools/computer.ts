@@ -70,6 +70,7 @@ export type Action =
   | { action: 'drag'; x: number; y: number; toX: number; toY: number }
   | { action: 'type'; text: string; secret?: boolean }
   | { action: 'key'; key: string }
+  | { action: 'scroll'; x: number; y: number; amount?: number }
   | { action: 'batch'; actions: Array<Record<string, unknown>> };
 
 /**
@@ -119,6 +120,8 @@ export interface ScreenBackend {
   drag(x: number, y: number, toX: number, toY: number): Promise<void>;
   type(text: string): Promise<void>;
   key(key: string): Promise<void>;
+  /** Rueda del ratón en un punto real: positivo baja, negativo sube (muescas). */
+  scroll?(x: number, y: number, notches: number): Promise<void>;
   screenSize(): Promise<{ width: number; height: number }>;
   /** Mapa numerado de la ventana activa (solo Windows). */
   uiMap?(mapId: string, limit: number): Promise<UiMap>;
@@ -234,6 +237,7 @@ const ComputerParams = lazySchema(() =>
       Type.Literal('drag'),
       Type.Literal('type'),
       Type.Literal('key'),
+      Type.Literal('scroll'),
       Type.Literal('batch'),
     ]),
     x: Type.Optional(Type.Number({ description: 'X coordinate in real screen pixels.' })),
@@ -257,6 +261,13 @@ const ComputerParams = lazySchema(() =>
     ),
     button: Type.Optional(Type.String()),
     clicks: Type.Optional(Type.Number()),
+    amount: Type.Optional(
+      Type.Number({
+        description:
+          'For scroll: mouse-wheel notches over x/y or element; positive scrolls down, ' +
+          'negative up. Default 3, at most 25.',
+      }),
+    ),
     map: Type.Optional(
       Type.Boolean({
         description:
@@ -269,7 +280,7 @@ const ComputerParams = lazySchema(() =>
     element: Type.Optional(
       Type.Number({
         description:
-          'For click and type: the number of an element in the last map (screenshot with ' +
+          'For click, type and scroll: the number of an element in the last map (screenshot with ' +
           'map: true). Click lands on its exact centre, even if the window moved; type gives ' +
           'it the keyboard focus first. Do not pass x/y with it.',
       }),
@@ -419,7 +430,7 @@ function parseRegionField(value: unknown, label: string): Region | null {
  * roi screenshot the pointer went somewhere else on the real desktop. Reject it
  * before anything moves (a null/absent roi is fine).
  */
-function rejectRoi(args: Record<string, unknown>, action: 'move' | 'drag'): void {
+function rejectRoi(args: Record<string, unknown>, action: 'move' | 'drag' | 'scroll'): void {
   if (args.roi === undefined || args.roi === null) return;
   throw new Error(
     `roi solo vale con screenshot y click; en ${action} usa x/y de la captura completa (sin roi). ` +
@@ -1089,6 +1100,51 @@ export function createComputerTool(
         };
       }
 
+      case 'scroll': {
+        if (!backend.scroll)
+          throw new Error('la rueda del ratón no está disponible en este equipo');
+        const native = await backend.screenSize();
+        assertSameDesktop(native);
+        const amount = record.amount === undefined ? 3 : strictNumber(record.amount);
+        if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 25) {
+          throw new Error('amount tiene que ser un número entero de muescas entre -25 y 25, sin 0');
+        }
+        let p: { x: number; y: number };
+        let what = '';
+        if (record.element !== undefined) {
+          const target = await resolveElement(record, 'point');
+          p = { x: target.x, y: target.y };
+          what = ` sobre el elemento ${target.el.n} (${describeElement(target.el)})`;
+          if (p.x < 0 || p.y < 0 || p.x >= native.width || p.y >= native.height) {
+            throw new Error(`el elemento ${target.el.n} está fuera de la pantalla principal`);
+          }
+        } else {
+          rejectRoi(record, 'scroll');
+          p = coords(record, view ?? native, native);
+          what = ` en ${p.x},${p.y}`;
+        }
+        const at = view
+          ? {
+              x: Math.round((p.x * view.width) / native.width),
+              y: Math.round((p.y * view.height) / native.height),
+            }
+          : { x: p.x, y: p.y };
+        const wheel = backend.scroll.bind(backend);
+        const check = await act(() => wheel(p.x, p.y, amount), at);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Rueda ${amount > 0 ? 'abajo' : 'arriba'} ${Math.abs(amount)}${what}${
+                check ? `\n${check.verdict}` : ''
+              }`,
+            },
+          ],
+          details: { ...p, amount, verified: verifiedOf(check) },
+          at,
+        };
+      }
+
       case 'drag': {
         rejectRoi(record, 'drag');
         const native = await backend.screenSize();
@@ -1369,6 +1425,7 @@ export function createComputerTool(
     description: [
       'Control the desktop. Actions: screenshot (returns the screen as an image),',
       'click (x, y), move (x, y), drag (x,y to toX,toY), type (text), key (chord),',
+      'scroll (x, y or element, amount: wheel notches, positive = down),',
       'batch (actions: [...]) runs several actions in one call, in order, and stops at the first failure.',
       'Coordinates are pixels in the screenshot you were shown, origin top-left.',
       'Optional roi {x, y, width, height} on screenshot and click: screenshot then returns only',

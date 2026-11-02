@@ -454,6 +454,7 @@ function withinBudget(raw: string, shown: string, tool: string): ApprovalText {
 const KNOWN_ACTION_KEYS = new Set([
   'action',
   'element',
+  'amount',
   'x',
   'y',
   'toX',
@@ -490,6 +491,15 @@ function describeComputerAction(
         args.element !== undefined
           ? `click${button}${clicks}${elementText(args)}`
           : `click${button}${clicks} en (${String(args.x)}, ${String(args.y)})${roiText(args.roi)}`;
+      break;
+    }
+    case 'scroll': {
+      const n = typeof args.amount === 'number' ? args.amount : 3;
+      const where =
+        args.element !== undefined
+          ? elementText(args)
+          : ` en (${String(args.x)}, ${String(args.y)})`;
+      base = `rueda del ratón ${n < 0 ? 'arriba' : 'abajo'} ${Math.abs(n)}${where}`;
       break;
     }
     case 'drag':

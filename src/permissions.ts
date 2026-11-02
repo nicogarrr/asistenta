@@ -338,9 +338,9 @@ export function amountWithinCap(amountCents: number, cap: number): boolean {
 }
 
 /** Acciones de `computer` que mueven el ratón o escriben: jamás un permiso reutilizable. */
-const COMPUTER_NEVER_SCOPED = new Set(['type', 'key', 'click', 'drag']);
+const COMPUTER_NEVER_SCOPED = new Set(['type', 'key', 'click', 'drag', 'scroll']);
 /** Pasos de entrada que, justo después de un atajo del sistema, preguntan aunque haya ventana. */
-const COMPUTER_AFTER_CHORD = new Set(['type', 'key', 'click', 'drag']);
+const COMPUTER_AFTER_CHORD = new Set(['type', 'key', 'click', 'drag', 'scroll']);
 
 /** Acciones de `media` que abren cámara o micrófono: jamás un permiso reutilizable. */
 /** media play con target=tele: nunca libre ni cubierto por «siempre»/sesión. */
@@ -1207,7 +1207,7 @@ export class Gate {
         reason: 'drives the desktop',
         match: (c) =>
           c.tool === 'computer' &&
-          ['click', 'type', 'key', 'drag'].includes(argString(c.args, 'action')),
+          ['click', 'type', 'key', 'drag', 'scroll'].includes(argString(c.args, 'action')),
       },
       {
         id: 'ask-shell-destructive',
