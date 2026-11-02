@@ -19,7 +19,7 @@ describe('buildWeeklySummary', () => {
       pending: 'Pendientes: llamar a Juan',
       watching: 2,
     });
-    expect(text).toContain('Peticiones atendidas: 2 (1 fallaron)');
+    expect(text).toContain('Peticiones atendidas: 2 (1 falló)');
     expect(text).toContain('Cambios detectados en páginas vigiladas: 1');
     expect(text).toContain('vigilo ahora: 2');
     expect(text).toContain('llamar a Juan');
@@ -90,7 +90,7 @@ describe('descargas en el resumen', () => {
       pending: '',
       watching: 0,
     });
-    expect(text).toContain('Descargas: 2 enviadas, 1 fallaron');
+    expect(text).toContain('Descargas: 2 enviadas, 1 falló');
   });
   it('una semana solo con descargas no se dice vacía', () => {
     const text = buildWeeklySummary({

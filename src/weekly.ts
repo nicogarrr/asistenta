@@ -12,6 +12,9 @@ import { type BargeTotals, bargeFalseRate } from './voice/barge-stats.js';
 
 const WEEK_MS = 7 * 24 * 3_600_000;
 
+/** «1 falló», «3 fallaron». */
+const fallaron = (n: number): string => (n === 1 ? '1 falló' : `${n} fallaron`);
+
 export interface WeeklyInput {
   entries: ActionEntry[];
   now: number;
@@ -42,11 +45,12 @@ export function buildWeeklySummary(i: WeeklyInput): string {
     lines.push('- No hemos hablado ni he detectado cambios esta semana.');
   } else {
     lines.push(
-      `- Peticiones atendidas: ${turns.length}${failed ? ` (${failed} fallaron)` : ', todas sin error'}.`,
+      `- Peticiones atendidas: ${turns.length}${failed ? ` (${fallaron(failed)})` : ', todas sin error'}.`,
     );
     if (downloads.length) {
+      const sent = downloads.length - downloadsFailed;
       lines.push(
-        `- Descargas: ${downloads.length - downloadsFailed} enviadas${downloadsFailed ? `, ${downloadsFailed} fallaron` : ''}.`,
+        `- Descargas: ${sent} ${sent === 1 ? 'enviada' : 'enviadas'}${downloadsFailed ? `, ${fallaron(downloadsFailed)}` : ''}.`,
       );
     }
     if (changes) lines.push(`- Cambios detectados en páginas vigiladas: ${changes}.`);
@@ -66,7 +70,9 @@ export function buildWeeklySummary(i: WeeklyInput): string {
   if (pb.length) {
     lines.push('- Gestiones en webs que ya conozco (desde que empecé a contarlas):');
     for (const p of pb) {
-      lines.push(`  - ${p.domain}: ${p.ok} terminadas, ${p.failed} sin terminar.`);
+      lines.push(
+        `  - ${p.domain}: ${p.ok} ${p.ok === 1 ? 'terminada' : 'terminadas'}, ${p.failed} sin terminar.`,
+      );
     }
   }
   // D1: falsos disparos del corte por voz, la metrica que decide si algun dia
