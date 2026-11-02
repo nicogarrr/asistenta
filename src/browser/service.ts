@@ -10,6 +10,7 @@ import { foldAccents, urlHostname } from '../text.js';
 import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
+import { type CdpDeps, ensureChromeDebugPort } from './chrome-cdp.js';
 import { callPageAdClick, callPageMediaState, callPageScan, installPageScan } from './inpage.js';
 import {
   describeContext,
@@ -169,6 +170,14 @@ export interface BrowserServiceOptions {
    * iniciadas), de uno en uno: el perfil de Chrome se bloquea por proceso.
    */
   sharedProfileKey?: (scope: string) => string | undefined;
+  /**
+   * Puerto de depuración (solo 127.0.0.1) para los ámbitos con perfil compartido: se abre
+   * (o reutiliza) un Chrome real con ese perfil y se conecta por CDP. 0 o ausente: se
+   * lanza con Playwright como siempre. Pensado para el Chrome del dueño.
+   */
+  cdpPort?: number;
+  /** Para pruebas: sustituye el arranque del Chrome con puerto. */
+  cdpDeps?: CdpDeps;
   /** Viewport for the headless page; defaults to a common laptop size. */
   viewport?: { width: number; height: number };
 }
@@ -356,6 +365,8 @@ interface Session {
   visible: boolean;
   /** The browser actually running; differs from the requested one after a fallback. */
   channel: BrowserChannel;
+  /** Solo con CDP: suelta la conexión sin cerrar el Chrome del dueño. */
+  release?: () => Promise<void>;
   /** vm context holding `page`, `state` and what the agent put on it. */
   sandbox: vm.Context;
   /** Domains the human approved for this chat. */
@@ -749,9 +760,13 @@ export class BrowserService {
   readonly #sessions = new Map<string, Session>();
   /** Launches in flight, so concurrent callers for one scope share a single browser. */
   readonly #opening = new Map<string, Promise<Session>>();
-  readonly #options: Required<Omit<BrowserServiceOptions, 'policy' | 'sharedProfileKey'>> & {
+  readonly #options: Required<
+    Omit<BrowserServiceOptions, 'policy' | 'sharedProfileKey' | 'cdpPort' | 'cdpDeps'>
+  > & {
     policy: BrowserPolicy;
     sharedProfileKey?: (scope: string) => string | undefined;
+    cdpPort?: number;
+    cdpDeps?: CdpDeps;
   };
 
   constructor(options: BrowserServiceOptions) {
@@ -762,6 +777,8 @@ export class BrowserService {
       headless: options.headless ?? true,
       profilesDir: options.profilesDir ?? paths.browser,
       sharedProfileKey: options.sharedProfileKey,
+      cdpPort: options.cdpPort,
+      cdpDeps: options.cdpDeps,
       viewport: options.viewport ?? { width: 1440, height: 900 },
     };
   }
@@ -875,12 +892,13 @@ export class BrowserService {
       // launchPersistentContext has no navigation-timeout option.
       timeout: this.#options.timeoutMs,
     };
-    const { context, channel } = await this.#launch(scope, dir, launchOptions);
+    const { context, channel, release } = await this.#launch(scope, dir, launchOptions, sharedKey);
     let page: Page;
     try {
       context.setDefaultTimeout(this.#options.timeoutMs);
       context.setDefaultNavigationTimeout(this.#options.timeoutMs);
-      page = context.pages()[0] ?? (await context.newPage());
+      // Con CDP el Chrome es el del dueño: pestaña nueva, sin secuestrar la que tenga abierta.
+      page = (release ? undefined : context.pages()[0]) ?? (await context.newPage());
       // Page-side code is plain JS read at runtime, so it is installed rather than
       // serialised out of this module, which the bundler would have renamed.
       await installPageScan(page);
@@ -894,8 +912,9 @@ export class BrowserService {
     const session: Session = {
       context,
       page,
-      visible: wantVisible,
+      visible: wantVisible || release !== undefined,
       channel,
+      release,
       // Code generation disabled: the sandbox may call the functions it is given, but
       // it cannot build new code from strings or wasm, which removes the eval/Function
       // side of the escape surface.
@@ -948,9 +967,28 @@ export class BrowserService {
     scope: string,
     dir: string,
     launchOptions: Parameters<typeof import('playwright').chromium.launchPersistentContext>[1],
-  ): Promise<{ context: BrowserContext; channel: BrowserChannel }> {
+    sharedKey?: string,
+  ): Promise<{ context: BrowserContext; channel: BrowserChannel; release?: () => Promise<void> }> {
     // Carga diferida: playwright pesa ~85 ms de arranque y solo se usa al abrir el navegador.
     const { chromium } = await import('playwright');
+    const port = this.#options.cdpPort;
+    if (sharedKey && port) {
+      // Chrome real del dueño: perfil dedicado, puerto solo en loopback, sesión que persiste.
+      const profile = `${dir}-cdp`;
+      mkdirSync(profile, { recursive: true });
+      const endpoint = await ensureChromeDebugPort(profile, port, this.#options.cdpDeps);
+      const browser = await chromium.connectOverCDP(endpoint, { timeout: this.#options.timeoutMs });
+      const context = browser.contexts()[0];
+      if (!context) {
+        await browser.close().catch(() => undefined);
+        throw new Error('Chrome no tiene ninguna ventana de perfil abierta.');
+      }
+      return {
+        context,
+        channel: this.#options.channel === 'chromium' ? 'chrome' : this.#options.channel,
+        release: () => browser.close(),
+      };
+    }
     const wanted = this.#options.channel;
     if (wanted !== 'chromium') {
       try {
@@ -2123,7 +2161,7 @@ export class BrowserService {
     for (const [dir, holder] of sharedProfileHolders) {
       if (holder.service === this && holder.scope === scope) sharedProfileHolders.delete(dir);
     }
-    await session.context.close().catch((err: unknown) => {
+    await (session.release ? session.release() : session.context.close()).catch((err: unknown) => {
       log.warn('browser close failed', { err });
       if (strict) throw new Error('No se pudo confirmar el cierre del navegador.', { cause: err });
     });

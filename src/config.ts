@@ -80,6 +80,8 @@ export interface Config {
    * with Playwright. If the chosen one is not installed the tool falls back to 'chromium'.
    */
   browserChannel: BrowserChannel;
+  /** Puerto de depuración (solo 127.0.0.1) del Chrome del dueño; 0 lo desactiva. */
+  browserCdpPort?: number;
   /** Browser whose cookies yt-dlp may use (`firefox`, `chrome`...). Empty = off. */
   downloadCookiesBrowser: string;
   /** Path to curl-impersonate for PDFs behind anti-bot walls. Empty = look on PATH. */
@@ -267,6 +269,7 @@ export function loadConfig(): Config {
       maxDelayMs: num('PA_RETRY_MAX_MS', 20_000),
     },
     maxToolCalls: num('PA_MAX_TOOL_CALLS', 60),
+    browserCdpPort: num('PA_BROWSER_CDP_PORT', 9222),
     browserChannel: oneOf<BrowserChannel>(
       'PA_BROWSER_CHANNEL',
       ['chrome', 'msedge', 'chromium'],
