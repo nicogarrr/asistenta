@@ -120,7 +120,12 @@ import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
 import { chatReplyText, MODEL_ERROR_QUESTION, modelErrorFollowUp } from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
-import { checkProviderKey, createProviderHandle } from './core/provider.js';
+import {
+  checkProviderKey,
+  createProviderHandle,
+  goHeaders,
+  isOpenCodeEndpoint,
+} from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { programadaEs } from './cron/describe-es.js';
@@ -150,6 +155,7 @@ import { createSpecialistAsk, denySpecialistAsksForChat } from './daemon/special
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
 import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
+import { parseVerdict, TurnWatchdog, turnWatchdogScan } from './daemon/turn-watchdog.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
 import { Store } from './db.js';
@@ -165,7 +171,7 @@ import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
-import { llmHealthCommand, providerKeySource } from './llm-health.js';
+import { endpointKind, keyNamesFor, llmHealthCommand, providerKeySource } from './llm-health.js';
 import { log, logFile, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
@@ -2113,6 +2119,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * from a tool call, where quoting the current turn's message is the right guess.
    */
   const threadInbound = new Map<string, Inbound>();
+  // Vigilante semántico de turnos (PA_WATCHDOG=1): estado por hilo, sin persistencia.
+  const turnWatchdog = new TurnWatchdog();
   /** thread.key -> salida del turno vivo cuando no es Telegram (el panel); ver thread-context.ts. */
   const threadOutputs = new ThreadOutputs();
 
@@ -5211,6 +5219,64 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   setInterval(() => void parcelCheckIn.tick().catch(() => null), 10 * 60 * 1000).unref();
 
+  // Vigilante semántico de turnos (idea «Watchdog» del diseño super-agente), apagado
+  // por defecto (PA_WATCHDOG=1). Dos fases: sospecha determinista (sin paso nuevo en
+  // 5 min en un turno de 2+ min, nunca mientras espera una aprobación) y SOLO entonces
+  // UN juicio del modelo por turno. COSTE: una llamada real por juicio; con un modelo
+  // o plan de pago consume cuota. El aviso nunca para nada: el dueño decide (/stop).
+  const judgeTurnVerdict = async (prompt: string): Promise<boolean | null> => {
+    const kind = endpointKind(config.baseUrl);
+    const { vaultKey, envNames } = keyNamesFor(kind);
+    const key =
+      (vaultKey ? await vaultGet(vaultKey).catch(() => undefined) : undefined) ??
+      envNames.map((n) => process.env[n]?.trim()).find((v) => v);
+    if (!key) return null;
+    try {
+      const res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`,
+          ...(isOpenCodeEndpoint(config.baseUrl) ? goHeaders('daemon') : {}),
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 300,
+          temperature: 0,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { choices?: { message?: { content?: unknown } }[] };
+      const content = data.choices?.[0]?.message?.content;
+      return typeof content === 'string' ? parseVerdict(content) : null;
+    } catch {
+      return null;
+    }
+  };
+  if (envSwitchOn('PA_WATCHDOG')) {
+    setInterval(() => {
+      void turnWatchdogScan(
+        turnWatchdog,
+        [...threads.values()]
+          .filter((t) => t.active && !t.agent.awaitingApproval)
+          .map((t) => t.key),
+        {
+          judge: judgeTurnVerdict,
+          tell: async (key, text) => {
+            const target = threadInbound.get(key);
+            if (target) await say(target, text, { quote: true });
+          },
+        },
+      )
+        .then((judged) => {
+          if (judged > 0) log.info('turn watchdog judged', { judged });
+        })
+        .catch((err) => log.warn('turn watchdog failed', { error: String(err) }));
+    }, 60_000).unref();
+  }
+
   // Lo que el dueño cuenta de sí mismo: se apunta al momento en su perfil, «¿qué sabes
   // de mí?» lo enseña y «olvida eso» / «olvida lo de …» lo borra. Solo su chat privado.
   const recentFacts = new RecentFacts();
@@ -6474,6 +6540,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return null;
     };
     thread.active = true;
+    turnWatchdog.begin(thread.key, Date.now());
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
     threadInbound.set(thread.key, inbound);
@@ -6902,6 +6969,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         onToolCall: (info) => {
           lastSummary = info.summary;
           toolNames.push(info.tool);
+          turnWatchdog.note(thread.key, info.summary, Date.now());
           turnAck.tick(Date.now() - startedAt, toolNames);
           // Mid-turn trail: a session that only holds the final answer cannot
           // answer "what did you do first?" two days later.
@@ -7142,6 +7210,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     } finally {
       finished = true;
       thread.active = false;
+      turnWatchdog.end(thread.key);
       clearInterval(typing);
       clearInterval(status);
       // The closing summary is what later searches read, so the session is closed

@@ -614,6 +614,11 @@ export class PersonalAgent {
     return { ok: true, model: target };
   }
 
+  /** True while the run is parked on a human approval (waiting is not a stall). */
+  get awaitingApproval(): boolean {
+    return this.#approvalsWaiting > 0;
+  }
+
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
   setAwaitingApproval(waiting: boolean): void {
     if (waiting) {

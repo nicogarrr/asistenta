@@ -210,7 +210,7 @@ async function probe(
  * only ever used for OpenCode endpoints, OpenRouter and Gemini have their own
  * vault keys, and custom endpoints require PA_API_KEY (fail-closed).
  */
-function keyNamesFor(kind: 'opencode' | 'openrouter' | 'google' | 'custom'): {
+export function keyNamesFor(kind: 'opencode' | 'openrouter' | 'google' | 'custom'): {
   vaultKey?: string;
   envNames: string[];
 } {
@@ -264,7 +264,7 @@ export async function providerKeySource(
   return { source: 'unset', hint };
 }
 
-function endpointKind(baseUrl: string): 'opencode' | 'openrouter' | 'google' | 'custom' {
+export function endpointKind(baseUrl: string): 'opencode' | 'openrouter' | 'google' | 'custom' {
   if (isOpenRouterEndpoint(baseUrl)) return 'openrouter';
   if (isGoogleEndpoint(baseUrl)) return 'google';
   if (isOpenCodeEndpoint(baseUrl)) return 'opencode';
