@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 
 /**
@@ -35,7 +36,7 @@ export class PsHostLost extends Error {
   }
 }
 
-/** Script de arranque del host: bucle que lee `id base64` y contesta `PA_DONE id código`. */
+/** Script de arranque del host: bucle que lee `id base64` y contesta `HOSTDONE id código`. */
 export const HOST_BOOTSTRAP = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -66,10 +67,10 @@ while ($true) {
     $code = 1
     $msg = [Convert]::ToBase64String($utf8.GetBytes(($_ | Out-String)))
     [Console]::Out.WriteLine('')
-    [Console]::Out.WriteLine("PA_ERR $id $msg")
+    [Console]::Out.WriteLine("HOSTERR $id $msg")
   }
   [Console]::Out.WriteLine('')
-  [Console]::Out.WriteLine("PA_DONE $id $code")
+  [Console]::Out.WriteLine("HOSTDONE $id $code")
   [Console]::Out.Flush()
 }
 `;
@@ -91,7 +92,7 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
-function defaultSpawn(env: NodeJS.ProcessEnv): HostSpawn {
+function defaultSpawn(): HostSpawn {
   return () =>
     spawn(
       'powershell.exe',
@@ -101,7 +102,7 @@ function defaultSpawn(env: NodeJS.ProcessEnv): HostSpawn {
         '-EncodedCommand',
         Buffer.from(HOST_BOOTSTRAP, 'utf16le').toString('base64'),
       ],
-      { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+      { env: childEnv(), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     ) as ChildProcessWithoutNullStreams;
 }
 
@@ -115,8 +116,8 @@ export class PsHost {
   #seq = 0;
   #chain: Promise<unknown> = Promise.resolve();
 
-  constructor(env: NodeJS.ProcessEnv, opts: PsHostOptions = {}) {
-    this.#spawnHost = opts.spawnHost ?? defaultSpawn(env);
+  constructor(opts: PsHostOptions = {}) {
+    this.#spawnHost = opts.spawnHost ?? defaultSpawn();
     this.#timeoutMs = opts.timeoutMs ?? 30_000;
     this.#startTimeoutMs = opts.startTimeoutMs ?? 20_000;
   }
@@ -172,8 +173,8 @@ export class PsHost {
     proc.on('error', (err) => gone(String(err)));
     proc.on('exit', (code) => gone(`salió con código ${String(code)}`));
     try {
-      const ready = await this.#send('Write-Output PA_HOST_READY', this.#startTimeoutMs);
-      if (!ready.stdout.includes('PA_HOST_READY')) throw new Error('respuesta inesperada');
+      const ready = await this.#send('Write-Output HOSTREADY', this.#startTimeoutMs);
+      if (!ready.stdout.includes('HOSTREADY')) throw new Error('respuesta inesperada');
     } catch (err) {
       this.close();
       throw new PsHostUnavailable(`no responde al arrancar: ${String(err)}`);
@@ -225,12 +226,12 @@ export class PsHost {
       this.#buffer = this.#buffer.slice(nl + 1);
       const p = this.#pending;
       if (!p) continue;
-      const err = /^PA_ERR (\S+) (\S+)$/.exec(line);
+      const err = /^HOSTERR (\S+) (\S+)$/.exec(line);
       if (err && err[1] === p.id) {
         p.errB64 = err[2] ?? null;
         continue;
       }
-      const done = /^PA_DONE (\S+) (\d+)$/.exec(line);
+      const done = /^HOSTDONE (\S+) (\d+)$/.exec(line);
       if (done && done[1] === p.id) {
         this.#pending = null;
         clearTimeout(p.timer);
