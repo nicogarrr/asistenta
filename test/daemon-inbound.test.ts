@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { Inbound } from '../src/channels/types.js';
 import {
   isDuplicateUpdate,
+  queueMessageTurn,
   queueThreadTurn,
   SEEN_MESSAGE_MAX,
   SEEN_MESSAGE_TTL_MS,
@@ -93,5 +95,97 @@ describe('queueThreadTurn (cola por hilo)', () => {
     const b = thread();
     queueThreadTurn(a, () => new Promise(() => {}));
     expect(await queueThreadTurn(b, async () => 'libre')).toBe('libre');
+  });
+});
+
+describe('queueMessageTurn (batching de mensajes en rafaga)', () => {
+  const thread = () => ({ tail: Promise.resolve() as Promise<unknown>, generation: 0 });
+  const msg = (text: string) => ({ text }) as unknown as Inbound;
+  const slow = (t: ReturnType<typeof thread>) => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const p = queueThreadTurn(t, () => gate);
+    return { p, release };
+  };
+
+  it('varios mensajes durante otro trabajo se funden en UN solo turno', async () => {
+    const t = thread();
+    const { p, release } = slow(t);
+    const runs: string[][] = [];
+    const merged = async (list: readonly Inbound[]) => {
+      runs.push(list.map((m) => (m as { text: string }).text));
+    };
+    const a = queueMessageTurn(t, msg('A'), merged);
+    const b = queueMessageTurn(t, msg('B'), merged);
+    const c = queueMessageTurn(t, msg('C'), merged);
+    release();
+    await Promise.all([p, a, b, c]);
+    expect(runs).toEqual([['A', 'B', 'C']]);
+  });
+
+  it('un mensaje suelto corre tal cual, sin esperar a nadie', async () => {
+    const t = thread();
+    const runs: string[][] = [];
+    await queueMessageTurn(t, msg('solo'), async (list) => {
+      runs.push(list.map((m) => (m as { text: string }).text));
+    });
+    expect(runs).toEqual([['solo']]);
+  });
+
+  it('un comando entre medias parte la tanda y conserva el orden exacto', async () => {
+    const t = thread();
+    const { p, release } = slow(t);
+    const seq: string[] = [];
+    const merged = async (list: readonly Inbound[]) => {
+      seq.push(`msgs:${list.map((m) => (m as { text: string }).text).join('+')}`);
+    };
+    const a = queueMessageTurn(t, msg('A'), merged);
+    const cmd = queueThreadTurn(t, async () => {
+      seq.push('comando');
+    });
+    const b = queueMessageTurn(t, msg('B'), merged);
+    const c = queueMessageTurn(t, msg('C'), merged);
+    release();
+    await Promise.all([p, a, cmd, b, c]);
+    expect(seq).toEqual(['msgs:A', 'comando', 'msgs:B+C']);
+  });
+
+  it('/stop antes de la tanda: no corre y las promesas encoladas se resuelven', async () => {
+    const t = thread();
+    const { p, release } = slow(t);
+    let ran = false;
+    const a = queueMessageTurn(t, msg('A'), async () => {
+      ran = true;
+    });
+    const b = queueMessageTurn(t, msg('B'), async () => {
+      ran = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    t.generation++;
+    release();
+    await Promise.all([p, a, b]);
+    expect(ran).toBe(false);
+  });
+
+  it('lo que llega mientras corre la tanda fundida abre tanda nueva detrás', async () => {
+    const t = thread();
+    const { p, release } = slow(t);
+    const runs: string[][] = [];
+    const merged = async (list: readonly Inbound[]) => {
+      runs.push(list.map((m) => (m as { text: string }).text));
+      if (runs.length === 1) {
+        // Durante el turno fundido llega otro mensaje: tanda nueva, detrás.
+        void queueMessageTurn(t, msg('C'), merged);
+      }
+    };
+    const a = queueMessageTurn(t, msg('A'), merged);
+    const b = queueMessageTurn(t, msg('B'), merged);
+    release();
+    await p;
+    await Promise.all([a, b]);
+    await t.tail;
+    expect(runs).toEqual([['A', 'B'], ['C']]);
   });
 });

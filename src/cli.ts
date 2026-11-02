@@ -134,6 +134,7 @@ import { createGoalTickExecute } from './daemon/goal-tick.js';
 import {
   beginInbound,
   cachedFullReply,
+  queueMessageTurn,
   queueThreadTurn,
   resolveInboundThread,
   routeInboundControl,
@@ -8158,15 +8159,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.
-          void queueThreadTurn(thread, async () => {
+          // Batching: varios mensajes seguidos mientras corre otro turno se funden
+          // en UN turno (una llamada al modelo), no en un turno por mensaje.
+          void queueMessageTurn(thread, inbound, async (merged) => {
+            const lastInbound = merged[merged.length - 1] ?? inbound;
+            const text = merged.length === 1 ? inbound.text : merged.map((m) => m.text).join('\n');
+            const images = merged.flatMap((m) => m.images ?? []);
             lastTurns.remember(thread.key, {
-              text: inbound.text,
-              images: inbound.images,
+              text,
+              images: images.length > 0 ? images : lastInbound.images,
               agent: thread.agent,
               mark: thread.agent.messages.length,
               compactions: thread.agent.compactions,
             });
-            await runTurn(thread, inbound, inbound.text, {});
+            await runTurn(
+              thread,
+              { ...lastInbound, text, images: images.length > 0 ? images : lastInbound.images },
+              text,
+              {},
+            );
           });
         },
         (message) => say(inbound, message, { quote: true }),
