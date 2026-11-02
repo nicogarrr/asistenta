@@ -547,9 +547,20 @@ export class TelegramChannel implements ChannelAdapter {
     if (held) {
       clearTimeout(held.timer);
       this.#splitHeld.delete(key);
-      if (plain) {
-        held.inbound.text = `${held.inbound.text}\n${inbound.text}`;
-        if (inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
+      // Un reenvío largo y tu comentario justo detrás van en un turno, pero el comentario
+      // ya no queda bajo la marca «[Mensaje reenviado…]»: antes parecía texto del otro.
+      const from = held.inbound.forwardedFrom;
+      const same = from === inbound.forwardedFrom;
+      const ownComment = Boolean(from) && !inbound.forwardedFrom;
+      if (plain && (same || ownComment)) {
+        const more =
+          same && from && inbound.text.startsWith(`${from}\n`)
+            ? inbound.text.slice(from.length + 1)
+            : inbound.text;
+        held.inbound.text = ownComment
+          ? `${held.inbound.text}\n${FORWARDED_END}\n${more}`
+          : `${held.inbound.text}\n${more}`;
+        if (!ownComment && inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
           this.#holdSplit(key, held.inbound, handlers);
           return;
         }
@@ -2234,6 +2245,8 @@ export function clipDraftText(text: string): string {
 
 /** Desde aquí un texto puede ser el primer trozo de uno que Telegram partió (4096). */
 export const SPLIT_TEXT_MIN_CHARS = 3500;
+/** Cierra un reenvío cuando el dueño escribe justo detrás: lo que sigue ya es suyo. */
+export const FORWARDED_END = '[Fin del mensaje reenviado; lo que sigue lo escribe el dueño]';
 /** Lo que se espera a la continuación de un texto partido. */
 const SPLIT_TEXT_WAIT_MS = 1500;
 /** Espera tras la última foto de un álbum (Telegram las manda casi seguidas). */
