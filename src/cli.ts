@@ -1463,7 +1463,9 @@ export function parseCommand(text: string): ParsedCommand | null {
   // Telegram appends @botname to commands in groups; the name is not part of the
   // command, so it is stripped before anything else looks at the text.
   const withoutSuffix = trimmed.replace(/^(\/\w+)@\w+/, '$1');
-  const space = withoutSuffix.indexOf(' ');
+  // Cualquier espacio separa el comando: «/nota» y el texto en la línea siguiente (salto
+  // de línea) no se reconocía como comando y le llegaba al modelo como mensaje.
+  const space = withoutSuffix.search(/\s/);
   const name = (space < 0 ? withoutSuffix : withoutSuffix.slice(0, space)).slice(1).toLowerCase();
   if (!/^[a-z_]{1,32}$/.test(name)) return null;
   return { name, args: space < 0 ? '' : withoutSuffix.slice(space + 1).trim() };
