@@ -180,9 +180,14 @@ export function createChildFactory(
     options.createAgent ??
     ((config, tools, gate, actor, opts) => PersonalAgent.create(config, tools, gate, actor, opts));
   return async (spec) => {
+    const approve = spec.approve;
     const gate =
-      spec.specialist?.effectful && spec.approve
-        ? createEffectfulChildGate(options, spec.specialist, spec.approve)
+      spec.specialist?.effectful && approve
+        ? createEffectfulChildGate(options, spec.specialist, (question) =>
+            // La pregunta va ligada a la vida del hijo: si caduca o se para con la
+            // pregunta abierta, se retira; si ya terminó, ni se pregunta.
+            spec.signal.aborted ? Promise.resolve(false) : approve(question, spec.signal),
+          )
         : createChildGate(options, spec.specialist);
     const config: Config = {
       ...options.config,
