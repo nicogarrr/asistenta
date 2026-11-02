@@ -379,7 +379,12 @@ import {
   parseAltavozArgs,
   stopReplyText,
 } from './audio/altavoz.js';
-import { audioTeleEnabled, tvCasterFromVault, tvStopperFromVault } from './audio/tv-cast.js';
+import {
+  AUDIO_TELE_KV_KEY,
+  audioTeleOn,
+  tvCasterFromVault,
+  tvStopperFromVault,
+} from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { SecretLibrary } from './books/secret.js';
 import {
@@ -1851,11 +1856,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         currentWake()?.suppress(WAKE_TAIL_MS);
       }
     },
-    castToTv: audioTeleEnabled()
-      ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })
-      : undefined,
+    // En caliente: el flag audio:tele (kv, lo pone /altavoz tele) se lee en CADA
+    // nota, así que activar/apagar no pide .env ni reinicio. Si está apagado, la
+    // nota no se pierde en el aire: se le dice cómo activarlo.
+    castToTv: (file) =>
+      audioTeleOn(store.kvGet(AUDIO_TELE_KV_KEY))
+        ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })(file)
+        : Promise.resolve({
+            ok: false as const,
+            message:
+              'La tele no está activada para audio: actívala con «/altavoz tele» (queda guardado, sin tocar el .env).',
+          }),
     // /stop también para en la tele una nota mandada hace menos de 2 min (y nada más).
-    stopTv: audioTeleEnabled() ? tvStopperFromVault(vaultGet, tvRequest) : undefined,
+    stopTv: tvStopperFromVault(vaultGet, tvRequest),
     remove: (file) => rmSync(file, { force: true }),
     onError: (err) => log.warn('altavoz: no pude soltar la nota de voz', { err: String(err) }),
   });
@@ -2698,15 +2711,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         withMicrophone,
         // The speakers are the microphone's other half. Quieten the listener before
         // the sound comes out or the agent answers its own playback.
-        // «Reprodúcelo en la tele»: apagado salvo PA_AUDIO_TELE=1 (docs/audio-altavoz.md).
+        // «Reprodúcelo en la tele»: en caliente con el flag audio:tele (kv), como el
+        // altavoz; apagado por defecto hasta el primer «/altavoz tele» (docs/audio-altavoz.md).
         // Un mensaje de Telegram viejo tampoco manda audio a la tele (src/tv/stale-order.ts).
-        castToTv: audioTeleEnabled()
-          ? staleGuardedCaster(
-              tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey }),
-              () => staleTvOrderNotice(inboundFor(thread).sentAt, inboundFor(thread).receivedAt),
-              (file) => rmSync(file, { force: true }),
-            )
-          : undefined,
+        castToTv: staleGuardedCaster(
+          (file) =>
+            audioTeleOn(store.kvGet(AUDIO_TELE_KV_KEY))
+              ? tvCasterFromVault(vaultGet, tvRequest, { saveClientKey: saveTvClientKey })(file)
+              : Promise.resolve({
+                  ok: false as const,
+                  message:
+                    'La tele no está activada para audio: actívala con «/altavoz tele» (queda guardado, sin tocar el .env).',
+                }),
+          () => staleTvOrderNotice(inboundFor(thread).sentAt, inboundFor(thread).receivedAt),
+          (file) => rmSync(file, { force: true }),
+        ),
         // Si la tele aceptó pero nunca bajó el fichero: aviso del firewall al chat.
         notifyChat: (text) => {
           void say(inboundFor(thread), text);
@@ -5813,11 +5832,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     if (parsed.kind === 'set') {
-      if (parsed.mode === 'tele' && !audioTeleEnabled()) {
+      if (parsed.mode === 'tele') {
+        // Se activa y persiste en caliente (kv): ni .env ni reinicio. La vía de la
+        // tele aún no está verificada en su modelo: se avisa sin asustar.
+        const primeraVez = !audioTeleOn(store.kvGet(AUDIO_TELE_KV_KEY));
+        store.kvSet(AUDIO_TELE_KV_KEY, '1');
+        altavoz.set(key, parsed.mode);
         askAltavoz();
         await say(
           inbound,
-          'La tele no está activada para audio: hace falta PA_AUDIO_TELE=1 en el .env y reiniciar. Mientras, si quieres, te hablo por el PC: dime «por el PC».',
+          altavozStatusText('tele') +
+            (primeraVez
+              ? ' Queda activado ya, sin reiniciar nada. Si la primera nota no suena, dímelo: en algunas teles el audio así no va y lo dejo como estaba.'
+              : ''),
           { quote: true },
         );
         return;

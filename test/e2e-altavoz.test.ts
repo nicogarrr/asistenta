@@ -185,12 +185,13 @@ describe('e2e altavoz', () => {
     await player.idle();
   });
 
-  it('/altavoz tele sin la tele activada avisa de que falta PA_AUDIO_TELE', async () => {
+  it('/altavoz tele con el player sin tele dice cómo activarla', async () => {
     const { player, deliver } = setup();
     altavoz(ownerKey, 'tele');
     deliver(voice());
     await player.idle();
-    expect(replies[0]).toContain('PA_AUDIO_TELE=1');
+    expect(replies[0]).toContain('no está activada para audio');
+    expect(replies[0]).toContain('/altavoz tele');
   });
 
   it('/altavoz tele: si la tele nunca descarga el fichero avisa del firewall una vez', async () => {

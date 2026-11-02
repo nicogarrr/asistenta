@@ -10,7 +10,9 @@ Manda una nota de voz (o un audio) al bot y pide:
 El PC sube el volumen del sistema al pedido (100 por defecto) y lo restaura al acabar.
 
 ## En la tele (apagado por defecto)
-Actívalo con `PA_AUDIO_TELE=1` en `.env`. Requisitos: tele emparejada (`pa tv setup <ip>`),
+Actívalo con `/altavoz tele`: queda guardado (kv `audio:tele`) y funciona al momento, sin
+`.env` ni reinicio. (`PA_AUDIO_TELE=1` en `.env` también lo enciende, por compatibilidad.)
+Requisitos: tele emparejada (`pa tv setup <ip>`),
 PC y tele en la misma subred, y el firewall de Windows permitiendo conexiones entrantes de
 Si la tele pide emparejar otra vez durante un audio y lo aceptas, la client-key nueva se
 guarda en el vault (`tv:clientKey`) igual que con `/tv`, así que el aviso no vuelve a salir.
@@ -27,7 +29,7 @@ No probado todavía en la tele real: si ninguna de las dos APIs funciona, el bot
 ## Modo altavoz: `/altavoz`
 - `/altavoz pc` — cada nota de voz que me mandes suena sola en el PC al llegar (sin cambiar el
   volumen del sistema). Siguen procesándose como siempre (transcripción y respuesta).
-- `/altavoz tele` — igual, pero en la tele (necesita `PA_AUDIO_TELE=1`).
+- `/altavoz tele` — igual, pero en la tele. La primera vez lo activa y lo deja guardado.
 - `/altavoz off` — apagado (por defecto). `/altavoz` sin nada te dice el estado.
 
 Solo funciona desde tu chat privado con el bot (el dueño verificado) y con el control del PC

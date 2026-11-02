@@ -136,7 +136,7 @@ describe('createAltavozPlayer', () => {
     });
     q.enqueue('tele', load('y'));
     await q.idle();
-    expect(String(onError.mock.calls[0]?.[0])).toContain('PA_AUDIO_TELE');
+    expect(String(onError.mock.calls[0]?.[0])).toContain('no está activada para audio');
     expect(existsSync(file)).toBe(false);
   });
 

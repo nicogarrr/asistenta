@@ -268,7 +268,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     if (mode === 'tele') {
       if (!deps.castToTv) {
         deps.remove(file);
-        throw new Error('la tele no está activada (PA_AUDIO_TELE=1)');
+        throw new Error('la tele no está activada para audio: actívala con «/altavoz tele»');
       }
       const r = await deps.castToTv(file);
       if (!r.ok) throw new Error(r.message);

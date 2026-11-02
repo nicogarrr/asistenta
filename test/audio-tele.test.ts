@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeRemote, pickLanAddress, serveFileToHost } from '../src/audio/lan-server.js';
-import { audioTeleEnabled, castAudioToTv, tvCasterFromVault } from '../src/audio/tv-cast.js';
+import {
+  AUDIO_TELE_KV_KEY,
+  audioTeleEnabled,
+  audioTeleOn,
+  castAudioToTv,
+  tvCasterFromVault,
+} from '../src/audio/tv-cast.js';
 
 vi.mock('../src/log.js', () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -211,6 +217,20 @@ describe('castAudioToTv', () => {
     expect(audioTeleEnabled({})).toBe(false);
     expect(audioTeleEnabled({ PA_AUDIO_TELE: '1' })).toBe(true);
   });
+
+  it('audioTeleOn: el flag de /altavoz tele enciende en caliente, sin .env', () => {
+    // Apagado por defecto: ni flag ni env (nunca se verificó en la tele real).
+    expect(audioTeleOn(null, {})).toBe(false);
+    expect(audioTeleOn(undefined, {})).toBe(false);
+    expect(audioTeleOn('', {})).toBe(false);
+    // «/altavoz tele» guarda '1' y basta: sin PA_AUDIO_TELE ni reinicio.
+    expect(audioTeleOn('1', {})).toBe(true);
+    // El env legado sigue encendiendo aunque no haya flag.
+    expect(audioTeleOn(null, { PA_AUDIO_TELE: '1' })).toBe(true);
+    // Basura en el flag no enciende.
+    expect(audioTeleOn('0', {})).toBe(false);
+    expect(audioTeleOn('si', {})).toBe(false);
+  });
 });
 
 describe('media action=play (caracterización + target)', () => {
@@ -256,7 +276,7 @@ describe('media action=play (caracterización + target)', () => {
   it('tele apagada: lo dice y no convierte nada', async () => {
     const r = await setup().execute('c', { action: 'play', target: 'tele' });
     expect(r.details).toMatchObject({ played: false, reason: 'tele off' });
-    expect(text(r)).toContain('PA_AUDIO_TELE');
+    expect(text(r)).toContain('/altavoz tele');
     expect(toPlayableAudio).not.toHaveBeenCalled();
   });
 
