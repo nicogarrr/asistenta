@@ -72,6 +72,16 @@ export interface TvToolDeps {
   stats?: () => Promise<unknown>;
   launch: (id: string) => Promise<void>;
   /**
+   * Ráfaga de teclas por UNA conexión (src/tv/lgtv.ts tvKeys). Sin ella, la
+   * tool encadena `key` una a una (mismo resultado, mucho más lento).
+   */
+  keys?: (names: string[]) => Promise<void>;
+  /**
+   * Escribe el texto entero en el campo enfocado de la tele (SSAP IME).
+   * Ausente = instalación antigua: action=type lo dice y sugiere las teclas.
+   */
+  typeText?: (text: string) => Promise<void>;
+  /**
    * Aviso si el mensaje que originó este turno es viejo (src/tv/stale-order.ts):
    * entonces nada que mueva la tele se ejecuta. Ausente = siempre en vivo.
    */
@@ -108,6 +118,7 @@ const Params = lazySchema(() =>
       Type.Literal('inspect'),
       Type.Literal('launch'),
       Type.Literal('key'),
+      Type.Literal('type'),
       Type.Literal('toast'),
       Type.Literal('power'),
       Type.Literal('volume'),
@@ -135,6 +146,12 @@ const Params = lazySchema(() =>
     name: Type.Optional(
       Type.String({
         description: 'Para key: HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN, VOLUP, VOLDOWN.',
+      }),
+    ),
+    names: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          'Para key: varias teclas seguidas por UNA conexión (navegar menús mucho más rápido), p.ej. ["RIGHT","RIGHT","DOWN","ENTER"]. Máx 40. Si está, se ignora name.',
       }),
     ),
     message: Type.Optional(Type.String({ description: 'Para toast: el texto a mostrar.' })),
@@ -176,7 +193,7 @@ const Params = lazySchema(() =>
     text: Type.Optional(
       Type.String({
         description:
-          'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo").',
+          'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo"). Para type: el texto a escribir de una vez en el campo enfocado de la tele (buscadores, máx 200): mucho más rápido que teclear letra a letra con key.',
       }),
     ),
     pictureMode: Type.Optional(
@@ -706,6 +723,38 @@ async function runTvAction(
       };
     }
     case 'key': {
+      // Ráfaga (names): UNA conexión para toda la secuencia. Navegar un menú
+      // tecla a tecla abría dos conexiones por pulsación y un turno de modelo
+      // entre cada una: por eso Nico la notaba «muy lenta» (2-nov-2026).
+      if (Array.isArray(args.names) && args.names.length > 0) {
+        if (args.names.length > 40) {
+          throw new Error('action=key con names admite hasta 40 teclas seguidas.');
+        }
+        const batch = args.names.map((n) => String(n).trim().toUpperCase());
+        for (const n of batch) {
+          if (!KEYS.includes(n as (typeof KEYS)[number])) {
+            throw new Error(`action=key necesita nombres validos: ${KEYS.join(', ')}.`);
+          }
+        }
+        const ssapNames = batch.map((n) => KEY_ALIASES[n] ?? n);
+        if (deps.keys) {
+          await enqueueTvMutation(() => deps.keys?.(ssapNames) ?? Promise.resolve());
+        } else {
+          // Sin ráfaga en el driver: la misma secuencia, tecla a tecla.
+          for (const n of ssapNames) {
+            await enqueueTvMutation(() => deps.key(n));
+          }
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `He enviado ${ssapNames.length} teclas seguidas (${batch.join(', ')}) por una sola conexión.`,
+            },
+          ],
+          details: { names: batch },
+        };
+      }
       const name = (args.name ?? '').trim().toUpperCase();
       if (!KEYS.includes(name as (typeof KEYS)[number])) {
         throw new Error(`action=key necesita un nombre valido: ${KEYS.join(', ')}.`);
@@ -722,6 +771,36 @@ async function runTvAction(
           },
         ],
         details: { name },
+      };
+    }
+    case 'type': {
+      // El texto entero en el campo enfocado (SSAP IME), no letra a letra:
+      // es la diferencia entre buscar «ceuta sporting» en un suspiro o en un
+      // minuto de pulsaciones. Si la tele no tiene campo activo, error claro.
+      const text = (args.text ?? '').trim();
+      if (!text) throw new Error('action=type necesita text: lo que se escribe en la tele.');
+      if (!deps.typeText) {
+        throw new Error(
+          'Esta instalación no sabe escribir texto en la tele todavía: usa action=key con names para teclear.',
+        );
+      }
+      try {
+        await enqueueTvMutation(() => deps.typeText?.(text) ?? Promise.resolve());
+      } catch (err) {
+        throw new Error(
+          `No se pudo escribir en la tele: ¿hay un campo de texto enfocado? ` +
+            `Abre el buscador (o el campo) con action=key y reintenta. ` +
+            `Detalle: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `He escrito «${text}» en el campo de la tele.`,
+          },
+        ],
+        details: { typed: true, chars: text.length },
       };
     }
     case 'toast': {

@@ -16,7 +16,7 @@ import { discoverWebOsTvs } from '../tv/discover.js';
 import { runIntentOnDriver } from '../tv/drivers.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.js';
 import { loadKnownTvs, relocateMovedTvs, saveTvClientKey } from '../tv/known-tvs.js';
-import { tvKey, tvRequest, tvScreenshot, tvToast } from '../tv/lgtv.js';
+import { tvKey, tvKeys, tvRequest, tvScreenshot, tvToast, tvTypeText } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
 import type { KnownTv } from '../tv/registry.js';
 import { rokuDriver } from '../tv/roku.js';
@@ -276,6 +276,14 @@ export function tvToolDeps(store: Store): TvToolDeps {
     key: async (name) => {
       const { host, clientKey, allowPlaintext } = await paired();
       await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey: saveNewKey });
+    },
+    keys: async (names) => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvKeys(host, clientKey, names, { allowPlaintext, onNewClientKey: saveNewKey });
+    },
+    typeText: async (text) => {
+      const { host, clientKey, allowPlaintext } = await paired();
+      await tvTypeText(host, clientKey, text, { allowPlaintext, onNewClientKey: saveNewKey });
     },
     toast: async (message) => {
       try {
