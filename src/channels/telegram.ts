@@ -260,6 +260,7 @@ export class TelegramChannel implements ChannelAdapter {
     });
 
     bot.on('message', (ctx) => this.#onMessage(ctx));
+    bot.on('edited_message', (ctx) => this.#onEdited(ctx));
     bot.on('callback_query:data', (ctx) => this.#onCallback(ctx));
 
     // Command menu in the Telegram UI, so the useful commands are discoverable
@@ -486,6 +487,34 @@ export class TelegramChannel implements ChannelAdapter {
     }
 
     await handlers.onMessage(inbound);
+  }
+
+  /** Mensajes ya avisados como editados (chat:id), para avisar una sola vez. */
+  readonly #editNoted = new Set<string>();
+
+  /**
+   * Un mensaje editado no lanza otro turno (podría repetir una acción), pero antes
+   * la edición se perdía en silencio y el usuario creía que se había leído. Ahora
+   * se avisa una vez por mensaje, solo al dueño y en privado. Una ubicación en
+   * directo llega como ediciones continuas y no avisa.
+   */
+  async #onEdited(ctx: Context): Promise<void> {
+    const msg = ctx.editedMessage;
+    const user = ctx.from;
+    if (!this.#handlers || !msg || !user) return;
+    if (ctx.chat?.type !== 'private') return;
+    if (!this.#options.allowedUserIds.includes(user.id)) return;
+    if ('location' in msg || 'venue' in msg) return;
+    const key = `${ctx.chat.id}:${msg.message_id}`;
+    if (this.#editNoted.has(key)) return;
+    this.#editNoted.add(key);
+    if (this.#editNoted.size > 500) {
+      const oldest = this.#editNoted.values().next().value;
+      if (oldest !== undefined) this.#editNoted.delete(oldest);
+    }
+    await ctx
+      .reply(EDITED_MESSAGE_NOTE, { reply_to_message_id: msg.message_id } as never)
+      .catch(() => {});
   }
 
   /** Returns a refusal message when the sender may not act, else null. */
@@ -2223,6 +2252,10 @@ export function tooBigForBotDownload(sizeBytes: number | undefined): string | un
   const mb = Math.ceil(sizeBytes / 1_000_000);
   return `Pesa ${mb} MB y pasa de 20 MB, el límite de descarga de los bots de Telegram.`;
 }
+
+/** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
+export const EDITED_MESSAGE_NOTE =
+  'Has editado un mensaje, pero solo leo los nuevos. Si cambia lo que me pides, mándamelo otra vez.';
 
 /**
  * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
