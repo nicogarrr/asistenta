@@ -141,6 +141,7 @@ import { ProgressMilestones } from './daemon/progress-milestone.js';
 import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
+import { createSpecialistAsk, denySpecialistAsksForChat } from './daemon/specialist-ask.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
 import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
@@ -2128,11 +2129,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createAskTool(),
       createShellTool(config),
       // Especialistas: eligen de las herramientas finales de este hilo (threadFinal). Los
-      // de PC/tele/casa preguntan en este chat cada acción, sin botones de «Siempre».
+      // de PC/tele/casa preguntan en este chat cada acción, sin botones de «Siempre»; en
+      // un turno del panel, en la tarjeta «Aprobaciones» del panel (daemon/specialist-ask.ts).
       delegateTool(
         config,
         () => threadFinal,
-        (question) => askOncePerTurn(thread, question),
+        createSpecialistAsk({
+          panelTurn: () => threadOutputs.get(thread.key) !== undefined,
+          viaChannel: (question) => askOncePerTurn(thread, question),
+          broker: approvals,
+          chatId: chatIdOf(thread.chatKey),
+        }),
       ),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
@@ -2851,6 +2858,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Stop acting first: a click mid-flight must not survive the shutdown.
       for (const thread of threads.values()) thread.agent.abort('external');
       telegram.cancelApprovals();
+      denySpecialistAsksForChat(approvals);
       const pending = [...threads.values()].map((t) => t.tail.catch(() => {}));
       await drainThreadTails(pending);
       clearInterval(goalDeliveryTimer);
@@ -6070,6 +6078,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       thread.tail = Promise.resolve();
     }
     telegram.cancelForChat(inbound.chatId);
+    // Lo que un especialista preguntó en el panel tampoco puede concederse ya.
+    denySpecialistAsksForChat(approvals, inbound.chatId);
     // A live view keeps sending frames after the user asked to stop, and its photo
     // would arrive after "Detenido." - exactly the class of ghost output /stop exists
     // to prevent. The same goes for an in-flight recording.
