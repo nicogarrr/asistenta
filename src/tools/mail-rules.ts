@@ -255,9 +255,10 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
           if (!batch || batch.account !== account.address)
             return 'Ese lote ya no vale (caducó o ya se usó). Pídeme otra vez la vista previa.';
           try {
-            const mover = deps.mover ?? ((a: MailAccount) => imapFor(a) as unknown as ImapMover);
+            const mover =
+              deps.mover ?? (async (a: MailAccount) => (await imapFor(a)) as unknown as ImapMover);
             const r = await moveFromInbox(
-              mover(account),
+              await mover(account),
               batch.uids,
               batch.accion,
               batch.uidValidity,
@@ -287,7 +288,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
         }
         if (args.action === 'baja_vista') {
           try {
-            const mails = await scanInbox((deps.imap ?? imapFor)(account), {
+            const mails = await scanInbox(await (deps.imap ?? imapFor)(account), {
               limit: args.cuantos ?? 300,
               since: now - 90 * 86_400_000,
             });
@@ -315,7 +316,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
             return 'Esa regla marca como leído; limpiar solo mueve. Dime a dónde: limpieza, archivar o papelera.';
           try {
             const box = { uidValidity: '' };
-            const mails = await scanInbox((deps.imap ?? imapFor)(account), {
+            const mails = await scanInbox(await (deps.imap ?? imapFor)(account), {
               limit: args.cuantos ?? 200,
               since: now - 90 * 86_400_000,
               box,
@@ -346,7 +347,7 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
           }
         }
         try {
-          const mails = await scanInbox((deps.imap ?? imapFor)(account), {
+          const mails = await scanInbox(await (deps.imap ?? imapFor)(account), {
             limit: args.cuantos ?? 100,
             since: (deps.now?.() ?? Date.now()) - 30 * 86_400_000,
           });

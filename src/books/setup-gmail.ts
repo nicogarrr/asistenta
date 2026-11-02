@@ -1,8 +1,7 @@
 /** Verificacion SMTP del app password de Gmail (antes de guardarlo en el vault). */
 
-import { createTransport } from 'nodemailer';
-
 export async function verifyGmailSmtp(address: string, appPassword: string): Promise<void> {
+  const { createTransport } = await import('nodemailer');
   const transporter = createTransport({
     host: 'smtp.gmail.com',
     port: 465,

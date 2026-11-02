@@ -1,6 +1,5 @@
 /** Read-only IMAP IDLE transport. No polling fallback, no SMTP, no flag mutations. */
 import { createHash } from 'node:crypto';
-import { ImapFlow } from 'imapflow';
 import { vaultGet } from '../vault.js';
 import { toMessage } from './client.js';
 import type { MailMessage } from './types.js';
@@ -109,7 +108,9 @@ export function reconcileCursor(saved: IdleCursor | null, mailbox: IdleMailbox):
     : { validity, next };
 }
 
-function defaultFactory(account: ReadMailAccount): IdleClient {
+async function defaultFactory(account: ReadMailAccount): Promise<IdleClient> {
+  // imapflow solo se carga cuando hay cuenta de correo y se abre la conexión IDLE.
+  const { ImapFlow } = await import('imapflow');
   return new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
@@ -173,7 +174,9 @@ export class MailIdleTransport {
           await this.wait(60 * 60_000);
           continue;
         }
-        const client = (this.deps.factory ?? defaultFactory)(account);
+        const client = this.deps.factory
+          ? this.deps.factory(account)
+          : await defaultFactory(account);
         this.client = client;
         let dirty = false;
         let arrivalWake: () => void = () => {};
