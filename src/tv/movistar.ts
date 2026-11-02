@@ -49,10 +49,7 @@ let cache: GuideCache | null = null;
 
 /** Quita acentos y baja a minúsculas para comparar sin sustos. */
 export function normalizeTvText(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '');
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
 /** «20261102103000 +0000» (XMLTV) → Date. */
@@ -169,5 +166,9 @@ export async function movistarChannels(
   const data = JSON.parse(raw) as Array<{ Nombre?: string; Uid?: number; CodCadenaTv?: string }>;
   return data
     .filter((c) => c.Nombre && c.Uid)
-    .map((c) => ({ nombre: String(c.Nombre), uid: Number(c.Uid), cod: String(c.CodCadenaTv ?? '') }));
+    .map((c) => ({
+      nombre: String(c.Nombre),
+      uid: Number(c.Uid),
+      cod: String(c.CodCadenaTv ?? ''),
+    }));
 }

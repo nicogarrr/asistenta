@@ -522,7 +522,8 @@ async function runTvAction(
     case 'guide': {
       // Qué echan en Movistar Plus+: fuente pública, la tele no se entera.
       const query = (args.text ?? '').trim();
-      if (!query) throw new Error('action=guide necesita text: el partido, peli o programa a buscar.');
+      if (!query)
+        throw new Error('action=guide necesita text: el partido, peli o programa a buscar.');
       if (!deps.guide) {
         throw new Error(
           'Esta instalación no tiene la guía de Movistar Plus+: pregunta qué quieren ver y busca el canal a mano.',
