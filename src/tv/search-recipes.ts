@@ -1,0 +1,90 @@
+/**
+ * Recetas de búsqueda por app de la tele (LG webOS): cómo buscar «X» DENTRO
+ * de una app concreta sin navegar su teclado en pantalla.
+ *
+ * #1909 fijó el orden de vías para buscar contenido (búsqueda universal →
+ * launch con contentId → teclado de la app). Faltaba la receta de cada app:
+ * el modelo no sabía que YouTube acepta la búsqueda como parámetro de
+ * arranque, así que acababa en la vía 3, tecla a tecla, con una captura por
+ * paso (y el teclado propio de YouTube no acepta `type`).
+ *
+ * - YouTube (oficial y YouTube AdFree): `system.launcher/launch` con
+ *   `params.contentTarget`, que la app trata como ruta de youtube.com/tv
+ *   (webosbrew/youtube-webos src/utils.js; homebridge-webos-tv #335 para
+ *   `v=ID`). Búsqueda: `https://www.youtube.com/tv#/search?q=…`.
+ * - Netflix: `contentId` «m=<url>&source_type=4» (el formato DIAL que también
+ *   usa webOS); la búsqueda va como https://www.netflix.com/search?q=….
+ * - Movistar Plus+: no publica enlaces de arranque; su receta es el teclado,
+ *   con la guía (action=guide) para saber el canal exacto antes.
+ *
+ * Las URLs de búsqueda no están verificadas en la tele de Nico: por eso
+ * quien las usa SIEMPRE devuelve la captura de después para comprobarlo.
+ */
+export type TvSearchRecipe =
+  | { kind: 'params'; appId: string; app: string; params: Record<string, string> }
+  | { kind: 'contentId'; appId: string; app: string; contentId: string }
+  | { kind: 'keyboard'; appId: string; app: string; hint: string };
+
+const YOUTUBE_IDS = new Set(['youtube.leanback.v4', 'org.webosbrew.youtube.adfree']);
+const YT_TV = 'https://www.youtube.com/tv';
+const MOVISTAR_ID = 'com.telefonica.app.nux';
+
+/** ¿Es una de las apps de YouTube de la tele (oficial o AdFree)? */
+export function isYoutubeApp(appId: string): boolean {
+  return YOUTUBE_IDS.has(appId);
+}
+
+/** Cómo buscar `query` dentro de `appId` (ya resuelto al id real), o null si no hay receta. */
+export function appSearchRecipe(appId: string, query: string): TvSearchRecipe | null {
+  const q = query.trim().slice(0, 200);
+  if (!q) return null;
+  if (isYoutubeApp(appId)) {
+    return {
+      kind: 'params',
+      appId,
+      app: appId === 'youtube.leanback.v4' ? 'YouTube' : 'YouTube AdFree',
+      params: { contentTarget: `${YT_TV}#/search?q=${encodeURIComponent(q)}` },
+    };
+  }
+  if (appId === 'netflix') {
+    return {
+      kind: 'contentId',
+      appId,
+      app: 'Netflix',
+      contentId: `m=https://www.netflix.com/search?q=${encodeURIComponent(q)}&source_type=4`,
+    };
+  }
+  if (appId === MOVISTAR_ID) {
+    return {
+      kind: 'keyboard',
+      appId,
+      app: 'Movistar Plus+',
+      hint:
+        'Movistar Plus+ no tiene enlace de búsqueda: si es un partido o un programa, mira antes ' +
+        'el canal con action=guide; luego launch, ráfaga hasta su buscador y type con el nombre ' +
+        'exacto, verificando cada paso con la captura.',
+    };
+  }
+  return null;
+}
+
+const YT_VIDEO = /(?:^|[?&#/]|v=)([A-Za-z0-9_-]{11})(?:$|[&?#])/;
+
+/**
+ * Payload de `system.launcher/launch` para abrir un contenido exacto.
+ *
+ * YouTube en webOS lee `params.contentTarget` («v=ID»), no `contentId`: con
+ * solo contentId la app se abría en su inicio. Se manda también contentId
+ * (lo que ya se mandaba) para no romper a quien lo use así.
+ */
+export function deepLaunchPayload(
+  appId: string,
+  contentId: string,
+): { id: string; contentId: string; params?: Record<string, string> } {
+  if (!isYoutubeApp(appId)) return { id: appId, contentId };
+  const c = contentId.trim();
+  if (c.startsWith(`${YT_TV}`)) return { id: appId, contentId: c, params: { contentTarget: c } };
+  const m = /^v=([A-Za-z0-9_-]{11})\b/.exec(c) ?? YT_VIDEO.exec(c);
+  const target = m ? `v=${m[1]}` : c;
+  return { id: appId, contentId: c, params: { contentTarget: target } };
+}

@@ -104,6 +104,19 @@ export async function rokuDeviceInfo(host: string, deps: RokuDeps = {}): Promise
   };
 }
 
+/** Ruta ECP de búsqueda: /search/browse?keyword=…[&provider-id=…&launch=true]. */
+export function rokuSearchPath(query: string, appId?: string): string {
+  const keyword = query.trim().slice(0, 100);
+  if (!keyword) throw new RokuError('¿Qué busco en el Roku? Dime el título.');
+  const params = new URLSearchParams({ keyword });
+  const provider = appId ? ROKU_APP_IDS[appId] : undefined;
+  if (provider) {
+    params.set('provider-id', provider);
+    params.set('launch', 'true');
+  }
+  return `/search/browse?${params.toString()}`;
+}
+
 export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
   const press = (key: string) => ecp(host, `/keypress/${key}`, 'POST', deps).then(() => undefined);
   return {
@@ -125,6 +138,13 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
           `No sé abrir «${appId}» en el Roku; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
         );
       await ecp(host, `/launch/${id}`, 'POST', deps);
+    },
+    search: async (query, appId) => {
+      // Búsqueda propia del Roku (ECP /search/browse): abre su pantalla de
+      // resultados con el texto ya puesto, sin teclear letra a letra. Con una
+      // app conocida (provider-id) se limita a ella y abre el resultado si lo
+      // encuentra (launch=true).
+      await ecp(host, rokuSearchPath(query, appId), 'POST', deps);
     },
   };
 }
