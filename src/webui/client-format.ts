@@ -274,7 +274,8 @@ export function resumenSesion(item: unknown, indice: number, ahora: number): Res
   if (cuando !== null && Number.isFinite(cuando) && cuando > 0) {
     const d = new Date(cuando);
     const hoy = new Date(ahora);
-    const ayer = new Date(ahora - 86_400_000);
+    // Día anterior del calendario (no ahora−24 h: el día del cambio de hora dura 23 o 25 h).
+    const ayer = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 1);
     const dos = (n: number): string => (n < 10 ? '0' : '') + n;
     const hora = `${dos(d.getHours())}:${dos(d.getMinutes())}`;
     const mismoDia = (a: Date, b: Date): boolean =>
