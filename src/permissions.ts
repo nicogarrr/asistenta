@@ -97,9 +97,14 @@ export type Approver = (call: ToolCall, reason: string) => boolean | Promise<boo
 export interface GateOptions {
   /**
    * Taint gate (F2): after a call that reads outside content (web, fetch, browser,
-   * downloads, documents, OCR, MCP) every later call that is not provably a read
-   * loses the memo, scopes, fullControl and the grant window, and asks naming the
-   * source. Default on; `PA_TAINT_GATE=off` disables it. Only ever stricter.
+   * downloads, documents, OCR, MCP) the SENSITIVE classes (money, credentials,
+   * sends to third parties, destructive shell, factory installs, goal/errand
+   * activation) lose every standing allowance and ask again, naming the source.
+   * Ordinary steps of a task the owner asked for (keys, typing, browsing, tv,
+   * own shell commands) keep the normal rules, tainted or not - Nico's rule:
+   * "si yo le he pedido una cosa, que la haga", no per-step questions. The
+   * exfiltration gate (egressTaint) and the deny list stay absolute.
+   * Default on; `PA_TAINT_GATE=off` disables it. Only ever stricter.
    */
   taintGate?: boolean;
   /** How long a taint lasts without a new owner message (ms). Default 30 min. */
@@ -1548,7 +1553,38 @@ export class Gate {
     if (!source) return null;
     if (externalReadSource(call) !== null) return null;
     if (this.classifyEffect(call) === 'lee') return null;
+    // Regla de Nico (2-nov-2026): «si yo le he pedido una cosa, que la haga».
+    // La marca NO reapregunta los pasos normales de una tarea suya (teclas,
+    // teclear, navegar, la tele, un shell de diagnóstico): eso le pedía letra
+    // a letra si podía pulsar ENTER en la tele. Solo las clases sensibles
+    // vuelven a preguntar nombrando el origen: son las que un contenido
+    // manipulado no puede abaratar porque él ya fijó esos topes.
+    if (!this.#isSensitiveWhileTainted(call)) return null;
     return `Tras leer contenido externo (${source}), esta acción necesita tu aprobación expresa`;
+  }
+
+  /**
+   * Las clases que preguntan SIEMPRE tras leer contenido externo, aunque haya
+   * un «Siempre» o una ventana abierta: dinero o pinta de dinero, credenciales
+   * o campos de credenciales, el cargo de una compra, un correo a terceros (lo
+   * que Nico no dictó se le enseña antes), un shell destructivo, instalar una
+   * herramienta fabricada, activar un objetivo o lanzar una gestión aprobada.
+   * Todo lo demás sigue las reglas normales, con o sin marca.
+   */
+  #isSensitiveWhileTainted(call: ToolCall): boolean {
+    return (
+      this.#isPaymentish(call) ||
+      this.#isCredentialish(call) ||
+      this.#isPaymentConfirmation(call) ||
+      this.#isMailSend(call) ||
+      this.#isFactoryInstall(call) ||
+      this.#isGoalActivate(call) ||
+      this.#isGestionEjecutar(call) ||
+      (call.tool === 'shell' && DESTRUCTIVE.test(argString(call.args, 'command'))) ||
+      // Guardar o reescribir una habilidad es una instrucción PERSISTENTE del
+      // agente: justo lo que una página o un resumen inyectado querrían cambiar.
+      (call.tool === 'skills' && ['save', 'improve'].includes(argString(call.args, 'action')))
+    );
   }
 
   /**
@@ -1746,14 +1782,25 @@ export class Gate {
   }
 
   /**
-   * Whether a previous approval for this tool is still fresh. Scoped to the
-   * `computer` tool only (see grantWindowMs): a window on `shell` would turn one
-   * approved command into a stretch of arbitrary commands. Payment-shaped and
-   * credential-shaped calls are exempt: those are asked about every single time,
-   * so a trust window must never cover them.
+   * Whether a previous approval for this tool is still fresh. Scoped to
+   * `GRANT_WINDOW_TOOLS` (`computer` y `tv`): a window on `shell` would turn one
+   * approved command into a stretch of arbitrary commands, y navegador, correo
+   * o compras tienen efectos sensibles que una ventana no debe heredar.
+   * Payment-shaped and credential-shaped calls are exempt: those are asked
+   * about every single time, so a trust window must never cover them.
    */
   #withinGrantWindow(sessionId: string, call: ToolCall): boolean {
-    if (call.tool !== 'computer') return false;
+    if (!GRANT_WINDOW_TOOLS.has(call.tool)) return false;
+    // En la tele, la ventana cubre solo el mando y el teclado (navegar el
+    // catálogo, teclear el título): abrir una URL o lanzar una app es otra
+    // acción general y la ve Nico aparte.
+    if (call.tool === 'tv' && !TV_WINDOW_ACTIONS.has(argString(call.args, 'action'))) return false;
+    // En shell, la ventana cubre la tarea que él pidió pero NUNCA lo
+    // destructivo ni instalar nada: eso pregunta comando a comando.
+    if (call.tool === 'shell') {
+      const command = argString(call.args, 'command');
+      if (DESTRUCTIVE.test(command) || SHELL_INSTALL.test(command)) return false;
+    }
     if (this.#isPaymentConfirmation(call)) return false;
     // Un atajo del sistema (Win+R abre «Ejecutar», Win+X el menú de administración,
     // Ctrl+Alt+Supr, Alt+F4, Ctrl+Shift+Esc) es un salto de «clicar en una ventana»
@@ -1788,7 +1835,11 @@ export class Gate {
 
   /** Grant the human's approval to the rest of this task, not just one call. */
   #openGrantWindow(sessionId: string, tool: string): void {
-    const window = this.#grantWindowMs;
+    // La tele tiene ventana larga: navegar un catálogo y teclear un título con
+    // el mando lleva minutos; 90 s (calibrados para una ráfaga de clics de
+    // escritorio) repreguntaban a mitad de «ponme este documental».
+    const window =
+      tool === 'tv' ? Math.max(this.#grantWindowMs, TV_GRANT_WINDOW_MS) : this.#grantWindowMs;
     if (window <= 0 || tool === 'purchase') return;
     // A declared `once` scope narrows an approval to its exact fingerprint:
     // opening the trust window here would widen what the human agreed to.
@@ -2625,6 +2676,13 @@ export class Gate {
   }
 }
 
+/**
+ * Instalar cosas por shell: fuera de la ventana de confianza, igual que lo
+ * destructivo. npm/pnpm/yarn/bun install|i|ci|add, pip install y winget install.
+ */
+const SHELL_INSTALL =
+  /(^|[;&|]\s*)(npm|pnpm|yarn|bun)(\.cmd|\.exe)?\s+(install|i|ci|add)\b|(^|[;&|]\s*)pip\d?(\.exe)?\s+install\b|(^|[;&|]\s*)winget\s+install\b/i;
+
 const DESTRUCTIVE =
   /\b(rm\s+-[rf]|Remove-Item|rmdir|del\s+\/|format\s|certutil|New-ItemProperty|Set-ExecutionPolicy|reg\s+delete|diskpart|takeown|icacls|Invoke-Expression|iex\s|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))\b/i;
 
@@ -2634,6 +2692,22 @@ const DESTRUCTIVE =
  * and sending/deleting/booking elements are checked first and still ask; `exec_js`
  * (arbitrary code in the page) is deliberately absent.
  */
+/**
+ * Herramientas cuya aprobación abre la ventana de confianza de la tarea:
+ * `computer` (clics y teclas del escritorio), `tv` (mando y teclado de la
+ * tele, con ventana larga `TV_GRANT_WINDOW_MS`) y `shell` NO destructivo ni
+ * instalador (regla de Nico, 2-nov-2026: dentro de la tarea que él pidió, un
+ * comando de lectura o diagnóstico no repregunta). Enumeradas, nunca por
+ * defecto: navegador/correo/compras tienen efectos sensibles propios.
+ */
+export const GRANT_WINDOW_TOOLS: ReadonlySet<string> = new Set(['computer', 'tv', 'shell']);
+
+/** Ventana de confianza de una tarea de tele: buscar y teclear lleva minutos. */
+export const TV_GRANT_WINDOW_MS = 15 * 60_000;
+
+/** Pasos de mando/teclado de la tele que cubre la ventana (ni `url` ni `launch`). */
+export const TV_WINDOW_ACTIONS: ReadonlySet<string> = new Set(['key', 'type']);
+
 export const BROWSER_FREE_ACTIONS = [
   'open',
   'snapshot',

@@ -150,7 +150,14 @@ describe('REA: cada llamada pide permiso', () => {
     };
     await gate.check('s1', write);
     await gate.check('s1', call);
+    // Lo normal (escribir unas notas) sigue cubierto por el control total tras
+    // leer contenido de REA; lo sensible (un shell destructivo) sí repregunta.
     await gate.check('s1', write);
+    await gate.check('s1', {
+      tool: 'shell',
+      args: { command: 'Remove-Item -Recurse x' },
+      actor: 'local',
+    });
     expect(seen.asked).toBe(2);
   });
 });
