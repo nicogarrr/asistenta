@@ -460,7 +460,8 @@ export async function downloadAudio(
  * Nombre de fichero seguro para mandar a Telegram: sin controles, separadores ni
  * caracteres de Windows, sin marcas de dirección (U+202E y familia hacen que
  * «factura\u202Efdp.exe» se vea como otra extensión), sin puntos al principio y con
- * un tope de longitud. Vacío si no queda nada legible.
+ * un tope de longitud. Sin punto ni espacio al final (Windows los quita y «x..pdf»
+ * queda feo). Vacío si no queda nada legible.
  */
 export function safeFilename(raw: string, max = 120): string {
   let name = Array.from(raw, (c) => {
@@ -471,9 +472,14 @@ export function safeFilename(raw: string, max = 120): string {
   })
     .join('')
     .trim()
-    .replace(/^[.\s]+/, '');
+    .replace(/^[.\s]+|[.\s]+$/g, '');
   if (!/[\p{L}\p{N}]/u.test(name)) return '';
-  if (name.length > max) name = Array.from(name).slice(0, max).join('').trim();
+  if (name.length > max) {
+    name = Array.from(name)
+      .slice(0, max)
+      .join('')
+      .replace(/[.\s]+$/, '');
+  }
   return name;
 }
 

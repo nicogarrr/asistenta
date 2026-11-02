@@ -42,7 +42,9 @@ export function safeFilename(title: string, ext: 'epub' | 'pdf'): string {
     .replace(/[^A-Za-z0-9._ -]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 80);
+    .slice(0, 80)
+    // Sin punto/espacio al principio (fichero oculto) ni al final («Fin ..epub»).
+    .replace(/^[.\s]+|[.\s]+$/g, '');
   return `${base || 'libro'}.${ext}`;
 }
 
