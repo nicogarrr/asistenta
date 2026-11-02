@@ -16,7 +16,15 @@ import { discoverWebOsTvs } from '../tv/discover.js';
 import { runIntentOnDriver } from '../tv/drivers.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.js';
 import { loadKnownTvs, relocateMovedTvs, saveTvClientKey } from '../tv/known-tvs.js';
-import { tvKey, tvKeys, tvRequest, tvScreenshot, tvToast, tvTypeText } from '../tv/lgtv.js';
+import {
+  sharedTvSessionPool,
+  tvKey,
+  tvKeys,
+  tvRequest,
+  tvScreenshot,
+  tvToast,
+  tvTypeText,
+} from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
 import type { KnownTv } from '../tv/registry.js';
 import { rokuDriver } from '../tv/roku.js';
@@ -33,6 +41,22 @@ import { sendWakeOnLan } from '../tv/wol.js';
 import { vaultGet, vaultSet, vaultSetMany } from '../vault.js';
 import type { CapabilityPlugin } from './types.js';
 
+export interface TvToolDepsOptions {
+  /**
+   * Proceso largo (daemon, /tv en Telegram): reutiliza la conexión con la tele,
+   * no repite la sonda de auto-selección si la tele acaba de contestar y no
+   * reintenta Glasshouse durante un rato si no contestó.
+   */
+  keepAlive?: boolean;
+}
+
+/** Sin sonda de auto-selección si la tele activa contestó hace menos de esto. */
+const RECENT_ANSWER_MS = 30_000;
+/** Glasshouse inalcanzable: no se vuelve a probar (launch/toast/power van directos por SSAP) en este rato. */
+export const GH_DOWN_RETRY_MS = 120_000;
+const ghDownUntil = new Map<string, number>();
+const ghClients = new Map<string, GlasshouseClient>();
+
 /**
  * Cableado de la tool `tv` al cliente SSAP real.
  *
@@ -41,7 +65,11 @@ import type { CapabilityPlugin } from './types.js';
  * mensaje que el modelo puede leer, en vez de romper el arranque del agente: la
  * tele es opcional y su ausencia no puede tumbar el resto.
  */
-export function tvToolDeps(store: Store): TvToolDeps {
+export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDeps {
+  // Daemon y /tv: conexión con la tele reutilizada entre órdenes (src/tv/lgtv.ts
+  // TvSessionPool). `pa tv` (proceso corto) abre y cierra como siempre.
+  const pool = opts.keepAlive ? sharedTvSessionPool() : null;
+  const poolDep = pool ? { pool } : {};
   const frameDir = join(paths.screenshots, 'tv');
   mkdirSync(frameDir, { recursive: true });
   const STATE_KEY = 'tv:lastLook';
@@ -74,19 +102,24 @@ export function tvToolDeps(store: Store): TvToolDeps {
     }
     // Multi-casa: si la activa no responde en esta red y hay otra tele
     // conocida encendida, la activa pasa a ser esa (sin re-emparejar).
-    try {
-      const { ensureActiveTv } = await import('../tv/auto-select.js');
-      const ensured = await ensureActiveTv({ vaultGet, vaultSetMany });
-      if (ensured.switchedTo) {
-        log.info('tv: tele activa cambiada al llegar a otra red', {
-          host: ensured.switchedTo.host,
-          brand: ensured.switchedTo.brand,
+    // La activa contestó hace nada (sesión persistente): ni sonda TCP ni descubrimiento.
+    const activeHost = pool ? await vaultGet('tv:host') : undefined;
+    const recent = !!(pool && activeHost && pool.answeredWithin(activeHost, RECENT_ANSWER_MS));
+    if (!recent) {
+      try {
+        const { ensureActiveTv } = await import('../tv/auto-select.js');
+        const ensured = await ensureActiveTv({ vaultGet, vaultSetMany });
+        if (ensured.switchedTo) {
+          log.info('tv: tele activa cambiada al llegar a otra red', {
+            host: ensured.switchedTo.host,
+            brand: ensured.switchedTo.brand,
+          });
+        }
+      } catch (err) {
+        log.warn('tv: auto-seleccion de tele fallo; sigo con la activa guardada', {
+          err: String(err),
         });
       }
-    } catch (err) {
-      log.warn('tv: auto-seleccion de tele fallo; sigo con la activa guardada', {
-        err: String(err),
-      });
     }
     const activeBrand = await vaultGet('tv:activeBrand');
     if (activeBrand === 'roku' || activeBrand === 'samsung') {
@@ -114,21 +147,57 @@ export function tvToolDeps(store: Store): TvToolDeps {
    * cliente, en la llamada - nunca en el arranque del agente.
    */
   const GH_DEFAULT_ENDPOINTS = ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'];
+  const ghKeys = new WeakMap<GlasshouseClient, string>();
   const ghClient = async (): Promise<GlasshouseClient> => {
     // Orden a otra tele: Glasshouse solo en SU IP (si no esta rooteada, falla
     // como inalcanzable y se sigue por SSAP); nunca los endpoints de la activa.
     const target = currentTvTarget();
+    let endpoints: string[];
+    let token: string | undefined;
     if (target && target.host !== (await vaultGet('tv:host'))) {
-      return new GlasshouseClient({ endpoints: [`http://${target.host}:8080`] });
+      endpoints = [`http://${target.host}:8080`];
+    } else {
+      const override = await vaultGet('tv:glasshouseUrl');
+      endpoints = override?.trim()
+        ? override
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : GH_DEFAULT_ENDPOINTS;
+      token = await vaultGet('tv:glasshouseToken');
     }
-    const override = await vaultGet('tv:glasshouseUrl');
-    const endpoints = override?.trim()
-      ? override
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : GH_DEFAULT_ENDPOINTS;
-    return new GlasshouseClient({ endpoints, token: await vaultGet('tv:glasshouseToken') });
+    if (!pool) return new GlasshouseClient({ endpoints, ...(token ? { token } : {}) });
+    // Proceso largo: el mismo cliente entre órdenes (recuerda el endpoint que contestó).
+    const key = `${endpoints.join(',')}|${token ?? ''}`;
+    let client = ghClients.get(key);
+    if (!client) {
+      client = new GlasshouseClient({ endpoints, ...(token ? { token } : {}) });
+      ghClients.set(key, client);
+    }
+    ghKeys.set(client, key);
+    return client;
+  };
+
+  /**
+   * Glasshouse con SSAP detrás (launch, toast, power): si hace poco no contestó
+   * en ningún endpoint, no se vuelve a esperar sus timeouts (hasta 4 s por
+   * endpoint) y se va directo por SSAP. Solo con keepAlive.
+   */
+  const ghOrSkip = async (run: (gh: GlasshouseClient) => Promise<unknown>): Promise<void> => {
+    const gh = await ghClient();
+    const key = ghKeys.get(gh);
+    if (key && (ghDownUntil.get(key) ?? 0) > Date.now()) {
+      throw new GlasshouseUnavailableError('Glasshouse no contestó hace poco; voy por SSAP.');
+    }
+    try {
+      await run(gh);
+      if (key) ghDownUntil.delete(key);
+    } catch (err) {
+      if (key && err instanceof GlasshouseUnavailableError) {
+        ghDownUntil.set(key, Date.now() + GH_DOWN_RETRY_MS);
+      }
+      throw err;
+    }
   };
 
   /**
@@ -217,6 +286,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
       const image = await tvScreenshot(host, clientKey, {
         allowPlaintext,
         onNewClientKey: saveNewKey,
+        ...poolDep,
       });
       // El mime/ext salen de la FIRMA real del frame: la tele decide el
       // formato, no el cliente (tvScreenshot acepta JPEG y PNG).
@@ -233,7 +303,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'com.webos.applicationManager/getForegroundAppInfo',
         {},
-        { allowPlaintext, onNewClientKey: saveNewKey },
+        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
       const p = res as { appId?: string; appCategory?: string[] };
       return { appId: p.appId ?? 'desconocida', category: p.appCategory ?? [] };
@@ -245,7 +315,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'com.webos.applicationManager/listLaunchPoints',
         {},
-        { allowPlaintext, onNewClientKey: saveNewKey },
+        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
       const points = (res as { launchPoints?: { id: string; title: string }[] }).launchPoints ?? [];
       return points.map((p) => ({ id: p.id, title: p.title }));
@@ -254,7 +324,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
       // Glasshouse primero (sin pairing); si la tele no lo tiene o no
       // responde, SSAP con la client-key guardada.
       try {
-        await (await ghClient()).control('launchApp', id);
+        await ghOrSkip((gh) => gh.control('launchApp', id));
         return;
       } catch (err) {
         // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
@@ -270,7 +340,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'system.launcher/launch',
         { id },
-        { allowPlaintext, onNewClientKey: saveNewKey },
+        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
     },
     launchDeep: async (id, contentId) => {
@@ -282,7 +352,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'system.launcher/launch',
         { id, contentId },
-        { allowPlaintext, onNewClientKey: saveNewKey },
+        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
     },
     search: async (key) => {
@@ -294,24 +364,36 @@ export function tvToolDeps(store: Store): TvToolDeps {
         clientKey,
         'com.webos.service.unifiedsearch/search',
         { key },
-        { allowPlaintext, onNewClientKey: saveNewKey },
+        { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
     },
     key: async (name) => {
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvKey(host, clientKey, name, { allowPlaintext, onNewClientKey: saveNewKey });
+      await tvKey(host, clientKey, name, {
+        allowPlaintext,
+        onNewClientKey: saveNewKey,
+        ...poolDep,
+      });
     },
     keys: async (names) => {
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvKeys(host, clientKey, names, { allowPlaintext, onNewClientKey: saveNewKey });
+      await tvKeys(host, clientKey, names, {
+        allowPlaintext,
+        onNewClientKey: saveNewKey,
+        ...poolDep,
+      });
     },
     typeText: async (text) => {
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvTypeText(host, clientKey, text, { allowPlaintext, onNewClientKey: saveNewKey });
+      await tvTypeText(host, clientKey, text, {
+        allowPlaintext,
+        onNewClientKey: saveNewKey,
+        ...poolDep,
+      });
     },
     toast: async (message) => {
       try {
-        await (await ghClient()).control('toast', message);
+        await ghOrSkip((gh) => gh.control('toast', message));
         return;
       } catch (err) {
         // Fallback a SSAP SOLO si Glasshouse no llego a recibir la orden
@@ -322,7 +404,11 @@ export function tvToolDeps(store: Store): TvToolDeps {
         log.info('tv toast: Glasshouse inalcanzable, pruebo SSAP', { err: String(err) });
       }
       const { host, clientKey, allowPlaintext } = await paired();
-      await tvToast(host, clientKey, message, { allowPlaintext, onNewClientKey: saveNewKey });
+      await tvToast(host, clientKey, message, {
+        allowPlaintext,
+        onNewClientKey: saveNewKey,
+        ...poolDep,
+      });
     },
     power: async (on) => {
       // Cadena Glasshouse -> SSAP -> Wake-on-LAN en src/tv/power.ts (reglas del
@@ -333,13 +419,14 @@ export function tvToolDeps(store: Store): TvToolDeps {
       const host = target ? target.host : await vaultGet('tv:host');
       return tvPower(on, {
         gh: async (action) => {
-          await (await ghClient()).control(action);
+          await ghOrSkip((gh) => gh.control(action));
         },
         ssap: async (uri, payload) => {
           const p = await paired();
           return tvRequest(p.host, p.clientKey, uri, payload, {
             allowPlaintext: p.allowPlaintext,
             onNewClientKey: saveNewKey,
+            ...poolDep,
           });
         },
         wake: mac ? () => sendWakeOnLan(mac, { host }) : undefined,
@@ -356,6 +443,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
               // esperar 5 s por intento; 2 s basta en la red de casa.
               connectTimeoutMs: 2_000,
               onNewClientKey: saveNewKey,
+              ...poolDep,
               commandTimeoutMs: 3_000,
               connectRetries: 0,
             },
@@ -371,6 +459,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
         tvRequest(p.host, p.clientKey, uri, payload, {
           allowPlaintext: p.allowPlaintext,
           onNewClientKey: saveNewKey,
+          ...poolDep,
           commandTimeoutMs: 4_000,
           // Los reintentos los hace readTvStatus (3 intentos, tope ~6 s, tambien
           // si la apertura se queda colgada con la tele en reposo): aqui uno
@@ -432,5 +521,7 @@ export function tvToolDeps(store: Store): TvToolDeps {
 /** La tele como plugin: una tool `tv` por Store. Modos/exclusividad salen del catálogo (core/capabilities.ts). */
 export const tvPlugin: CapabilityPlugin<{ store: Store; staleOrder?: () => string | null }> = {
   id: 'tv',
-  tools: ({ store, staleOrder }) => [createTvTool({ ...tvToolDeps(store), staleOrder })],
+  tools: ({ store, staleOrder }) => [
+    createTvTool({ ...tvToolDeps(store, { keepAlive: true }), staleOrder }),
+  ],
 };

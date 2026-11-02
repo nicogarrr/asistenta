@@ -5824,7 +5824,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Doble toque en el mando /tv (o Telegram entregando dos veces): misma orden una vez.
   const tvPressGuard = createTvPressGuard();
   const runTvOrder = async (text: string): Promise<string> => {
-    tvChatTool ??= createTvTool(tvToolDeps(store));
+    tvChatTool ??= createTvTool(tvToolDeps(store, { keepAlive: true }));
     const res = await tvChatTool.execute('tv-chat', { action: 'command', text });
     return res.content
       .map((c) => (c.type === 'text' ? c.text : ''))

@@ -30,20 +30,27 @@ const CLIENT_KEY_MAX = 512;
 /** Subconjunto de ws que usa el cliente (inyectable en tests). */
 export interface TvSocket {
   once(event: 'open' | 'error', cb: (...args: unknown[]) => void): void;
-  on(event: 'message' | 'error' | 'close', cb: (...args: unknown[]) => void): void;
-  off?(event: 'message' | 'error' | 'close' | 'open', cb: (...args: unknown[]) => void): void;
+  on(event: 'message' | 'error' | 'close' | 'pong', cb: (...args: unknown[]) => void): void;
+  off?(
+    event: 'message' | 'error' | 'close' | 'open' | 'pong',
+    cb: (...args: unknown[]) => void,
+  ): void;
   send(data: string): void;
   close(): void;
   terminate?(): void;
+  /** ws real: ping de protocolo (la tele contesta 'pong'); se usa para ver si una sesión guardada sigue viva. */
+  ping?(): void;
 }
 
 export type TvSocketFactory = (url: string) => TvSocket;
 
 /** Subconjunto de ws que usa el socket de input de botones (tvKey). */
 export interface TvInputSocket {
-  on(event: 'open' | 'error' | 'close', cb: (...args: unknown[]) => void): void;
+  on(event: 'open' | 'error' | 'close' | 'pong', cb: (...args: unknown[]) => void): void;
+  off?(event: 'open' | 'error' | 'close' | 'pong', cb: (...args: unknown[]) => void): void;
   send(data: string): void;
   close(): void;
+  ping?(): void;
 }
 
 export type TvInputSocketFactory = (url: string) => TvInputSocket;
@@ -147,6 +154,12 @@ export interface TvClientDeps {
   keyTimeoutMs?: number;
   /** Margen tras enviar la tecla antes de cerrar (por defecto 800 ms; PA_TV_KEY_GRACE_MS). */
   keyGraceMs?: number;
+  /**
+   * Sesión persistente (solo el daemon): la conexión SSAP, el registro y el
+   * socket de input se abren una vez y se reutilizan entre órdenes. Sin pool,
+   * cada orden abre y cierra su conexión (comportamiento de siempre).
+   */
+  pool?: TvSessionPool;
 }
 
 /**
@@ -514,6 +527,54 @@ export async function pairTv(host: string, deps: TvClientDeps = {}): Promise<Pai
   }
 }
 
+/** Una petición SSAP sobre un socket ya registrado (con o sin sesión persistente). */
+function requestOn(
+  ws: TvSocket,
+  clientKey: string,
+  uri: string,
+  payload: Record<string, unknown>,
+  cmdTimeout: number,
+): Promise<Record<string, unknown>> {
+  const id = `cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  return awaitPhase<Record<string, unknown>>(
+    ws,
+    cmdTimeout,
+    () => new Error(`La TV no respondio a ${uri} en ${cmdTimeout / 1000}s.`),
+    (msg) => {
+      if (msg.id !== id) return undefined;
+      if (msg.type === 'response') {
+        const res = msg.payload;
+        // Contrato SSAP: exito = returnValue===true EXPLICITO sobre un
+        // payload objeto no-array. Null/missing/malformed NUNCA es exito:
+        // la CLI no puede anunciar "Tele apagada" ante respuesta invalida.
+        if (!res || typeof res !== 'object' || Array.isArray(res)) {
+          return {
+            ok: false,
+            error: new Error(`La TV devolvio una respuesta invalida para ${uri}.`),
+          };
+        }
+        if (res.returnValue !== true) {
+          return {
+            ok: false,
+            error: new Error(
+              `La TV rechazo ${uri}: ${sanitizeTvText(safeText(res.errorText) || 'not permitted', [clientKey])}`,
+            ),
+          };
+        }
+        return { ok: true, value: res };
+      }
+      return {
+        ok: false,
+        error: new Error(
+          `La TV devolvio error en ${uri}: ${sanitizeTvText(safeText(msg.error) || safeText(msg.type) || 'desconocido', [clientKey])}`,
+        ),
+      };
+    },
+    [clientKey],
+    () => ws.send(JSON.stringify({ type: 'request', id, uri: `ssap://${uri}`, payload })),
+  );
+}
+
 /** Request SSAP contra una tele ya emparejada (registro con client-key, sin aviso). */
 export async function tvRequest(
   host: string,
@@ -523,6 +584,7 @@ export async function tvRequest(
   deps: TvClientDeps = {},
 ): Promise<Record<string, unknown>> {
   const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
+  if (deps.pool) return deps.pool.request(safeHost, clientKey, uri, payload, deps);
   const opened = await openSocketRetrying(
     safeHost,
     deps.factory ?? defaultFactory,
@@ -546,48 +608,405 @@ export async function tvRequest(
         // best-effort
       }
     }
-    const id = `cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-    const pending = awaitPhase<Record<string, unknown>>(
-      opened.ws,
-      cmdTimeout,
-      () => new Error(`La TV no respondio a ${uri} en ${cmdTimeout / 1000}s.`),
-      (msg) => {
-        if (msg.id !== id) return undefined;
-        if (msg.type === 'response') {
-          const res = msg.payload;
-          // Contrato SSAP: exito = returnValue===true EXPLICITO sobre un
-          // payload objeto no-array. Null/missing/malformed NUNCA es exito:
-          // la CLI no puede anunciar "Tele apagada" ante respuesta invalida.
-          if (!res || typeof res !== 'object' || Array.isArray(res)) {
-            return {
-              ok: false,
-              error: new Error(`La TV devolvio una respuesta invalida para ${uri}.`),
-            };
-          }
-          if (res.returnValue !== true) {
-            return {
-              ok: false,
-              error: new Error(
-                `La TV rechazo ${uri}: ${sanitizeTvText(safeText(res.errorText) || 'not permitted', [clientKey])}`,
-              ),
-            };
-          }
-          return { ok: true, value: res };
-        }
-        return {
-          ok: false,
-          error: new Error(
-            `La TV devolvio error en ${uri}: ${sanitizeTvText(safeText(msg.error) || safeText(msg.type) || 'desconocido', [clientKey])}`,
-          ),
-        };
-      },
-      [clientKey],
-      () => opened.ws.send(JSON.stringify({ type: 'request', id, uri: `ssap://${uri}`, payload })),
-    );
-    return await pending;
+    return await requestOn(opened.ws, clientKey, uri, payload, cmdTimeout);
   } finally {
     opened.ws.close();
   }
+}
+
+/** Inactividad tras la que se cierra una sesión persistente (PA_TV_SESSION_IDLE_MS; 0 = sin sesión persistente). */
+export const TV_SESSION_IDLE_MS = 60_000;
+/** Sesión parada más que esto: antes de reutilizarla se comprueba con un ping que sigue viva. */
+export const TV_SESSION_PING_AFTER_MS = 5_000;
+const TV_SESSION_PING_TIMEOUT_MS = 1_500;
+
+/** PA_TV_SESSION_IDLE_MS: 0 desactiva la sesión persistente; si no, 5 s–10 min (60 s por defecto). */
+export function tvSessionIdleMs(): number {
+  const raw = process.env.PA_TV_SESSION_IDLE_MS?.trim();
+  if (raw === '0') return 0;
+  return envMs('PA_TV_SESSION_IDLE_MS', TV_SESSION_IDLE_MS, 5_000, 600_000);
+}
+
+/** URIs de solo lectura: tras un corte en una sesión reutilizada se pueden repetir sin riesgo. */
+const READ_ONLY_URI = /\/(get|list)[A-Za-z]*$|^tv\/executeOneShot$/;
+
+interface PooledInput {
+  ws: TvInputSocket;
+  closed: boolean;
+  lastUsed: number;
+  lastKeyAt: number;
+}
+
+interface PooledSession {
+  ws: TvSocket;
+  host: string;
+  closed: boolean;
+  lastUsed: number;
+  idleTimer?: ReturnType<typeof setTimeout>;
+  input?: PooledInput;
+  /** Registrada con otra client-key (re-emparejada): sirve para esta orden y no se guarda. */
+  rekeyed?: boolean;
+}
+
+export interface TvSessionPoolOptions {
+  idleMs?: number;
+  pingAfterMs?: number;
+  keyGapMs?: number;
+  now?: () => number;
+}
+
+/** ¿Sigue vivo? ping de protocolo con espera corta; un socket sin ping (fakes) se da por vivo. */
+function stillAlive(ws: TvSocket | TvInputSocket, timeoutMs: number): Promise<boolean> {
+  if (typeof ws.ping !== 'function' || typeof ws.off !== 'function') return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      ws.off?.('pong', onPong);
+      resolve(ok);
+    };
+    const onPong = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    ws.on('pong', onPong);
+    try {
+      ws.ping?.();
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+/**
+ * Sesiones SSAP persistentes por tele (host + client-key + canal).
+ *
+ * Antes cada orden abría wss, repetía el registro y cerraba; cada tecla además
+ * pedía el socket de input, lo abría y esperaba 800 ms antes de cerrarlo
+ * (~1,4 s por tecla). Aquí la conexión registrada y el socket de input se
+ * guardan y se cierran solos tras `idleMs` sin uso. Reglas de seguridad:
+ * - Una sesión parada más de `pingAfterMs` se comprueba con un ping antes de
+ *   reutilizarla; sin pong, se tira y se abre otra (no se envía nada a ciegas).
+ * - Un corte o timeout tira la sesión. Solo las lecturas (get*, list*,
+ *   captura) se repiten una vez en una sesión nueva; una orden (launch,
+ *   tecla enviada…) nunca se repite, para no duplicarla.
+ * - Si la tele entrega otra client-key (re-emparejada), esa conexión no se
+ *   guarda: la siguiente orden llega con la clave nueva.
+ */
+export class TvSessionPool {
+  private readonly sessions = new Map<string, Promise<PooledSession>>();
+  private readonly answered = new Map<string, number>();
+  private readonly idleMs: number;
+  private readonly pingAfterMs: number;
+  private readonly keyGapMs: number | undefined;
+  private readonly now: () => number;
+
+  constructor(opts: TvSessionPoolOptions = {}) {
+    this.idleMs = opts.idleMs ?? TV_SESSION_IDLE_MS;
+    this.pingAfterMs = opts.pingAfterMs ?? TV_SESSION_PING_AFTER_MS;
+    this.keyGapMs = opts.keyGapMs;
+    this.now = opts.now ?? Date.now;
+  }
+
+  /** Sesiones abiertas o abriéndose (tests y diagnóstico). */
+  size(): number {
+    return this.sessions.size;
+  }
+
+  /** ¿Contestó esta tele (conexión registrada o respuesta) hace menos de `ms`? */
+  answeredWithin(host: string, ms: number): boolean {
+    const at = this.answered.get(host);
+    return at !== undefined && this.now() - at < ms;
+  }
+
+  closeAll(): void {
+    for (const [key, pending] of this.sessions) {
+      this.sessions.delete(key);
+      pending.then(
+        (s) => this.drop(s),
+        () => undefined,
+      );
+    }
+  }
+
+  private keyOf(host: string, clientKey: string, deps: TvClientDeps): string {
+    return `${host}|${deps.allowPlaintext ? 'ws' : 'wss'}|${clientKey}`;
+  }
+
+  private drop(s: PooledSession, key?: string): void {
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    if (key && this.sessions.get(key)) {
+      // Solo se borra si la entrada sigue siendo ESTA sesión.
+      const entry = this.sessions.get(key);
+      entry?.then(
+        (cur) => {
+          if (cur === s && this.sessions.get(key) === entry) this.sessions.delete(key);
+        },
+        () => undefined,
+      );
+    }
+    if (s.input && !s.input.closed) {
+      s.input.closed = true;
+      try {
+        s.input.ws.close();
+      } catch {
+        // ya cerrado
+      }
+    }
+    if (!s.closed) {
+      s.closed = true;
+      try {
+        s.ws.close();
+      } catch {
+        // ya cerrado
+      }
+    }
+  }
+
+  private touch(s: PooledSession, key: string): void {
+    s.lastUsed = this.now();
+    this.answered.set(s.host, s.lastUsed);
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    s.idleTimer = setTimeout(() => this.drop(s, key), this.idleMs);
+    s.idleTimer.unref?.();
+  }
+
+  private async open(
+    host: string,
+    clientKey: string,
+    deps: TvClientDeps,
+    key: string,
+  ): Promise<PooledSession> {
+    const opened = await openSocketRetrying(
+      host,
+      deps.factory ?? defaultFactory,
+      { allowPlaintext: deps.allowPlaintext ?? false },
+      deps,
+    );
+    const s: PooledSession = { ws: opened.ws, host, closed: false, lastUsed: this.now() };
+    const onGone = () => {
+      s.closed = true;
+      this.drop(s, key);
+    };
+    try {
+      const registeredKey = await register(
+        opened.ws,
+        clientKey,
+        deps.commandTimeoutMs ?? tvCommandTimeoutMs(),
+        deps.promptWaitMs ?? PROMPT_WAIT_MS,
+      );
+      if (registeredKey !== clientKey) {
+        if (deps.onNewClientKey) {
+          try {
+            await deps.onNewClientKey(registeredKey);
+          } catch {
+            // best-effort, como sin sesión
+          }
+        }
+        s.rekeyed = true;
+      }
+    } catch (err) {
+      opened.ws.close();
+      s.closed = true;
+      throw err;
+    }
+    opened.ws.on('close', onGone);
+    opened.ws.on('error', onGone);
+    return s;
+  }
+
+  /** Sesión lista: la guardada si sigue viva, o una nueva. `fresh` = recién abierta. */
+  private async acquire(
+    host: string,
+    clientKey: string,
+    deps: TvClientDeps,
+  ): Promise<{ s: PooledSession; key: string; fresh: boolean }> {
+    const key = this.keyOf(host, clientKey, deps);
+    const existing = this.sessions.get(key);
+    if (existing) {
+      const s = await existing.catch(() => null);
+      if (s && !s.closed) {
+        if (
+          this.now() - s.lastUsed <= this.pingAfterMs ||
+          (await stillAlive(s.ws, TV_SESSION_PING_TIMEOUT_MS))
+        ) {
+          if (!s.closed) return { s, key, fresh: false };
+        }
+        this.drop(s, key);
+      }
+      if (this.sessions.get(key) === existing) this.sessions.delete(key);
+    }
+    const pending = this.open(host, clientKey, deps, key);
+    this.sessions.set(key, pending);
+    try {
+      const s = await pending;
+      if (s.rekeyed) this.sessions.delete(key);
+      return { s, key, fresh: true };
+    } catch (err) {
+      if (this.sessions.get(key) === pending) this.sessions.delete(key);
+      throw err;
+    }
+  }
+
+  private finish(s: PooledSession, key: string): void {
+    if (s.rekeyed) {
+      this.drop(s);
+      return;
+    }
+    this.touch(s, key);
+  }
+
+  async request(
+    host: string,
+    clientKey: string,
+    uri: string,
+    payload: Record<string, unknown>,
+    deps: TvClientDeps,
+  ): Promise<Record<string, unknown>> {
+    const cmdTimeout = deps.commandTimeoutMs ?? tvCommandTimeoutMs();
+    for (let attempt = 0; ; attempt += 1) {
+      const { s, key, fresh } = await this.acquire(host, clientKey, deps);
+      try {
+        const res = await requestOn(s.ws, clientKey, uri, payload, cmdTimeout);
+        this.finish(s, key);
+        return res;
+      } catch (err) {
+        // Un rechazo de la tele (returnValue false) deja la sesión sana.
+        const cut =
+          s.closed ||
+          (err instanceof Error &&
+            /no respondio|cerro la conexion|No se pudo enviar/.test(err.message));
+        if (!cut) {
+          this.finish(s, key);
+          throw err;
+        }
+        this.drop(s, key);
+        if (!fresh && attempt === 0 && READ_ONLY_URI.test(uri)) continue;
+        throw err;
+      }
+    }
+  }
+
+  /** Abre (o reutiliza) el socket de input de la sesión. */
+  private async inputFor(
+    s: PooledSession,
+    key: string,
+    host: string,
+    clientKey: string,
+    deps: TvClientDeps,
+  ): Promise<PooledInput> {
+    const cur = s.input;
+    if (cur && !cur.closed) {
+      if (
+        this.now() - cur.lastUsed <= this.pingAfterMs ||
+        (await stillAlive(cur.ws, TV_SESSION_PING_TIMEOUT_MS))
+      ) {
+        if (!cur.closed) return cur;
+      }
+      cur.closed = true;
+      try {
+        cur.ws.close();
+      } catch {
+        // ya cerrado
+      }
+    }
+    const res = await requestOn(
+      s.ws,
+      clientKey,
+      'com.webos.service.networkinput/getPointerInputSocket',
+      {},
+      deps.commandTimeoutMs ?? tvCommandTimeoutMs(),
+    );
+    const socketUrl = parseTvUrl((res as { socketPath?: unknown }).socketPath, host, [
+      'ws:',
+      'wss:',
+    ]);
+    if (!socketUrl) throw new Error('La tele devolvio un socket de input no valido.');
+    const { timeoutMs } = tvKeyTimings(deps);
+    const openInput: TvInputSocketFactory =
+      deps.inputFactory ?? ((url) => new WebSocket(url, { rejectUnauthorized: false }));
+    const ws = openInput(socketUrl);
+    const input: PooledInput = { ws, closed: false, lastUsed: this.now(), lastKeyAt: 0 };
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => fail(new Error('timeout enviando la tecla')), timeoutMs);
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        input.closed = true;
+        ws.close();
+        reject(err);
+      };
+      ws.on('open', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      });
+      ws.on('error', () => {
+        input.closed = true;
+        fail(new Error('no se pudo enviar la tecla'));
+      });
+      ws.on('close', () => {
+        input.closed = true;
+        fail(new Error('la tele cerro el socket de input antes de tiempo'));
+      });
+    });
+    s.input = input;
+    this.touch(s, key);
+    return input;
+  }
+
+  async key(host: string, clientKey: string, keyName: string, deps: TvClientDeps): Promise<void> {
+    // Misma pausa que una ráfaga (tvKeyGapMs, PA_TV_KEY_GAP_MS), también entre órdenes seguidas.
+    const gap =
+      deps.keyGapMs !== undefined ? tvKeyGapMs(deps) : (this.keyGapMs ?? tvKeyGapMs(deps));
+    for (let attempt = 0; ; attempt += 1) {
+      const { s, key } = await this.acquire(host, clientKey, deps);
+      let input: PooledInput;
+      try {
+        input = await this.inputFor(s, key, host, clientKey, deps);
+      } catch (err) {
+        // Nada enviado todavía: con la sesión cortada se prueba UNA vez en limpio.
+        if (s.closed && attempt === 0) continue;
+        throw err;
+      }
+      const wait = input.lastKeyAt + gap - this.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      if (input.closed) {
+        if (attempt === 0) continue;
+        throw new Error('la tele cerro el socket de input antes de tiempo');
+      }
+      try {
+        input.ws.send(`type:button\nname:${keyName}\n\n`);
+      } catch {
+        // send() que lanza = no salió: se puede reabrir una vez.
+        input.closed = true;
+        try {
+          input.ws.close();
+        } catch {
+          // ya cerrado
+        }
+        if (attempt === 0) continue;
+        throw new Error('no se pudo enviar la tecla');
+      }
+      input.lastKeyAt = this.now();
+      input.lastUsed = input.lastKeyAt;
+      this.finish(s, key);
+      return;
+    }
+  }
+}
+
+/** Pool compartido del proceso (daemon y /tv); null si PA_TV_SESSION_IDLE_MS=0. */
+let sharedPool: TvSessionPool | null | undefined;
+export function sharedTvSessionPool(): TvSessionPool | null {
+  if (sharedPool === undefined) {
+    const idleMs = tvSessionIdleMs();
+    sharedPool = idleMs > 0 ? new TvSessionPool({ idleMs }) : null;
+  }
+  return sharedPool;
 }
 
 /** Toast en pantalla (quick win de la feature). */
@@ -685,6 +1104,7 @@ export async function tvKey(
     throw new Error(`Tecla no valida: ${sanitizeTvText(name, [clientKey])}`);
   }
   const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
+  if (deps.pool) return deps.pool.key(safeHost, clientKey, keyName, deps);
   const res = await tvRequest(
     safeHost,
     clientKey,
@@ -789,6 +1209,12 @@ export async function tvKeys(
     return;
   }
   const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
+  if (deps.pool) {
+    // Sesión persistente: la ráfaga sale por el socket de input ya abierto,
+    // con la misma pausa entre teclas y sin margen de cierre al final.
+    for (const k of keyNames) await deps.pool.key(safeHost, clientKey, k, deps);
+    return;
+  }
   const res = await tvRequest(
     safeHost,
     clientKey,
