@@ -216,3 +216,38 @@ describe('tool tv: search (búsqueda universal webOS)', () => {
     );
   });
 });
+
+describe('tool tv: guide (qué echan en Movistar Plus+)', () => {
+  const partido = {
+    channelName: 'M+ LALIGA TV',
+    title: 'LALIGA HYPERMOTION: Ceuta FC - Real Sporting',
+    desc: '',
+    start: new Date('2026-11-02T10:30:00Z'),
+    stop: new Date('2026-11-02T12:30:00Z'),
+    live: true,
+  };
+
+  it('devuelve canal y hora en castellano', async () => {
+    const { d } = toolDeps({ guide: async () => [partido] });
+    const r = await run(d, { action: 'guide', text: 'ceuta sporting' });
+    expect(text(r)).toMatch(/Ceuta FC - Real Sporting/);
+    expect(text(r)).toMatch(/M\+ LALIGA TV/);
+    expect(text(r)).toMatch(/AHORA/);
+    expect(text(r)).toMatch(/busca el canal por su nombre/);
+  });
+
+  it('sin resultados lo dice claro', async () => {
+    const { d } = toolDeps({ guide: async () => [] });
+    const r = await run(d, { action: 'guide', text: 'real madrid' });
+    expect(text(r)).toMatch(/No encuentro «real madrid»/);
+  });
+
+  it('necesita text y avisa si la instalación no lo tiene', async () => {
+    const { d } = toolDeps({ guide: async () => [] });
+    await expect(run(d, { action: 'guide' })).rejects.toThrow(/necesita text/);
+    const bare = toolDeps();
+    await expect(run(bare.d, { action: 'guide', text: 'x' })).rejects.toThrow(
+      /no tiene la guía de Movistar/,
+    );
+  });
+});

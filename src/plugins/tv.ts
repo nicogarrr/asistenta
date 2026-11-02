@@ -355,6 +355,10 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
         { allowPlaintext, onNewClientKey: saveNewKey, ...poolDep },
       );
     },
+    guide: async (query) => {
+      const { movistarFind } = await import('../tv/movistar.js');
+      return movistarFind(query);
+    },
     search: async (key) => {
       // Búsqueda universal de webOS (com.webos.service.unifiedsearch):
       // lectura pura, no cambia nada en la tele.
