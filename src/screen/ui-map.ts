@@ -379,3 +379,60 @@ export function sharedElementLabel(n: unknown): string | null {
     .slice(0, 60);
   return safe || null;
 }
+
+/** Caja numerada que se dibuja sobre la captura (píxeles reales de pantalla). */
+export interface MarkBox {
+  n: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export function marksOf(map: UiMap): MarkBox[] {
+  return map.elements.map((el) => ({
+    n: el.n,
+    left: el.left,
+    top: el.top,
+    width: el.width,
+    height: el.height,
+  }));
+}
+
+/**
+ * Trozo de PowerShell que dibuja las marcas sobre `$bmp` (captura a tamaño real, antes
+ * de reducirla) con `$b` = límites del monitor y `$scale` = reducción que viene después.
+ * Grosor y letra se agrandan con 1/$scale para que se lean igual en la imagen reducida.
+ * Set-of-Mark (Microsoft SoM, UFO²): el modelo ve «8» en la foto y «[8]» en la lista.
+ */
+export function marksScript(marks: readonly MarkBox[]): string {
+  const rows = marks
+    .filter((m) => [m.n, m.left, m.top, m.width, m.height].every(Number.isFinite))
+    .slice(0, 200)
+    .map(
+      (m) =>
+        `[void]$marks.Add(@(${Math.trunc(m.n)},${Math.trunc(m.left)},${Math.trunc(m.top)},${Math.max(1, Math.trunc(m.width))},${Math.max(1, Math.trunc(m.height))}))`,
+    );
+  if (rows.length === 0) return '';
+  return `
+$marks = New-Object System.Collections.ArrayList
+${rows.join('\n')}
+$gm = [System.Drawing.Graphics]::FromImage($bmp)
+try {
+  $k = 1.0 / $scale
+  $color = [System.Drawing.Color]::FromArgb(235, 230, 0, 70)
+  $pen = New-Object System.Drawing.Pen($color, [float][Math]::Max(2.0, 2.0 * $k))
+  $bg = New-Object System.Drawing.SolidBrush($color)
+  $font = New-Object System.Drawing.Font('Segoe UI', [float](11.0 * $k), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+  foreach ($m in $marks) {
+    $x = $m[1] - $b[0]; $y = $m[2] - $b[1]
+    $gm.DrawRectangle($pen, $x, $y, $m[3], $m[4])
+    $label = [string]$m[0]
+    $sz = $gm.MeasureString($label, $font)
+    $gm.FillRectangle($bg, [float]$x, [float]$y, $sz.Width, $sz.Height)
+    $gm.DrawString($label, $font, [System.Drawing.Brushes]::White, [float]$x, [float]$y)
+  }
+  $font.Dispose(); $bg.Dispose(); $pen.Dispose()
+} finally { $gm.Dispose() }
+`;
+}
