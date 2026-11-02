@@ -1,13 +1,9 @@
 import type { Model, MutableModels } from '@earendil-works/pi-ai';
-import { createModels, envApiKeyAuth, normalizeContext } from '@earendil-works/pi-ai';
-import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { createProvider } from '@earendil-works/pi-ai/models';
 import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
 import { createGeminiSignatureFetch } from './gemini-signature.js';
 import { resolveModelCaps } from './models.js';
-import { createOpenCodeLocalStream, DEFAULT_OPENCODE_LOCAL } from './opencode-local.js';
 
 /**
  * Provider wiring.
@@ -107,10 +103,30 @@ function extraModelDef(config: Config, id: string) {
   };
 }
 
+/**
+ * pi-ai (catálogo, cliente OpenAI) solo se carga al crear el proveedor del modelo:
+ * las órdenes `pa …` que no hablan con el modelo no lo pagan al arrancar.
+ */
+async function loadPiAi() {
+  const [core, completions, catalog] = await Promise.all([
+    import('@earendil-works/pi-ai'),
+    import('@earendil-works/pi-ai/api/openai-completions.lazy'),
+    import('@earendil-works/pi-ai/models'),
+  ]);
+  return {
+    createModels: core.createModels,
+    envApiKeyAuth: core.envApiKeyAuth,
+    normalizeContext: core.normalizeContext,
+    openAICompletionsApi: completions.openAICompletionsApi,
+    createProvider: catalog.createProvider,
+  };
+}
+
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
   if (config.provider === 'opencode-local') {
     return createLocalHandle(config);
   }
+  const { createModels, createProvider, envApiKeyAuth, openAICompletionsApi } = await loadPiAi();
   // Capacidades del catalogo (env > preset > defaults). El modelo de fallback
   // puede tener otra ventana/precio y se resuelve por separado.
   const caps = resolveModelCaps(config);
@@ -279,6 +295,9 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
  * chat-completions (medido: su API es de sesiones).
  */
 async function createLocalHandle(config: Config): Promise<ProviderHandle> {
+  const { createModels, createProvider, envApiKeyAuth, normalizeContext, openAICompletionsApi } =
+    await loadPiAi();
+  const { createOpenCodeLocalStream, DEFAULT_OPENCODE_LOCAL } = await import('./opencode-local.js');
   const caps = resolveModelCaps(config);
   // PA_CONTEXT_WINDOW y compañía describen PA_MODEL: el respaldo usa su
   // propia ficha del catálogo, no la ventana del principal.

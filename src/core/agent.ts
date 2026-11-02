@@ -1,5 +1,4 @@
-import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
-import { Agent } from '@earendil-works/pi-agent-core';
+import type { Agent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import type { Model } from '@earendil-works/pi-ai';
 import { appendCallAudit, hashArgs } from '../audit/calls.js';
 import { takePageAfterFailedCall } from '../browser/page-after-call.js';
@@ -649,6 +648,9 @@ export class PersonalAgent {
   ): Promise<PersonalAgent> {
     const { models, model, streamFn, modelFor, fallbackFor, modelById } =
       await createProviderHandle(config);
+    // pi-agent-core solo se carga al crear un agente: las órdenes `pa …` que no
+    // hablan con el modelo (ayuda, vault, stop…) no lo pagan al arrancar.
+    const { Agent } = await import('@earendil-works/pi-agent-core');
     const stream = opts.stream ?? false;
     const loadout = opts.deferTools ? new ToolLoadout(tools) : undefined;
     let seenVersion = 0;
