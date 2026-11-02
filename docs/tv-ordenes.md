@@ -52,6 +52,7 @@ Con la tele apagada del todo no hay nada escuchando: «enciende la tele» manda 
 - `pa tv teles` lista las emparejadas (una tele emparejada antes del registro sale sola, sin reescribir nada); `pa tv usar <ip|nombre>` cambia la activa; `pa tv nombre <ip> salón` le pone nombre (sin tildes ni mayúsculas al buscarla).
 - Si el router le cambia la IP a una tele (DHCP), `pa tv buscar` la reconoce por su MAC o su UUID UPnP y actualiza la IP guardada.
 - `pa tv wake <ip|nombre>` enciende por red esa tele; sin nada, la activa.
+- Las órdenes pueden nombrar la tele (por chat, `/tv` o `pa tv orden`): «baja el volumen de la tele del salón», «enciende la del dormitorio», «pon Netflix en el dormitorio». Sin nombre van a la activa, como siempre. El nombre tiene que ser el de una tele guardada (`pa tv nombre`, o la última palabra de su nombre UPnP, p. ej. «Dormitorio» en «[LG] webOS TV Dormitorio»). Con varias teles, un sitio que no es ninguna («la tele del garaje») o dos teles en una orden hacen que pregunte sin tocar ninguna. Una orden a otra tele no cambia la activa; su Glasshouse solo se busca en su propia IP y, si se volvió a emparejar, la clave nueva va a su entrada. Si no contesta en su IP, se busca por MAC/UUID y se reintenta una vez (solo si no llegó a conectar).
 - Windows: el descubrimiento usa multicast UDP 1900. Si `pa tv buscar` no ve nada con la tele encendida, permite Node.js en «Redes privadas» en el Firewall de Windows (el aviso sale la primera vez) y comprueba que la wifi del PC es de tipo «Privada».
 
 ## Modo cine (`action=scene scene=cine`)

@@ -13,6 +13,7 @@ import {
   sonyModelYearText,
 } from './bravia.js';
 import { type DiscoveredTv, discoverWebOsTvs } from './discover.js';
+import { loadKnownTvs, relocateMovedTvs } from './known-tvs.js';
 import {
   assertTvHost,
   pairTv,
@@ -24,18 +25,8 @@ import {
 } from './lgtv.js';
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 import { readNeighborMac } from './neighbor-mac.js';
-import {
-  applyMoves,
-  findMovedTvs,
-  findTv,
-  type KnownTv,
-  macKey,
-  parseRegistry,
-  registryToJson,
-  upsertTv,
-  validateTvName,
-  withLegacyTv,
-} from './registry.js';
+import { findTv, parseRegistry, registryToJson, upsertTv, validateTvName } from './registry.js';
+import { withoutTvPlace } from './target.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { sendWakeOnLan, validateTvMac } from './wol.js';
 
@@ -152,54 +143,6 @@ export interface TvCliDeps {
   discover?: () => Promise<DiscoveredTv[]>;
 }
 
-/**
- * Registro efectivo: tv:tvs mas la tele de las claves sueltas si se emparejo
- * antes de que existiera el registro (migracion sin escribir nada).
- */
-export async function loadKnownTvs(): Promise<KnownTv[]> {
-  const { vaultGet } = await import('../vault.js');
-  return withLegacyTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
-    host: await vaultGet(TV_HOST_KEY),
-    clientKey: await vaultGet(TV_CLIENT_KEY),
-    secure: await vaultGet(TV_SECURE_KEY),
-    mac: await vaultGet(TV_MAC_KEY),
-    brand: await vaultGet(TV_ACTIVE_BRAND),
-  });
-}
-
-/**
- * Teles guardadas que el router ha cambiado de IP: se reconocen por MAC (la
- * tabla de vecinos del PC, que la respuesta SSDP acaba de rellenar) o por el
- * UUID UPnP. Actualiza el registro y, si era la activa, tv:host. Devuelve los
- * cambios hechos (vacio = nada que tocar, y entonces no escribe).
- */
-export async function relocateMovedTvs(
-  found: readonly DiscoveredTv[],
-  deps: Pick<TvCliDeps, 'neighborMac'> = {},
-): Promise<Array<{ tv: KnownTv; from: string; to: string }>> {
-  const known = await loadKnownTvs();
-  const wantsMac = known.some((t) => macKey(t.mac).length === 12);
-  const neighborMac = deps.neighborMac ?? ((h: string) => readNeighborMac(h));
-  const seen = await Promise.all(
-    found.map(async (f) => ({
-      ip: f.ip,
-      uuid: f.uuid ?? null,
-      mac:
-        wantsMac && !known.some((t) => t.host === f.ip)
-          ? await neighborMac(f.ip).catch(() => null)
-          : null,
-    })),
-  );
-  const moves = findMovedTvs(known, seen);
-  if (moves.length === 0) return [];
-  const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
-  await vaultSet(TV_REGISTRY_KEY, registryToJson(applyMoves(known, moves)));
-  const active = await vaultGet(TV_HOST_KEY);
-  const activeMove = moves.find((m) => m.from === active);
-  if (activeMove) await vaultSetMany({ [TV_HOST_KEY]: activeMove.to });
-  return moves;
-}
-
 function tvLabel(tv: {
   host: string;
   name?: string | undefined;
@@ -229,7 +172,7 @@ export async function tvOrderCommand(text: string, deps: TvCliDeps): Promise<num
     err(`La orden es demasiado larga (máx. ${TV_CHAT_MAX_LEN} caracteres).\n`);
     return 2;
   }
-  const intent = parseTvCommand(order);
+  const intent = parseTvCommand(order) ?? parseTvCommand(withoutTvPlace(order));
   if (!intent && tvOrderHasTime(order)) {
     // Como /tv: una orden con hora o condición no se ejecuta al momento (ni se programa aquí).
     err(

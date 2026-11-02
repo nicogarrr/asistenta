@@ -8,6 +8,7 @@
  */
 
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
+import { withoutTvPlace } from './target.js';
 
 export const TV_CHAT_EXAMPLES =
   '«apaga la tele», «abre Netflix», «volumen a 15», «silencio», «modo cine» o «estado»';
@@ -16,7 +17,10 @@ export const TV_CHAT_USAGE = `¿Qué hago con la tele? Dímelo con palabras, por
 
 /** Si una respuesta normal es una orden de tele al momento (para completar el /tv preguntado). */
 export function isTvOrder(text: string): boolean {
-  return text.trim().length <= TV_CHAT_MAX_LEN && parseTvCommand(text) !== null;
+  return (
+    text.trim().length <= TV_CHAT_MAX_LEN &&
+    (parseTvCommand(text) ?? parseTvCommand(withoutTvPlace(text))) !== null
+  );
 }
 
 export const TV_CHAT_MAX_LEN = 200;
@@ -35,7 +39,8 @@ export async function tvChatCommand(args: string, deps: TvChatCommandDeps): Prom
   if (text.length > TV_CHAT_MAX_LEN) {
     return `La orden es demasiado larga para hacerla al momento (máx. ${TV_CHAT_MAX_LEN} caracteres). Escríbemela como un mensaje normal.`;
   }
-  const intent = parseTvCommand(text);
+  // «…de la tele del salón»: la tele la elige la tool; aquí solo se mira si es una orden.
+  const intent = parseTvCommand(text) ?? parseTvCommand(withoutTvPlace(text));
   if (!intent && tvOrderHasTime(text)) {
     return `«${text.slice(0, 80)}» lleva hora o condición, y así solo hago cosas al momento: no he tocado la tele. Escríbemelo como un mensaje normal.`;
   }
