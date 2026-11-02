@@ -35,6 +35,41 @@ describe('migración del pin opencode-local', () => {
     expect(env.PA_PROVIDER_PRESET).toBe('opencode');
   });
 
+  it('con los dos pins (preset local + modelo -free) migra ambos', () => {
+    const { writes, deps } = fakeFs({
+      '/x/.env': 'PA_PROVIDER_PRESET=opencode-local\nPA_MODEL=deepseek-v4.1-flash-free\n',
+    });
+    const env = {
+      PA_PROVIDER_PRESET: 'opencode-local' as string | undefined,
+      PA_MODEL: 'deepseek-v4.1-flash-free' as string | undefined,
+    };
+    expect(migrateLocalPresetPin({ ...deps, env })).toContain('OpenCode Go');
+    expect(writes['/x/.env']).toContain('PA_PROVIDER_PRESET=opencode');
+    expect(writes['/x/.env']).toContain('PA_MODEL=deepseek-v4.1-flash');
+    expect(writes['/x/.env']).not.toContain('-free');
+    expect(env.PA_PROVIDER_PRESET).toBe('opencode');
+    expect(env.PA_MODEL).toBe('deepseek-v4.1-flash');
+  });
+
+  it('solo PA_MODEL=-free: corrige el modelo sin inventar preset', () => {
+    const { writes, deps } = fakeFs({ '/x/.env': 'PA_MODEL=deepseek-v4.1-flash-free\n' });
+    const env = { PA_MODEL: 'deepseek-v4.1-flash-free' as string | undefined };
+    expect(migrateLocalPresetPin({ ...deps, env })).not.toBeNull();
+    expect(writes['/x/.env']).toContain('PA_MODEL=deepseek-v4.1-flash');
+    expect(writes['/x/.env']).not.toContain('PA_PROVIDER_PRESET=opencode');
+    expect(env.PA_MODEL).toBe('deepseek-v4.1-flash');
+  });
+
+  it('PA_MODEL con otro valor se respeta aunque migre el preset', () => {
+    const { writes, deps } = fakeFs({
+      '/x/.env': 'PA_PROVIDER_PRESET=opencode-local\nPA_MODEL=otro-modelo\n',
+    });
+    const env = { PA_MODEL: 'otro-modelo' as string | undefined };
+    expect(migrateLocalPresetPin({ ...deps, env })).not.toBeNull();
+    expect(writes['/x/.env']).toContain('PA_MODEL=otro-modelo');
+    expect(env.PA_MODEL).toBe('otro-modelo');
+  });
+
   it('con la marca presente no toca nada (re-pin deliberado)', () => {
     const { writes, deps } = fakeFs({
       '/x/.env': `PA_PROVIDER_PRESET=opencode-local\n${PRESET_MIGRATION_MARKER}\n`,
