@@ -435,7 +435,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<ReturnType<t
         deps.playbooks.save(pb);
         const notes = pb.login.length + pb.selectores.length + pb.quirks.length;
         return reply(
-          `Playbook de ${domain} guardado (${notes} notas). La próxima gestión en ${domain} lo leerá al preparar el plan.`,
+          `Playbook de ${domain} guardado (${notes} ${notes === 1 ? 'nota' : 'notas'}). La próxima gestión en ${domain} lo leerá al preparar el plan.`,
         );
       }
 
