@@ -473,6 +473,17 @@ export class TelegramChannel implements ChannelAdapter {
     }
     if (!inbound.text && !inbound.photoFileId && !inbound.audioFileId && !inbound.documentFileId)
       return;
+    // Un vídeo o GIF con texto: el texto llega al asistente, pero el vídeo no se
+    // ve. Antes se ignoraba sin decirlo y la respuesta parecía hablar del vídeo.
+    const unseen = unseenVideoNote(msg);
+    if (unseen && inbound.text) {
+      await ctx
+        .reply(unseen, {
+          message_thread_id: msg.message_thread_id,
+          reply_to_message_id: msg.message_id,
+        } as never)
+        .catch(() => {});
+    }
 
     await handlers.onMessage(inbound);
   }
@@ -2228,5 +2239,12 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('contact' in msg)
     return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
   if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
+  return null;
+}
+
+/** Aviso para un vídeo o GIF que llega con texto: se contesta solo al texto. */
+export function unseenVideoNote(msg: object): string | null {
+  if ('video' in msg || 'animation' in msg)
+    return 'Aún no puedo ver vídeos ni GIF: te contesto solo al texto.';
   return null;
 }
