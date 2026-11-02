@@ -67,3 +67,18 @@ describe('errorDetail', () => {
     expect(d.stack?.split('\n').length).toBeLessThanOrEqual(12);
   });
 });
+
+describe('/stop libera la ocupada pegada', () => {
+  it('cierra lo abierto antes del /stop y deja lo posterior', async () => {
+    const { releaseBusyOpenedBefore } = await import('../src/ocupada.js');
+    trackBusyIn(dir);
+    busyBegin('turnos', 'pegado');
+    const stopAt = Date.now() + 1;
+    await new Promise((r) => setTimeout(r, 5));
+    busyBegin('turnos', 'nuevo');
+    expect(releaseBusyOpenedBefore(stopAt)).toBe(1);
+    expect(readBusyDetail(dir).items.map((i) => i.label)).toEqual(['nuevo']);
+    releaseBusyOpenedBefore(Date.now() + 10);
+    expect(readBusy(dir)).toBe('libre');
+  });
+});

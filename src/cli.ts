@@ -237,7 +237,7 @@ import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
-import { describeBusy, trackBusyIn } from './ocupada.js';
+import { describeBusy, releaseBusyOpenedBefore, trackBusyIn } from './ocupada.js';
 import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
@@ -6483,6 +6483,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       thread.tail = Promise.resolve();
     }
     telegram.cancelForChat(inbound.chatId);
+    {
+      const stopAt = Date.now();
+      setTimeout(() => {
+        const freed = releaseBusyOpenedBefore(stopAt);
+        if (freed > 0) log.warn('/stop: ocupada pegada liberada', { freed });
+      }, 5000).unref();
+    }
     // Lo que un especialista preguntó en el panel tampoco puede concederse ya.
     denySpecialistAsksForChat(approvals, inbound.chatId);
     // A live view keeps sending frames after the user asked to stop, and its photo

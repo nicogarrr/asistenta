@@ -4,9 +4,9 @@
  * NO se manda foto: texto claro + estado en vivo como alternativa.
  */
 import { describe, expect, it } from 'vitest';
+import { SUSPECT_BLANK_BYTES } from '../src/tools/tv.js';
 import { screenTvBlankText, screenTvCapture } from '../src/tv/screen-tv.js';
 import type { TvStatus } from '../src/tv/status.js';
-import { SUSPECT_BLANK_BYTES } from '../src/tools/tv.js';
 
 const grande = Buffer.alloc(SUSPECT_BLANK_BYTES + 1, 1);
 const negro = Buffer.alloc(9_000, 0);
