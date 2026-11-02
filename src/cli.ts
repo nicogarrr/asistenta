@@ -6860,6 +6860,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       /** Especialistas que hicieron algo en este turno (Telegram los dice al final). */
       const specialistsUsed: string[] = [];
+      const specialistsDenied: string[] = [];
       result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
           lastSummary = info.summary;
@@ -6875,6 +6876,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (info.specialist) {
             if (out) out.specialist?.(info.specialist);
             else specialistsUsed.push(info.specialist);
+          }
+          // Pidió permiso y no se le dio ninguno: una línea que dice que no hizo nada.
+          if (info.specialistDenied) {
+            if (out) out.specialistDenied?.(info.specialistDenied);
+            else specialistsDenied.push(info.specialistDenied);
           }
         },
       });
@@ -6912,7 +6918,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
       // Como en el panel: una línea al final con el especialista que hizo la tarea.
       if (!out && inbound.channel === 'telegram' && result.error === null)
-        result = { ...result, text: withSpecialistNote(result.text, specialistsUsed) };
+        result = {
+          ...result,
+          text: withSpecialistNote(result.text, specialistsUsed, specialistsDenied),
+        };
 
       // Learn from this run's problems: a tool failed and another way then worked.
       // Built from the structured trail only, saved straight into `lecciones`.
