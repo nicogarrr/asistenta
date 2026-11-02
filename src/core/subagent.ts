@@ -225,7 +225,8 @@ export class SubagentPool {
 
     const parent = request.signal;
     if (parent?.aborted) return { text: '', depth, error: SUBAGENT_STOPPED };
-    await this.#acquire();
+    // Parado mientras esperaba turno en la cola: sale al momento, sin empezar ni ocupar hueco.
+    if (!(await this.#acquire(parent))) return { text: '', depth, error: SUBAGENT_STOPPED };
     try {
       // Parado mientras esperaba turno en la cola: no se empieza.
       if (parent?.aborted) return { text: '', depth, error: SUBAGENT_STOPPED };
@@ -235,14 +236,28 @@ export class SubagentPool {
     }
   }
 
-  /** Toma un turno o espera en FIFO. La cola no salta nunca a un recien llegado. */
-  #acquire(): Promise<void> {
+  /**
+   * Toma un turno o espera en FIFO. La cola no salta nunca a un recien llegado.
+   * Devuelve false si `signal` se aborta mientras espera: sale de la cola sin turno.
+   */
+  #acquire(signal?: AbortSignal): Promise<boolean> {
     if (this.#active < this.#limits.maxConcurrent) {
       this.#active++;
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
-    return new Promise<void>((resolve) => {
-      this.#queue.push(resolve);
+    return new Promise<boolean>((resolve) => {
+      const onAbort = (): void => {
+        const at = this.#queue.indexOf(granted);
+        if (at === -1) return;
+        this.#queue.splice(at, 1);
+        resolve(false);
+      };
+      const granted = (): void => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve(true);
+      };
+      this.#queue.push(granted);
+      signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
 
