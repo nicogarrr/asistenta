@@ -24,12 +24,16 @@ describe('OpenCode Go client rules', () => {
     resetConfigForTests();
   });
 
-  it('defaults to the Zen endpoint with the free space-bunny model', () => {
-    // Measured 2026-10-07: space-bunny-free answers 200 on zen/v1 (~2 s) and 400
-    // "Model is unavailable" on zen/go/v1; LongCat only runs on Go and is slow.
+  it('defaults to OpenCode Go with DeepSeek V4.1 Flash', () => {
+    // Decision de Nico (2026-11-02): «DeepSeek V4 flash normal, el de open code
+    // y no local». Medido ese dia: deepseek-v4.1-flash responde 200 en
+    // zen/go/v1 con coste 0 (dentro de la suscripcion Go); zen/v1 exige balance
+    // («Insufficient account funds») y Nico no tiene. Antes: zen/v1 +
+    // space-bunny-free (medido 2026-10-07), inservible sin balance Zen.
     const c = loadConfig();
-    expect(c.baseUrl).toBe('https://opencode.ai/zen/v1');
-    expect(c.model).toBe('space-bunny-free');
+    expect(c.provider).toBe('opencode-go');
+    expect(c.baseUrl).toBe('https://opencode.ai/zen/go/v1');
+    expect(c.model).toBe('deepseek-v4.1-flash');
     expect(isOpenCodeEndpoint(c.baseUrl)).toBe(true);
   });
 

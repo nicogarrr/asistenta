@@ -35,7 +35,7 @@ afterEach(() => {
 describe('resolveModelCaps', () => {
   it('open code usa la ventana de 1M y coste cero por defecto', () => {
     const caps = resolveModelCaps({ providerPreset: 'opencode' });
-    expect(caps.id).toBe('space-bunny-free');
+    expect(caps.id).toBe('deepseek-v4.1-flash');
     expect(caps.contextWindow).toBe(1_048_576);
     expect(caps.maxOutput).toBe(32_000);
     expect(caps.inputPerMTok).toBe(0);
@@ -68,7 +68,7 @@ describe('resolveModelCaps', () => {
 
   it('sin config cae en el preset opencode', () => {
     expect(resolveModelCaps()).toMatchObject({
-      id: 'space-bunny-free',
+      id: 'deepseek-v4.1-flash',
       contextWindow: 1_048_576,
     });
   });

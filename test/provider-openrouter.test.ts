@@ -44,12 +44,15 @@ async function freshConfig() {
 }
 
 describe('PA_PROVIDER_PRESET', () => {
-  it('sin preset, OpenCode Zen free sigue siendo el default', async () => {
+  it('sin preset, OpenCode Go con DeepSeek V4.1 Flash es el default', async () => {
+    // Decision de Nico (2026-11-02): DeepSeek V4.1 Flash normal via OpenCode Go,
+    // no el -free ni el serve local. Antes: Zen free (zen/v1 + space-bunny-free),
+    // inservible sin balance Zen.
     const config = await freshConfig();
     expect(config.providerPreset).toBe('opencode');
     expect(config.provider).toBe('opencode-go');
-    expect(config.model).toBe('space-bunny-free');
-    expect(config.baseUrl).toBe('https://opencode.ai/zen/v1');
+    expect(config.model).toBe('deepseek-v4.1-flash');
+    expect(config.baseUrl).toBe('https://opencode.ai/zen/go/v1');
   });
 
   it('preset openrouter conmuta los tres defaults', async () => {
