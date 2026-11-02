@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { type Browser, chromium } from 'playwright';
+import type { Browser } from 'playwright';
 import { Type } from 'typebox';
 import { log } from '../log.js';
 
@@ -304,7 +304,8 @@ export async function searchRenfe(
   if (args.date < madridDate(new Date())) throw new StepError(`la fecha ${args.date} ya pasó`);
   if (args.after && !/^\d{2}:\d{2}$/.test(args.after)) throw new StepError('after: usa HH:MM');
 
-  const launch = deps.launch ?? (() => chromium.launch({ headless: true }));
+  const launch =
+    deps.launch ?? (async () => (await import('playwright')).chromium.launch({ headless: true }));
   let browser: Browser;
   try {
     browser = await launch();
