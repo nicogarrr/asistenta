@@ -367,6 +367,8 @@ interface Session {
   channel: BrowserChannel;
   /** Solo con CDP: suelta la conexión sin cerrar el Chrome del dueño. */
   release?: () => Promise<void>;
+  /** Aviso pendiente para el siguiente resultado de `open`. */
+  notice?: string;
   /** vm context holding `page`, `state` and what the agent put on it. */
   sandbox: vm.Context;
   /** Domains the human approved for this chat. */
@@ -892,7 +894,12 @@ export class BrowserService {
       // launchPersistentContext has no navigation-timeout option.
       timeout: this.#options.timeoutMs,
     };
-    const { context, channel, release } = await this.#launch(scope, dir, launchOptions, sharedKey);
+    const { context, channel, release, notice } = await this.#launch(
+      scope,
+      dir,
+      launchOptions,
+      sharedKey,
+    );
     let page: Page;
     try {
       context.setDefaultTimeout(this.#options.timeoutMs);
@@ -915,6 +922,7 @@ export class BrowserService {
       visible: wantVisible || release !== undefined,
       channel,
       release,
+      notice,
       // Code generation disabled: the sandbox may call the functions it is given, but
       // it cannot build new code from strings or wasm, which removes the eval/Function
       // side of the escape surface.
@@ -968,26 +976,41 @@ export class BrowserService {
     dir: string,
     launchOptions: Parameters<typeof import('playwright').chromium.launchPersistentContext>[1],
     sharedKey?: string,
-  ): Promise<{ context: BrowserContext; channel: BrowserChannel; release?: () => Promise<void> }> {
+  ): Promise<{
+    context: BrowserContext;
+    channel: BrowserChannel;
+    release?: () => Promise<void>;
+    notice?: string;
+  }> {
     // Carga diferida: playwright pesa ~85 ms de arranque y solo se usa al abrir el navegador.
     const { chromium } = await import('playwright');
     const port = this.#options.cdpPort;
+    let notice: string | undefined;
     if (sharedKey && port) {
       // Chrome real del dueño: perfil dedicado, puerto solo en loopback, sesión que persiste.
-      const profile = `${dir}-cdp`;
-      mkdirSync(profile, { recursive: true });
-      const endpoint = await ensureChromeDebugPort(profile, port, this.#options.cdpDeps);
-      const browser = await chromium.connectOverCDP(endpoint, { timeout: this.#options.timeoutMs });
-      const context = browser.contexts()[0];
-      if (!context) {
-        await browser.close().catch(() => undefined);
-        throw new Error('Chrome no tiene ninguna ventana de perfil abierta.');
+      try {
+        const profile = `${dir}-cdp`;
+        mkdirSync(profile, { recursive: true });
+        const endpoint = await ensureChromeDebugPort(profile, port, this.#options.cdpDeps);
+        const browser = await chromium.connectOverCDP(endpoint, {
+          timeout: this.#options.timeoutMs,
+        });
+        const context = browser.contexts()[0];
+        if (!context) {
+          await browser.close().catch(() => undefined);
+          throw new Error('Chrome no tiene ninguna ventana de perfil abierta.');
+        }
+        return {
+          context,
+          channel: this.#options.channel === 'chromium' ? 'chrome' : this.#options.channel,
+          release: () => browser.close(),
+        };
+      } catch (err) {
+        // Sin Chrome o sin respuesta: se sigue con el perfil propio (#1879) y se avisa.
+        const motivo = err instanceof Error ? err.message.split('\n')[0] : 'error desconocido';
+        log.warn('browser cdp unavailable, using own profile', { scope });
+        notice = `No pude abrir tu Chrome con puerto (${motivo}); uso el navegador propio de Asistenta con tu perfil compartido.`;
       }
-      return {
-        context,
-        channel: this.#options.channel === 'chromium' ? 'chrome' : this.#options.channel,
-        release: () => browser.close(),
-      };
     }
     const wanted = this.#options.channel;
     if (wanted !== 'chromium') {
@@ -998,7 +1021,7 @@ export class BrowserService {
           ...launchOptions,
           channel: wanted,
         });
-        return { context, channel: wanted };
+        return { context, channel: wanted, notice };
       } catch (err) {
         if (!isMissingBrowserError(err)) throw err;
         log.warn('browser channel not installed, using bundled chromium', { scope, wanted });
@@ -1007,6 +1030,7 @@ export class BrowserService {
     return {
       context: await chromium.launchPersistentContext(dir, launchOptions),
       channel: 'chromium',
+      notice,
     };
   }
 
@@ -1335,6 +1359,18 @@ export class BrowserService {
    * home page and must not describe it as the page it asked for.
    */
   async open(scope: string, url: string, opts?: { visible?: boolean }): Promise<OpenResult> {
+    const result = await this.#openInner(scope, url, opts);
+    const session = this.#sessions.get(scope);
+    // Aviso de una línea (p. ej. «no pude abrir tu Chrome, uso el navegador de Asistenta»),
+    // una sola vez por sesión.
+    if (session?.notice) {
+      result.note = [session.notice, result.note].filter(Boolean).join(' ');
+      session.notice = undefined;
+    }
+    return result;
+  }
+
+  async #openInner(scope: string, url: string, opts?: { visible?: boolean }): Promise<OpenResult> {
     const host = hostOf(url);
     if (!host) throw new Error(`no es una URL valida: ${url}`);
 

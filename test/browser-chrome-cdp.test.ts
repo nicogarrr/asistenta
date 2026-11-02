@@ -166,4 +166,59 @@ describe('Chrome del dueño por CDP: la sesión se engancha y se suelta sin cerr
       lanzar.mockRestore();
     }
   });
+
+  it('si el CDP falla (sin Chrome), cae al perfil propio y avisa en una línea, una sola vez', async () => {
+    const { chromium } = await import('playwright');
+    const page = new Proxy(
+      { isClosed: () => false },
+      {
+        get: (t, k) =>
+          k in t ? (t as never)[k] : k === 'then' ? undefined : () => Promise.resolve(undefined),
+      },
+    );
+    const context = {
+      pages: () => [page],
+      newPage: async () => page,
+      setDefaultTimeout: () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      close: async () => undefined,
+      route: async () => undefined,
+      on: () => undefined,
+      addInitScript: async () => undefined,
+      exposeFunction: async () => undefined,
+    };
+    const conectar = vi.spyOn(chromium, 'connectOverCDP');
+    const lanzar = vi
+      .spyOn(chromium, 'launchPersistentContext')
+      .mockResolvedValue(context as never);
+    const root = mkdtempSync(join(tmpdir(), 'pa-cdp-'));
+    tmp.push(root);
+    const servicio = new BrowserService({
+      profilesDir: root,
+      policy: {
+        autoApprove: true,
+        allowPrivateHosts: true,
+        adSkipIntervalMs: 0,
+        approve: async () => true,
+      },
+      sharedProfileKey: (scope) => ownerBrowserProfileKey(scope, 42),
+      cdpPort: 9222,
+      cdpDeps: { fetchVersion: async () => false, find: () => null },
+    });
+    try {
+      const primero = await servicio.open('telegram:dm:42#main', 'http://example.com/');
+      expect(conectar).not.toHaveBeenCalled();
+      expect(lanzar).toHaveBeenCalledTimes(1);
+      expect(primero.note).toMatch(
+        /No pude abrir tu Chrome con puerto \(No encuentro Chrome instalado/,
+      );
+      expect(primero.note?.split('\n').length).toBe(1);
+      const segundo = await servicio.open('telegram:dm:42#main', 'http://example.com/');
+      expect(segundo.note ?? '').not.toMatch(/No pude abrir tu Chrome/);
+    } finally {
+      conectar.mockRestore();
+      lanzar.mockRestore();
+      await servicio.closeAll().catch(() => undefined);
+    }
+  });
 });
