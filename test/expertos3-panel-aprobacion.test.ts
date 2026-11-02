@@ -116,6 +116,7 @@ describe('especialista con efectos desde el panel', () => {
         throw new Error('broker roto');
       },
       wait: async () => 'once' as const,
+      resolve: () => false,
     };
     const viaChannel = vi.fn(async () => true);
     const ask = createSpecialistAsk({ panelTurn: () => true, viaChannel, broker: broken });
@@ -162,7 +163,9 @@ describe('cableado real', () => {
     const source = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     expect(source).toContain('createSpecialistAsk({');
     expect(source).toContain('panelTurn: () => threadOutputs.get(thread.key) !== undefined');
-    expect(source).toContain('viaChannel: (question) => askOncePerTurn(thread, question)');
+    expect(source).toContain(
+      'viaChannel: (question, signal) => askOncePerTurn(thread, question, signal)',
+    );
     expect(source).toContain('denySpecialistAsksForChat(approvals, inbound.chatId)');
     expect(source).toContain('denySpecialistAsksForChat(approvals);');
   });

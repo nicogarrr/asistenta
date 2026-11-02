@@ -831,18 +831,33 @@ export class TelegramChannel implements ChannelAdapter {
     id: string,
     chatId: string,
     question: string,
-    opts?: { askScope?: boolean; threadId?: string },
+    opts?: { askScope?: boolean; threadId?: string; signal?: AbortSignal },
   ): Promise<ApprovalChoice> {
     return new Promise<ApprovalChoice>((resolve) => {
+      const signal = opts?.signal;
+      // Quien preguntaba ya no espera (p. ej. un especialista que terminó): ni se envía.
+      if (signal?.aborted) {
+        resolve({ approved: false, scope: 'once' });
+        return;
+      }
       let settled = false;
       let expired = false;
       let messageId: string | null = null;
+      const onAbort = (): void => {
+        if (settled) return;
+        // Igual que al caducar: denegada ya y, en cuanto exista el mensaje, sin botones.
+        expired = true;
+        settle({ approved: false, scope: 'once' });
+        if (messageId) void this.#markApprovalExpired(chatId, messageId);
+      };
       const settle = (choice: ApprovalChoice): void => {
         if (settled) return;
         settled = true;
         this.#approvals.delete(id);
+        signal?.removeEventListener('abort', onAbort);
         resolve(choice);
       };
+      signal?.addEventListener('abort', onAbort, { once: true });
       this.#approvals.set(id, {
         resolve: settle,
         expires: Date.now() + this.#options.approvalTtlMs,

@@ -9,6 +9,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  APPROVAL_EXPIRED_TEXT,
   type ApprovalChoice,
   type ApprovalScope,
   parseApprovalCallback,
@@ -357,6 +358,37 @@ describe('caducidad y cancelación', () => {
     expect(await stateOf(elsewhere)).toBe('pending');
     channel.cancelApprovals();
     await expect(elsewhere).resolves.toEqual({ approved: false, scope: 'once' });
+  });
+
+  it('con signal: al abortar se deniega y el mensaje queda como caducado (asis-expertos-4)', async () => {
+    const channel = await makeChannel();
+    const child = new AbortController();
+    const pending = channel.offerApproval('req-s', '42', 'Especialista Tele: ¿apago?', {
+      signal: child.signal,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(harness.sent).toHaveLength(1);
+    expect(await stateOf(pending)).toBe('pending');
+    child.abort();
+    await expect(pending).resolves.toEqual({ approved: false, scope: 'once' });
+    await vi.waitFor(
+      () => expect(harness.edits.map((e) => e.text)).toContain(APPROVAL_EXPIRED_TEXT),
+      { timeout: 3000 },
+    );
+    // Un botón pulsado después ya no encuentra la solicitud.
+    press('approve:req-s');
+    expect(harness.answers).toContain('Esta solicitud ya no está pendiente.');
+  });
+
+  it('con signal ya abortada ni se envía la pregunta', async () => {
+    const channel = await makeChannel();
+    const done = new AbortController();
+    done.abort();
+    await expect(
+      channel.offerApproval('req-t', '42', '¿Permito t?', { signal: done.signal }),
+    ).resolves.toEqual({ approved: false, scope: 'once' });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(harness.sent).toHaveLength(0);
   });
 
   it('ignora las pulsaciones de quien no está autorizado', async () => {

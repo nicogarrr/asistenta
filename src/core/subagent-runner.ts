@@ -209,7 +209,12 @@ function contextTools(context: unknown): (() => readonly AgentTool[]) | undefine
  * Canal para preguntar al humano (lo pone el cableado por hilo). Sin el, un
  * especialista con efectos no se ejecuta: no habria a quien pedir permiso.
  */
-export type SpecialistApprove = (question: string) => Promise<boolean>;
+/**
+ * Pregunta al humano por una acción del especialista. `signal` se aborta cuando el
+ * hijo termina, caduca o se para: la pregunta que siga abierta se retira (tarjeta del
+ * panel y botones de Telegram) y cuenta como denegada.
+ */
+export type SpecialistApprove = (question: string, signal?: AbortSignal) => Promise<boolean>;
 
 function contextApprove(context: unknown): SpecialistApprove | undefined {
   const c = context as { approve?: unknown } | null | undefined;

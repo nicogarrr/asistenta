@@ -2141,7 +2141,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         () => threadFinal,
         createSpecialistAsk({
           panelTurn: () => threadOutputs.get(thread.key) !== undefined,
-          viaChannel: (question) => askOncePerTurn(thread, question),
+          viaChannel: (question, signal) => askOncePerTurn(thread, question, signal),
           broker: approvals,
           chatId: chatIdOf(thread.chatKey),
         }),
@@ -2602,11 +2602,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   // La confirmación de una compra (una pregunta por compra y turno): src/daemon/purchase-approvals.ts.
   /** Telegram question with no scope buttons: "always pay" is not a thing. */
-  const askOncePerTurn = async (thread: Thread, summary: string): Promise<boolean> => {
+  const askOncePerTurn = async (
+    thread: Thread,
+    summary: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> => {
     const chatId = chatIdOf(thread.chatKey);
     thread.agent.setAwaitingApproval(true);
     try {
-      const choice = await telegram.offerApproval(randomUUID(), chatId, summary);
+      const choice = await telegram.offerApproval(
+        randomUUID(),
+        chatId,
+        summary,
+        signal ? { signal } : undefined,
+      );
       return choice.approved;
     } finally {
       thread.agent.setAwaitingApproval(false);

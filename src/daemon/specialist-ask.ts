@@ -9,6 +9,10 @@
  * «Aprobaciones» del panel y solo admite «una vez» o «denegar» (`onceOnly`). Sin
  * respuesta antes de que caduque, o si no se puede registrar, se deniega: un
  * especialista nunca actúa sin que alguien haya dicho que sí a ESA acción.
+ *
+ * Si el especialista termina, caduca o se para con la pregunta aún abierta (`signal`),
+ * la pregunta se retira: la tarjeta del panel desaparece (denegada) y en Telegram los
+ * botones pasan a «Solicitud caducada». Así no queda un «Permitir» que ya no hace nada.
  */
 import type { ApprovalBroker } from '../approvals/broker.js';
 
@@ -19,8 +23,8 @@ export interface SpecialistAskDeps {
   /** ¿El turno vivo de este hilo es del panel web? */
   panelTurn: () => boolean;
   /** La pregunta de siempre por el canal (Telegram), sin botones de alcance. */
-  viaChannel: (question: string) => Promise<boolean>;
-  broker: Pick<ApprovalBroker, 'register' | 'wait'>;
+  viaChannel: (question: string, signal?: AbortSignal) => Promise<boolean>;
+  broker: Pick<ApprovalBroker, 'register' | 'wait' | 'resolve'>;
   /** El chat del hilo (para que /stop pueda denegar lo que siga pendiente). */
   chatId?: string;
   /** Caducidad de la pregunta en el panel; por defecto la del broker (5 min). */
@@ -29,9 +33,11 @@ export interface SpecialistAskDeps {
 
 export function createSpecialistAsk(
   deps: SpecialistAskDeps,
-): (question: string) => Promise<boolean> {
-  return async (question) => {
-    if (!deps.panelTurn()) return deps.viaChannel(question);
+): (question: string, signal?: AbortSignal) => Promise<boolean> {
+  return async (question, signal) => {
+    if (signal?.aborted) return false;
+    if (!deps.panelTurn()) return deps.viaChannel(question, signal);
+    let onAbort: (() => void) | undefined;
     try {
       const pending = deps.broker.register({
         tool: 'delegate',
@@ -43,10 +49,17 @@ export function createSpecialistAsk(
         // La decisión llega por `wait`; este callback no concede nada por su cuenta.
         resolve: () => {},
       });
+      onAbort = () => {
+        deps.broker.resolve(pending.id, 'deny');
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
       // `wait` sin plazo dura hasta la caducidad y entonces deniega y limpia la entrada.
-      return (await deps.broker.wait(pending.id)) === 'once';
+      const decision = await deps.broker.wait(pending.id);
+      return decision === 'once' && !signal?.aborted;
     } catch {
       return false;
+    } finally {
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
     }
   };
 }
