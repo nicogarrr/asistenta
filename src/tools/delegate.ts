@@ -88,7 +88,7 @@ export function createDelegateTool(
     ].join(' '),
     parameters: DelegateParams,
     executionMode: 'parallel',
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const specialist =
         args.specialist === undefined ? undefined : resolveSpecialist(args.specialist);
       const result = await pool.run({
@@ -97,6 +97,8 @@ export function createDelegateTool(
         ...(specialist ? { specialist: specialist.name } : {}),
         ...(args.role ? { role: args.role } : {}),
         ...(args.tools ? { tools: args.tools } : {}),
+        // El /stop del hilo llega aquí: el hijo se corta y no ejecuta nada más.
+        ...(signal ? { signal } : {}),
         ...(thread
           ? {
               context: {

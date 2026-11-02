@@ -63,7 +63,15 @@ export interface SubagentRequest {
    * Se pasa tal cual al ejecutor; nunca lleva el transcript del padre.
    */
   context?: unknown;
+  /**
+   * Señal del turno que delega (el /stop del hilo). Abortada, el hijo se corta igual
+   * que con el timeout: no empieza si aún estaba en la cola y no ejecuta nada más.
+   */
+  signal?: AbortSignal;
 }
+
+/** Texto del resultado cuando el turno que delegó se paró (p. ej. /stop). */
+export const SUBAGENT_STOPPED = 'Tarea delegada cancelada: se paró el turno que la pidió.';
 
 /** Lo que recibe el ejecutor inyectado. No incluye el transcript del padre. */
 export interface SubagentRunRequest {
@@ -215,9 +223,13 @@ export class SubagentPool {
         ? undefined
         : request.tools.filter((name) => typeof name === 'string' && name.trim().length > 0);
 
+    const parent = request.signal;
+    if (parent?.aborted) return { text: '', depth, error: SUBAGENT_STOPPED };
     await this.#acquire();
     try {
-      return await this.#execute(task, depth, tools, role, specialist, context);
+      // Parado mientras esperaba turno en la cola: no se empieza.
+      if (parent?.aborted) return { text: '', depth, error: SUBAGENT_STOPPED };
+      return await this.#execute(task, depth, tools, role, specialist, context, parent);
     } finally {
       this.#release();
     }
@@ -252,6 +264,7 @@ export class SubagentPool {
     role?: string,
     specialist?: string,
     context?: unknown,
+    parent?: AbortSignal,
   ): Promise<SubagentResult> {
     const controller = new AbortController();
     const budget: SubagentBudget = Object.freeze({
@@ -267,9 +280,23 @@ export class SubagentPool {
         reject(expired);
       }, this.#timeoutMs);
     });
+    // El /stop del hilo corta al hijo como el timeout (misma señal), sin esperar a que acabe.
+    const stopped = new Error(SUBAGENT_STOPPED);
+    let onParentAbort: (() => void) | undefined;
+    const stop = new Promise<never>((_resolve, reject) => {
+      if (!parent) return;
+      onParentAbort = () => {
+        controller.abort(stopped);
+        reject(stopped);
+      };
+      parent.addEventListener('abort', onParentAbort, { once: true });
+    });
+    // Sin padre la promesa nunca se resuelve; con padre, un rechazo tardío no debe quedar suelto.
+    stop.catch(() => {});
 
     try {
       const result = await Promise.race([
+        stop,
         this.#deps.run({
           task,
           depth,
@@ -306,10 +333,16 @@ export class SubagentPool {
         depth,
         // Si la senal ya esta abortada, el fallo es del timeout aunque el hijo
         // haya rechazado con su propio AbortError al escuchar la senal.
-        error: controller.signal.aborted ? expired.message : errorMessage(error),
+        error:
+          controller.signal.reason === stopped
+            ? stopped.message
+            : controller.signal.aborted
+              ? expired.message
+              : errorMessage(error),
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      if (parent && onParentAbort) parent.removeEventListener('abort', onParentAbort);
       // Abortar tambien al terminar bien: si el hijo dejo trabajo en segundo
       // plano, no debe seguir consumiendo despues de devolver el control.
       controller.abort();
