@@ -19,6 +19,7 @@ import {
   type ElementLookup,
   elementScript,
   type MarkBox,
+  mapDpiFix,
   mapScript,
   marksScript,
   parseElement,
@@ -386,7 +387,7 @@ Add-Type -AssemblyName System.Windows.Forms
   /** Dónde está AHORA el elemento `n` del mapa (y, con `focus`, le da el foco). */
   async elementLookup(mapId: string, n: number, op: 'point' | 'focus'): Promise<ElementLookup> {
     const { stdout } = await this.#physicalPs(elementScript(mapId, n, op));
-    return parseElement(stdout);
+    return parseElement(stdout, mapDpiFix(mapId));
   }
 
   async #physicalPs(script: string): Promise<{ stdout: string; stderr: string }> {

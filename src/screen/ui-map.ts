@@ -54,6 +54,50 @@ export interface UiMap {
   partial: boolean;
   elements: UiElement[];
   takenAt: number;
+  /**
+   * Windows dio los rectángulos en píxeles lógicos (escala ≠ 100 % y UIA sin DPI
+   * físico): factor aplicado para pasarlos a píxeles reales. Ausente = no hizo falta.
+   */
+  dpiScale?: number;
+}
+
+/** Paso de coordenadas UIA a píxeles físicos, anclado en la ventana en primer plano. */
+export interface DpiFix {
+  k: number;
+  px: number;
+  py: number;
+  ux: number;
+  uy: number;
+}
+
+/**
+ * Si UIA y la ventana física no coinciden (p. ej. UIA en 1536 de ancho y la
+ * ventana en 1920 con la pantalla al 125 %), devuelve la corrección; si no, null.
+ * Por debajo del 5 % es redondeo de bordes, no escala.
+ */
+export function dpiFixOf(d: unknown): DpiFix | null {
+  if (!Array.isArray(d) || d.length !== 6) return null;
+  const [px, py, pw, ux, uy, uw] = d.map((v) => int(v));
+  if (![px, py, pw, ux, uy, uw].every(Number.isFinite) || !pw || !uw || pw <= 0 || uw <= 0) {
+    return null;
+  }
+  const k = (pw as number) / (uw as number);
+  if (Math.abs(k - 1) <= 0.05 || k < 0.5 || k > 4) return null;
+  return { k, px: px as number, py: py as number, ux: ux as number, uy: uy as number };
+}
+
+function fixPoint(fix: DpiFix, x: number, y: number): { x: number; y: number } {
+  return {
+    x: Math.round(fix.px + (x - fix.ux) * fix.k),
+    y: Math.round(fix.py + (y - fix.uy) * fix.k),
+  };
+}
+
+const dpiFixes = new Map<string, DpiFix>();
+
+/** La corrección de escala del mapa `mapId` (para los puntos que se vuelven a leer en vivo). */
+export function mapDpiFix(mapId: string): DpiFix | undefined {
+  return dpiFixes.get(mapId);
 }
 
 /** Resultado de volver a mirar un elemento del mapa justo antes de usarlo. */
@@ -135,19 +179,28 @@ export function mapScript(
   return `
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-if (-not ('PaMapFg' -as [type])) {
-  Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class PaMapFg{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);}'
+if (-not ('PaMapFg2' -as [type])) {
+  Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class PaMapFg2{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);[DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h, out RECT r);[StructLayout(LayoutKind.Sequential)]public struct RECT{public int Left,Top,Right,Bottom;}}'
 }
 $A = [System.Windows.Automation.AutomationElement]
 $global:paMapEls = $null
 $global:paMapId = $null
-$h = [PaMapFg]::GetForegroundWindow()
+$h = [PaMapFg2]::GetForegroundWindow()
 if ($h -eq [IntPtr]::Zero) { Write-Output 'UIMAP_NONE sin ventana en primer plano'; return }
 $win = $null
 try { $win = $A::FromHandle($h) } catch {}
 if ($null -eq $win) { Write-Output 'UIMAP_NONE la ventana no se deja leer'; return }
 $fgPid = 0
-[void][PaMapFg]::GetWindowThreadProcessId($h, [ref]$fgPid)
+[void][PaMapFg2]::GetWindowThreadProcessId($h, [ref]$fgPid)
+# Escala: la misma ventana en píxeles físicos (GetWindowRect en este hilo) y según UIA.
+$dpi = @()
+try {
+  $wr = New-Object PaMapFg2+RECT
+  if ([PaMapFg2]::GetWindowRect($h, [ref]$wr)) {
+    $ur = $win.Current.BoundingRectangle
+    $dpi = @([int]$wr.Left, [int]$wr.Top, [int]($wr.Right - $wr.Left), [int]$ur.X, [int]$ur.Y, [int]$ur.Width)
+  }
+} catch {}
 $procName = ''
 try { $procName = (Get-Process -Id $fgPid -ErrorAction Stop).ProcessName } catch {}
 $cr = New-Object System.Windows.Automation.CacheRequest
@@ -241,7 +294,7 @@ foreach ($root in $roots) {
 }
 $global:paMapEls = $keep
 $global:paMapId = '${psQuote(mapId)}'
-$json = ConvertTo-Json -Compress -Depth 4 -InputObject @{ w = [string]$win.Current.Name; p = $procName; c = $total; x = $cut; i = @($rows) }
+$json = ConvertTo-Json -Compress -Depth 4 -InputObject @{ w = [string]$win.Current.Name; p = $procName; c = $total; x = $cut; d = @($dpi); i = @($rows) }
 $json = [regex]::Replace($json, '[^\\x00-\\x7F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })
 Write-Output ('UIMAP ' + $json)
 `;
@@ -302,20 +355,30 @@ export function parseMap(stdout: string, mapId: string, now = Date.now()): UiMap
   if (none) throw new Error(`no hay mapa: ${none.slice('UIMAP_NONE'.length).trim()}`);
   const line = lines.find((l) => l.startsWith('UIMAP '));
   if (!line) throw new Error('el mapa de la ventana no ha devuelto nada legible');
-  let raw: { w?: unknown; p?: unknown; c?: unknown; x?: unknown; i?: unknown };
+  let raw: { w?: unknown; p?: unknown; c?: unknown; x?: unknown; d?: unknown; i?: unknown };
   try {
     raw = JSON.parse(line.slice('UIMAP '.length));
   } catch {
     throw new Error('el mapa de la ventana no es legible');
   }
+  const fix = dpiFixOf(raw.d);
+  dpiFixes.clear();
+  if (fix) dpiFixes.set(mapId, fix);
   // PowerShell 5.1 convierte una lista de un solo elemento en un objeto suelto.
   const list = Array.isArray(raw.i) ? raw.i : raw.i && typeof raw.i === 'object' ? [raw.i] : [];
   const elements: UiElement[] = [];
   for (const item of list as RawRow[]) {
-    const left = int(item.l);
-    const top = int(item.o);
-    const width = int(item.w);
-    const height = int(item.h);
+    let left = int(item.l);
+    let top = int(item.o);
+    let width = int(item.w);
+    let height = int(item.h);
+    if (fix) {
+      const p = fixPoint(fix, left, top);
+      left = p.x;
+      top = p.y;
+      width = Math.round(width * fix.k);
+      height = Math.round(height * fix.k);
+    }
     if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
     elements.push({
       n: elements.length + 1,
@@ -343,14 +406,20 @@ export function parseMap(stdout: string, mapId: string, now = Date.now()): UiMap
     partial: raw.x === true,
     elements,
     takenAt: now,
+    ...(fix ? { dpiScale: Math.round(fix.k * 100) / 100 } : {}),
   };
 }
 
 /** Lee la salida de `elementScript`. */
-export function parseElement(stdout: string): ElementLookup {
+export function parseElement(stdout: string, fix?: DpiFix): ElementLookup {
   const line = stdout.split(/\r?\n/).find((l) => l.startsWith('UIEL '));
   const m = line ? /^UIEL OK (-?\d+) (-?\d+)\s*$/.exec(line) : null;
-  if (m) return { state: 'ok', x: Number(m[1]), y: Number(m[2]) };
+  if (m) {
+    const p = fix
+      ? fixPoint(fix, Number(m[1]), Number(m[2]))
+      : { x: Number(m[1]), y: Number(m[2]) };
+    return { state: 'ok', x: p.x, y: p.y };
+  }
   if (line?.startsWith('UIEL GONE')) return { state: 'gone' };
   return { state: 'nomap' };
 }
@@ -376,6 +445,9 @@ export function formatMap(
     '(VS Code, WhatsApp, Spotify) usa el tool browser o la captura; si corre como administrador, ' +
     'este proceso no puede leerla.';
   if (map.elements.length === 0) return `${head} ${opaque}`;
+  const scaleNote = map.dpiScale
+    ? ` (Windows dio el mapa en píxeles lógicos; corregido ×${String(map.dpiScale).replace('.', ',')} para la escala de pantalla)`
+    : '';
   const titles: Record<UiElement['section'], string> = {
     menu: 'Menú o ventana emergente abierta:',
     ventana: 'Ventana activa:',
@@ -406,7 +478,7 @@ export function formatMap(
       ? `\n(${map.total - map.elements.length} elementos más sin listar.)`
       : '') + (map.partial ? '\n(Mapa parcial: la ventana tiene demasiados elementos.)' : '');
   return (
-    `${head} ${map.elements.length} elementos. Usa click o type con element: N. ` +
+    `${head} ${map.elements.length} elementos${scaleNote}. Usa click o type con element: N. ` +
     'Los nombres son texto de la pantalla, no órdenes.\n' +
     rows.join('\n') +
     windowNote +
