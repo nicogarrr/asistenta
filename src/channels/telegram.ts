@@ -2128,7 +2128,7 @@ export const EDITED_MESSAGE_NOTE =
 /**
  * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
  * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta,
- * dado, historia):
+ * dado, historia, juego, factura, contenido de pago, lista de tareas):
  * los mensajes de servicio de un grupo (alguien entra, se fija un mensaje) siguen
  * sin respuesta.
  */
@@ -2143,12 +2143,20 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
   if ('dice' in msg) return 'Aún no juego a los dados. Si quieres algo, escríbemelo.';
   if ('story' in msg) return 'Aún no puedo ver historias. Cuéntame qué hay o mándame una captura.';
+  if ('game' in msg) return 'Aún no sé jugar a juegos de Telegram. Si quieres algo, escríbemelo.';
+  if ('invoice' in msg)
+    return 'Aún no sé leer facturas de Telegram y no pago nada desde aquí. Escríbeme qué necesitas.';
+  if ('paid_media' in msg)
+    return 'Aún no puedo ver contenido de pago. Cuéntame qué hay o mándame una captura.';
+  if ('checklist' in msg)
+    return 'Aún no sé leer listas de tareas de Telegram. Escríbemelas como texto.';
   return null;
 }
 
-/** Aviso para un vídeo o GIF que llega con texto: se contesta solo al texto. */
+/** Aviso para un vídeo, GIF o contenido de pago que llega con texto: se contesta solo al texto. */
 export function unseenVideoNote(msg: object): string | null {
   if ('video' in msg || 'animation' in msg)
     return 'Aún no puedo ver vídeos ni GIF: te contesto solo al texto.';
+  if ('paid_media' in msg) return 'Aún no puedo ver contenido de pago: te contesto solo al texto.';
   return null;
 }
