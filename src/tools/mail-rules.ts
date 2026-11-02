@@ -29,6 +29,7 @@ import {
   unsubLog,
   unsubscribeTargets,
 } from '../mail/unsubscribe.js';
+import { foldAccents } from '../text.js';
 
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as MailCategory[];
 const ACTIONS: RuleAction[] = ['archivar', 'limpieza', 'papelera', 'leido'];
@@ -293,9 +294,10 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Param
             });
             const all = unsubscribeTargets(mails);
             if (all.length === 0) return 'No veo listas de las que darte de baja.';
-            const want = args.remitente?.trim().toLowerCase();
+            const want = args.remitente ? foldAccents(args.remitente).trim() : '';
             const picked = all.filter(
-              (t, i) => args.numeros?.includes(i + 1) || (want && t.remitente.includes(want)),
+              (t, i) =>
+                args.numeros?.includes(i + 1) || (want && foldAccents(t.remitente).includes(want)),
             );
             if (picked.length === 0)
               return `Puedo darte de baja de:\n${all
