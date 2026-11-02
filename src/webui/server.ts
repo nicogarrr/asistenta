@@ -67,6 +67,16 @@ export interface WebUiDeps {
   /** Aplica una decision a una aprobacion. Si falta, la ruta responde 503. */
   /** `false` = ya no estaba pendiente (caducada, resuelta o desconocida). */
   approve?(id: string, decision: ApprovalDecision): Promise<unknown>;
+  /**
+   * Selector de modelo de la tarjeta Estado (solo opciones de coste cero
+   * verificadas, ver modelos-panel.ts). Si falta, la ruta responde 503.
+   */
+  setModelo?(id: string): Promise<unknown>;
+  /**
+   * Campo «Clave de OpenCode Go» de la tarjeta Estado: valida la clave en vivo
+   * y la guarda en el almacén (clave-panel.ts). Si falta, la ruta responde 503.
+   */
+  setClave?(clave: string): Promise<unknown>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -125,6 +135,8 @@ type ApiRoute =
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
   | { method: 'POST'; kind: 'chatRetry' }
+  | { method: 'POST'; kind: 'modelo' }
+  | { method: 'POST'; kind: 'clave' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -227,6 +239,10 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'chat' };
     case '/api/chat/retry':
       return { method: 'POST', kind: 'chatRetry' };
+    case '/api/modelo':
+      return { method: 'POST', kind: 'modelo' };
+    case '/api/clave':
+      return { method: 'POST', kind: 'clave' };
     default:
       break;
   }
@@ -351,6 +367,35 @@ async function respondApi(
           throw new Error('deps.retry devolvio una respuesta invalida');
         // Lo mismo que /api/chat: un turno repetido también trae sus capturas y archivos.
         payload = panelReply(answer);
+        break;
+      }
+      case 'modelo': {
+        const model = body.model;
+        if (typeof model !== 'string' || model.trim().length === 0) {
+          throw new HttpError(400, 'Falta el modelo');
+        }
+        if (!deps.setModelo) throw new HttpError(503, 'Cambio de modelo no disponible');
+        const result = await deps.setModelo(model.trim());
+        if (!isRecord(result) || typeof result.mensaje !== 'string') {
+          throw new Error('deps.setModelo devolvió una respuesta inválida');
+        }
+        if (result.ok !== true) throw new HttpError(400, result.mensaje);
+        payload = result;
+        break;
+      }
+      case 'clave': {
+        const clave = body.clave;
+        if (typeof clave !== 'string' || clave.trim().length === 0) {
+          throw new HttpError(400, 'Falta la clave');
+        }
+        if (!deps.setClave) throw new HttpError(503, 'Guardado de clave no disponible');
+        const result = await deps.setClave(clave);
+        if (!isRecord(result) || typeof result.mensaje !== 'string') {
+          throw new Error('deps.setClave devolvió una respuesta inválida');
+        }
+        if (result.ok !== true) throw new HttpError(400, result.mensaje);
+        // Nunca devolver la clave: solo el mensaje para el usuario.
+        payload = { ok: true, mensaje: result.mensaje };
         break;
       }
       case 'approval': {
