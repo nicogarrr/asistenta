@@ -420,6 +420,28 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       prompt: text.trim(),
     };
   }
+  // «los días 1 y 15 a las 9», «todos los días 15»: días del mes aunque no se diga «de cada
+  // mes» (antes sonaba todos los días).
+  const monthDays = new RegExp(
+    `\\b(?:los|todos los) dias (\\d{1,2}(?:(?:\\s*,\\s*|\\s+y\\s+)\\d{1,2})*)\\b(?! ?(?:h\\b|horas?|minutos?|min\\b|veces|de (?:${MONTH})\\b))`,
+  ).exec(normalised);
+  if (monthDays) {
+    const days = [...new Set((monthDays[1] ?? '').match(/\d{1,2}/g)?.map(Number) ?? [])];
+    if (days.some((d) => d < 1 || d > 31)) return null;
+    days.sort((a, b) => a - b);
+    return {
+      schedule: `${minute} ${hasTime ? hours : 8} ${days.join(',')} * *`,
+      prompt: text.trim(),
+    };
+  }
+  // «el día 5 a las 9», «el 15 a las 9», «cada 15 a las 9»: sin «de cada mes» no se sabe si es
+  // un día suelto o cada mes (antes sonaba todos los días). Se pregunta.
+  if (
+    /^(?:el (?:dia )?|cada )\d{1,2}\b(?! ?(?:de |del |h\b|horas?|minutos?|min\b|veces|dias|semanas|meses))/.test(
+      normalised,
+    )
+  )
+    return null;
   // «cada día 5 a las 9»: el día 5 de cada mes, no todos los días.
   const dayEachMonth = /\bcada dia (\d{1,2})\b(?! (?:veces|minutos?|min|horas?))/.exec(normalised);
   if (dayEachMonth) {
@@ -612,10 +634,11 @@ function daysOfWeek(normalised: string): string | null {
   }
   // «los lunes», «cada martes», «los lunes y miércoles», «los lunes, martes y jueves».
   // «cada semana el martes»: con «semana» dicho, «el martes» también es el día de la rutina
-  // (antes sonaba el lunes).
+  // (antes sonaba el lunes). Al empezar la frase vale sin artículo («martes y jueves a las
+  // 9»; antes sonaba todos los días).
   const lead = WEEKLY.test(normalised) ? '(?:los|cada|el)' : '(?:los|cada)';
   const list = new RegExp(
-    `\\b${lead} (${DAY})((?:\\s*,\\s*(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
+    `(?:^|\\b${lead} )(${DAY})((?:\\s*,\\s*(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
   ).exec(normalised);
   if (!list) return null;
   const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
