@@ -3372,8 +3372,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       return;
     }
-    const fileId = inbound.documentFileId ?? inbound.photoFileId;
-    if (!fileId) {
+    // Un álbum (varias fotos o documentos de una vez) se lee entero, no solo el primero.
+    const files = ocrFiles(inbound);
+    if (!files.length) {
       ocrEspera.arm(inbound.chatId);
       await say(inbound, OCR_SIN_ARCHIVO, { quote: true });
       return;
@@ -3389,36 +3390,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     ocrBusy = true;
     try {
-      const bytes = await telegram.downloadFile(fileId).catch(() => null);
-      if (!bytes) {
-        await say(
-          inbound,
-          'No he podido bajar el archivo (Telegram solo me deja hasta 20 MB). Si es más grande, pártelo.',
-          { quote: true },
-        );
-        return;
-      }
-      await say(
-        inbound,
-        'Recibido, lo estoy procesando. Si tiene muchas páginas tarda unos minutos.',
-        { quote: true },
-      );
-      const result = await runOcrJob(
-        Buffer.from(bytes),
-        { name: inbound.documentName, progressDir: join(paths.state, 'ocr-progreso') },
-        mode,
-        windowsDeps,
-      );
-      for (const f of result.files) {
-        await telegram.sendDocumentBytes(
-          Number(inbound.chatId),
-          f.bytes,
-          f.filename,
-          '',
-          inbound.threadId,
-        );
-      }
-      await say(inbound, result.message, { quote: true });
+      await ocrEachFile(files, {
+        download: (id) => telegram.downloadFile(id),
+        run: (bytes, name) =>
+          runOcrJob(
+            bytes,
+            { name, progressDir: join(paths.state, 'ocr-progreso') },
+            mode,
+            windowsDeps,
+          ),
+        sendFile: (f) =>
+          telegram.sendDocumentBytes(
+            Number(inbound.chatId),
+            f.bytes,
+            f.filename,
+            '',
+            inbound.threadId,
+          ),
+        say: (text) => say(inbound, text, { quote: true }),
+      });
     } catch (err) {
       log.warn('ocr command failed', { err: String(err).slice(0, 200) });
       await say(inbound, 'No he podido terminar el OCR. Tu original no se ha tocado.', {
@@ -8598,6 +8588,60 @@ export function inboundDocuments(inbound: Inbound): InboundDocument[] {
 export function albumVideosNote(count: number): string {
   const what = count === 1 ? 'un vídeo o GIF' : `${count} vídeos o GIF`;
   return `[Álbum: traía también ${what} que no puedo ver; solo vi las fotos y el texto.]`;
+}
+
+/** Los ficheros que lee «/ocr»: el documento o la foto, y el resto si llegó en un álbum. */
+export function ocrFiles(inbound: Inbound): Array<{ fileId: string; name?: string }> {
+  const docs = inboundDocuments(inbound);
+  if (docs.length) return docs.map((d) => ({ fileId: d.fileId, name: d.name }));
+  if (!inbound.photoFileId) return [];
+  return [inbound.photoFileId, ...(inbound.albumPhotoFileIds ?? [])].map((fileId) => ({ fileId }));
+}
+
+/**
+ * Pasa el OCR a cada fichero, uno detrás de otro. Con uno solo, lo de siempre; con un
+ * álbum, cada resultado va numerado («(2/3) …») y uno que no baja no para los demás.
+ */
+export async function ocrEachFile(
+  files: ReadonlyArray<{ fileId: string; name?: string }>,
+  deps: {
+    download: (id: string) => Promise<Buffer | Uint8Array | null>;
+    run: (
+      bytes: Buffer,
+      name: string | undefined,
+    ) => Promise<{ message: string; files: ReadonlyArray<{ bytes: Buffer; filename: string }> }>;
+    sendFile: (f: { bytes: Buffer; filename: string }) => Promise<unknown>;
+    say: (text: string) => Promise<unknown>;
+  },
+): Promise<void> {
+  const many = files.length > 1;
+  let announced = false;
+  let missing = 0;
+  for (const [i, f] of files.entries()) {
+    const bytes = await deps.download(f.fileId).catch(() => null);
+    if (!bytes) {
+      missing += 1;
+      continue;
+    }
+    if (!announced) {
+      announced = true;
+      await deps.say(
+        many
+          ? `Recibidos ${files.length}, los estoy procesando uno a uno. Si tienen muchas páginas tarda unos minutos.`
+          : 'Recibido, lo estoy procesando. Si tiene muchas páginas tarda unos minutos.',
+      );
+    }
+    const result = await deps.run(Buffer.from(bytes), f.name);
+    for (const out of result.files) await deps.sendFile(out);
+    await deps.say(many ? `(${i + 1}/${files.length}) ${result.message}` : result.message);
+  }
+  if (missing) {
+    await deps.say(
+      many
+        ? `${missing} de ${files.length} no los he podido bajar (Telegram solo me deja hasta 20 MB). Si alguno es más grande, pártelo.`
+        : 'No he podido bajar el archivo (Telegram solo me deja hasta 20 MB). Si es más grande, pártelo.',
+    );
+  }
 }
 
 /**
