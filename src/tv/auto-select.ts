@@ -14,7 +14,7 @@
  */
 
 import { type DiscoveredTv, discoverWebOsTvs } from './discover.js';
-import { findTv, type KnownTv, parseRegistry } from './registry.js';
+import { findTv, type KnownTv, parseRegistry, withLegacyTv } from './registry.js';
 
 export const TV_REGISTRY_KEY = 'tv:tvs';
 
@@ -115,7 +115,15 @@ export async function ensureActiveTv(deps: AutoSelectDeps): Promise<EnsureResult
     return { reason: 'la tele activa no responde en esta red' };
   }
 
-  const known = parseRegistry(await deps.vaultGet(TV_REGISTRY_KEY));
+  // Registro efectivo: tv:tvs mas la tele de las claves sueltas si se
+  // emparejo antes de que existiera el registro (migracion sin escribir).
+  const known = withLegacyTv(parseRegistry(await deps.vaultGet(TV_REGISTRY_KEY)), {
+    host,
+    clientKey: await deps.vaultGet('tv:clientKey'),
+    secure: await deps.vaultGet('tv:secure'),
+    mac: await deps.vaultGet('tv:mac'),
+    brand: await deps.vaultGet('tv:activeBrand'),
+  });
   // Sin teles conocidas, descubrir no puede casar nada: no se escanea (y no
   // se espera el SSDP). Caso de una sola tele de siempre.
   if (known.length === 0) {

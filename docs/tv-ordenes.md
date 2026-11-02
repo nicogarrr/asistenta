@@ -45,6 +45,14 @@ Con la tele apagada del todo no hay nada escuchando: «enciende la tele» manda 
 - En la tele: activar «Encender con Wi-Fi» / «Mobile TV On» (Ajustes > General > Dispositivos).
 - `pa tv wake` envía el paquete a mano.
 
+## Varias teles y dos casas (LG y Sony)
+
+- `pa tv descubrir` lista las teles encendidas en la red (LG y Sony Bravia, con modelo y año estimado en Sony); solo lectura, nada sale en pantalla. `pa tv donde` dice cuál es la activa.
+- `pa tv setup` sin IP busca las LG: si hay una sola sin emparejar la empareja (guardando nombre, modelo y UUID); si hay varias, dice qué `pa tv setup <ip>` usar.
+- `pa tv teles` lista las emparejadas; `pa tv usar <ip|nombre>` cambia la activa sin re-emparejar. Una tele emparejada antes del registro sale sola en la lista sin reescribir el vault, y queda migrada al registro en la primera escritura real (emparejar otra o cambiarla de IP).
+- Al cambiar de casa con el PC, la tele activa se cambia sola: si la guardada no responde en la red nueva, se busca entre las conocidas (por IP, UUID SSDP o MAC, que sobrevive al DHCP de cada casa) y pasa a ser la activa sin re-emparejar. Con varias encendidas a la vez, pide elegir con `pa tv usar <ip>`.
+- Sony: `pa tv setup-sony <ip>` (pide la PSK por teclado sin guardarla en el historial), luego `pa tv sony estado|volumen|mute|sonido|apaga`. Activación en la tele: Ajustes > Red > Home network setup > IP control > Autenticación = Clave precompartida, y «Control por IP simple» para encenderla por red.
+
 ## Modo cine (`action=scene scene=cine`)
 Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir la app pedida (`appId`) → aviso en pantalla. Cada paso informa de su resultado; sin Glasshouse, volumen y silencio se omiten; si no se puede encender, la rutina para.
 

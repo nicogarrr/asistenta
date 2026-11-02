@@ -71,6 +71,35 @@ export function findTv(list: readonly KnownTv[], hostOrName: string): KnownTv | 
   );
 }
 
+/** Tele emparejada antes del registro (solo las claves sueltas tv:host/tv:clientKey/...). */
+export interface LegacyTvKeys {
+  host?: string | null | undefined;
+  clientKey?: string | null | undefined;
+  secure?: string | null | undefined;
+  mac?: string | null | undefined;
+  brand?: string | null | undefined;
+}
+
+/**
+ * Registro efectivo: el guardado mas la tele de las claves sueltas si aun no
+ * esta en el (quien emparejo antes de que existiera el registro). No escribe
+ * nada: con una sola tele de antes, el vault queda byte a byte igual.
+ */
+export function withLegacyTv(list: readonly KnownTv[], legacy: LegacyTvKeys): KnownTv[] {
+  const host = legacy.host?.trim();
+  if (!host || list.some((t) => t.host === host)) return [...list];
+  if (legacy.brand === 'sony')
+    return upsertTv(list, { host, brand: 'sony', clientKey: '', secure: '1' });
+  if (!legacy.clientKey) return [...list];
+  return upsertTv(list, {
+    host,
+    brand: 'lg',
+    clientKey: legacy.clientKey,
+    secure: legacy.secure === '0' ? '0' : '1',
+    ...(legacy.mac?.trim() ? { mac: legacy.mac.trim() } : {}),
+  });
+}
+
 export function registryToJson(list: readonly KnownTv[]): string {
   return JSON.stringify(list);
 }

@@ -12,7 +12,7 @@ import {
   braviaVolume,
   sonyModelYearText,
 } from './bravia.js';
-import { discoverWebOsTvs } from './discover.js';
+import { type DiscoveredTv, discoverWebOsTvs } from './discover.js';
 import {
   assertTvHost,
   pairTv,
@@ -24,7 +24,14 @@ import {
 } from './lgtv.js';
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 import { readNeighborMac } from './neighbor-mac.js';
-import { findTv, parseRegistry, registryToJson, upsertTv } from './registry.js';
+import {
+  findTv,
+  type KnownTv,
+  parseRegistry,
+  registryToJson,
+  upsertTv,
+  withLegacyTv,
+} from './registry.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { sendWakeOnLan, validateTvMac } from './wol.js';
 
@@ -137,6 +144,23 @@ export interface TvCliDeps {
   err?: (s: string) => void;
   /** `pa tv mac auto`: MAC de la IP en la tabla de vecinos (tests: falso). */
   neighborMac?: (ip: string) => Promise<string | null>;
+  /** `pa tv setup` sin IP / `descubrir` / `donde`: descubrimiento SSDP (tests: falso). */
+  discover?: () => Promise<DiscoveredTv[]>;
+}
+
+/**
+ * Registro efectivo: tv:tvs mas la tele de las claves sueltas si se emparejo
+ * antes de que existiera el registro (migracion sin escribir nada).
+ */
+export async function loadKnownTvs(): Promise<KnownTv[]> {
+  const { vaultGet } = await import('../vault.js');
+  return withLegacyTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+    host: await vaultGet(TV_HOST_KEY),
+    clientKey: await vaultGet(TV_CLIENT_KEY),
+    secure: await vaultGet(TV_SECURE_KEY),
+    mac: await vaultGet(TV_MAC_KEY),
+    brand: await vaultGet(TV_ACTIVE_BRAND),
+  });
 }
 
 export const TV_ORDER_USAGE =
@@ -197,13 +221,39 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       return tvOrderCommand(rest.join(' '), deps);
     case 'setup': {
       const allowPlaintext = rest.includes('--allow-plaintext');
-      const hostArg = rest.find((a) => !a.startsWith('--'))?.trim();
+      let hostArg = rest.find((a) => !a.startsWith('--'))?.trim();
+      let picked: DiscoveredTv | undefined;
       if (!hostArg) {
-        process.stderr.write(
-          'uso: pa tv setup <ip> [--allow-plaintext]   (tele encendida; acepta el aviso en pantalla)\n',
-        );
-        return 2;
+        // Sin IP: busca las LG de la wifi; con una sola sin emparejar, va con ella.
+        const out = deps.out ?? ((x: string) => void process.stdout.write(x));
+        const err = deps.err ?? ((x: string) => void process.stderr.write(x));
+        out('Buscando teles LG en la red (3 s)...\n');
+        const found = (
+          await (deps.discover ?? (() => discoverWebOsTvs()))().catch(() => [])
+        ).filter((t) => t.brand === 'lg');
+        const known = await loadKnownTvs();
+        const fresh = found.filter((t) => !findTv(known, t.ip));
+        if (fresh.length === 1) {
+          picked = fresh[0];
+          hostArg = picked?.ip;
+          out(`He encontrado ${picked?.name ? `${picked.name} ` : ''}(${picked?.ip}).\n`);
+        } else if (fresh.length > 1) {
+          out('He encontrado varias teles LG sin emparejar. Elige una:\n');
+          for (const t of fresh)
+            out(
+              `  pa tv setup ${t.ip}   ·  ${t.name ?? 'sin nombre'}${t.model ? `  ·  ${t.model}` : ''}\n`,
+            );
+          return 2;
+        } else {
+          err(
+            found.length > 0
+              ? 'Las LG que veo en la red ya están emparejadas (pa tv teles). Para otra: pa tv setup <ip>\n'
+              : 'No veo ninguna tele LG encendida en esta red. Enciéndela (misma wifi que el PC) o usa: pa tv setup <ip> [--allow-plaintext]\n',
+          );
+          return 2;
+        }
       }
+      if (!hostArg) return 2;
       // Validar ANTES de imprimir: un host crudo podria meter controles de terminal.
       let host: string;
       try {
@@ -254,7 +304,11 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       } catch {
         mac = null;
       }
-      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
+      const { vaultSet, vaultSetMany } = await import('../vault.js');
+      // Registro EFECTIVO ANTES de tocar las claves sueltas: si la tele
+      // activa era de antes del registro, queda migrada aqui abajo (momento
+      // de escritura real). Despues de vaultSetMany ya no se podria leer.
+      const effective = await loadKnownTvs();
       await vaultSetMany({
         [TV_HOST_KEY]: host,
         [TV_CLIENT_KEY]: clientKey,
@@ -263,14 +317,18 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         ...(mac ? { [TV_MAC_KEY]: mac } : {}),
       });
       // Registro multi-tele: esta queda guardada y pasa a ser la activa.
-      const prev = findTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), host);
+      const prev = findTv(effective, host);
+      const name = prev?.name ?? picked?.name;
+      const model = prev?.model ?? picked?.model;
+      const uuid = prev?.uuid ?? picked?.uuid;
       await vaultSet(
         TV_REGISTRY_KEY,
         registryToJson(
-          upsertTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+          upsertTv(effective, {
             host,
-            ...(prev?.name ? { name: prev.name } : {}),
-            ...(prev?.model ? { model: prev.model } : {}),
+            ...(name ? { name } : {}),
+            ...(model ? { model } : {}),
+            ...(uuid ? { uuid } : {}),
             clientKey,
             secure: secure ? '1' : '0',
             ...(mac ? { mac } : {}),
@@ -326,12 +384,12 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       if (!info) return 1;
       // Validacion real contra el modelo detectado: que responda lo que usamos.
       const validation = await braviaValidateMethods(host, psk.trim());
-      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
+      const { vaultSet, vaultSetMany } = await import('../vault.js');
       await vaultSet(sonyPskKey(host), psk.trim());
       await vaultSet(
         TV_REGISTRY_KEY,
         registryToJson(
-          upsertTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+          upsertTv(await loadKnownTvs(), {
             host,
             brand: 'sony',
             clientKey: '',
@@ -399,14 +457,14 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
     }
     case 'descubrir': {
       // Solo lectura: el M-SEARCH no muestra nada en pantalla.
-      const found = await discoverWebOsTvs();
+      const found = await (deps.discover ?? (() => discoverWebOsTvs()))();
       if (found.length === 0) {
         process.stdout.write(
           'No he encontrado teles LG webOS encendidas en esta red. ¿Estan en la misma wifi que el PC?\n',
         );
         return 0;
       }
-      const known = parseRegistry(await (await import('../vault.js')).vaultGet(TV_REGISTRY_KEY));
+      const known = await loadKnownTvs();
       for (const tv of found) {
         const partes = [
           tv.ip,
@@ -434,7 +492,7 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         );
       }
       const found = await discoverWebOsTvs({ probeGlasshouse: false });
-      const known = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const known = await loadKnownTvs();
       const active = await vaultGet(TV_HOST_KEY);
       if (found.length === 0) {
         process.stdout.write('No veo ninguna tele encendida en esta red.\n');
@@ -452,7 +510,7 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
     }
     case 'teles': {
       const { vaultGet } = await import('../vault.js');
-      const list = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const list = await loadKnownTvs();
       const active = await vaultGet(TV_HOST_KEY);
       if (list.length === 0) {
         process.stdout.write('No hay teles emparejadas. Empareja una con: pa tv setup <ip>\n');
@@ -477,8 +535,8 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         process.stderr.write('uso: pa tv usar <ip|nombre>   (cambia la tele activa)\n');
         return 2;
       }
-      const { vaultGet, vaultSetMany } = await import('../vault.js');
-      const list = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const { vaultSetMany } = await import('../vault.js');
+      const list = await loadKnownTvs();
       const tv = findTv(list, want);
       if (!tv) {
         process.stderr.write(
