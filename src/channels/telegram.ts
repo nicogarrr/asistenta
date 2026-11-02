@@ -391,12 +391,20 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // En un grupo, el texto de un álbum (con la mención) puede ir en cualquier foto, no
+    // solo en la primera: antes las anteriores a la mención se descartaban y el turno
+    // veía una foto de tres. Ahora el álbum se retiene entero y solo sale si alguna de
+    // sus piezas va dirigida al bot (ver #flushAlbum).
+    const addressed =
+      !isGroup ||
+      isAddressedToBot(text, msg, ctx.me.username, ctx.me.id) ||
+      this.#continuesHeldSplit(ctx, msg, user.id);
+    const groupAlbum = (msg as { media_group_id?: string }).media_group_id;
     if (
-      isGroup &&
-      !isAddressedToBot(text, msg, ctx.me.username, ctx.me.id) &&
-      !this.#continuesHeldSplit(ctx, msg, user.id) &&
-      !this.#albumHeld.has(
-        `${String(ctx.chat?.id ?? '')}:${String((msg as { media_group_id?: string }).media_group_id)}`,
+      !addressed &&
+      !(
+        groupAlbum &&
+        (this.#albumHeld.has(`${String(ctx.chat?.id ?? '')}:${groupAlbum}`) || isAlbumMedia(msg))
       )
     ) {
       // Groups are read-only by default: the bot only acts when mentioned or
@@ -493,7 +501,7 @@ export class TelegramChannel implements ChannelAdapter {
       !inbound.audioFileId &&
       !inbound.documentFileId
     ) {
-      this.#holdAlbum(`${inbound.chatId}:${albumId}`, inbound, handlers, () =>
+      this.#holdAlbum(`${inbound.chatId}:${albumId}`, inbound, handlers, addressed, () =>
         ctx
           .reply(ALBUM_VIDEO_NOTE, {
             message_thread_id: msg.message_thread_id,
@@ -578,7 +586,7 @@ export class TelegramChannel implements ChannelAdapter {
     // Igual con varios documentos enviados de una vez: un turno «indexado» por fichero.
     const album = (msg as { media_group_id?: string }).media_group_id;
     if (album && (inbound.photoFileId || inbound.documentFileId) && !inbound.audioFileId) {
-      this.#holdAlbum(`${inbound.chatId}:${album}`, inbound, handlers);
+      this.#holdAlbum(`${inbound.chatId}:${album}`, inbound, handlers, addressed);
       return;
     }
 
@@ -631,6 +639,8 @@ export class TelegramChannel implements ChannelAdapter {
       /** Vídeos del álbum (no se ven) y su aviso, que sale una sola vez. */
       videos?: number;
       videoNotice?: () => Promise<unknown>;
+      /** En un grupo: alguna pieza del álbum menciona al bot o le responde. */
+      addressed: boolean;
     }
   >();
 
@@ -643,16 +653,24 @@ export class TelegramChannel implements ChannelAdapter {
     key: string,
     inbound: Inbound,
     handlers: ChannelHandlers,
+    addressed: boolean,
     videoNotice?: () => Promise<unknown>,
   ): void {
     const held = this.#albumHeld.get(key);
     const timer = setTimeout(() => this.#flushAlbum(key, handlers), ALBUM_WAIT_MS);
     if (!held) {
-      this.#albumHeld.set(key, { inbound, timer, videos: videoNotice ? 1 : 0, videoNotice });
+      this.#albumHeld.set(key, {
+        inbound,
+        timer,
+        videos: videoNotice ? 1 : 0,
+        videoNotice,
+        addressed,
+      });
       return;
     }
     clearTimeout(held.timer);
     held.timer = timer;
+    if (addressed) held.addressed = true;
     if (videoNotice) {
       held.videos = (held.videos ?? 0) + 1;
       held.videoNotice ??= videoNotice;
@@ -685,6 +703,12 @@ export class TelegramChannel implements ChannelAdapter {
     if (!held) return;
     clearTimeout(held.timer);
     this.#albumHeld.delete(key);
+    if (!held.addressed) {
+      // Álbum de grupo sin mención en ninguna de sus piezas: como cualquier otro
+      // mensaje de grupo sin mención, ni turno ni aviso.
+      handlers.log('debug', 'group album without mention ignored', { key });
+      return;
+    }
     const first = held.inbound;
     if (held.videos) {
       // Un solo aviso por álbum. Si solo traía vídeos sin texto, no hay turno.
@@ -1835,6 +1859,21 @@ export class TelegramChannel implements ChannelAdapter {
 const STOP_COMMAND = /^\/stop(@\w+)?(\s|$)/i;
 export function isStopCommand(text: string): boolean {
   return STOP_COMMAND.test(text.trim());
+}
+
+/** Pieza que puede ir en un álbum retenido: foto, vídeo/GIF o documento (no audio). */
+function isAlbumMedia(msg: {
+  photo?: unknown[];
+  video?: unknown;
+  animation?: unknown;
+  document?: { mime_type?: string; file_name?: string };
+}): boolean {
+  return Boolean(
+    msg.photo?.length ||
+      msg.video ||
+      msg.animation ||
+      (msg.document && !isAudioDocument(msg.document)),
+  );
 }
 
 /**
