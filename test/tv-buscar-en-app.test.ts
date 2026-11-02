@@ -92,14 +92,15 @@ describe('Roku: búsqueda ECP', () => {
     expect(said).toBe('Roku: buscando «dune».');
   });
 
-  it('Samsung no tiene búsqueda: lo dice sin tocar la tele', async () => {
+  it('Samsung: texto dentro de YouTube no se puede: lo dice sin tocar la tele', async () => {
+    // Netflix y los enlaces de YouTube van por DIAL (test/cu3-samsung-dial.test.ts).
     await expect(
       runIntentOnDriver(samsungDriver({ host: '192.168.1.70', secure: true }), {
         action: 'search',
         text: 'dune',
-        appId: 'netflix',
+        appId: 'youtube.leanback.v4',
       }),
-    ).rejects.toThrow(/buscar dentro de las apps/);
+    ).rejects.toThrow(/no deja buscar texto dentro de YouTube/);
   });
 });
 

@@ -328,6 +328,46 @@ export function samsungKey(key: string): object {
 }
 
 const APPS_TIMEOUT_MS = 4_000;
+/** Puerto DIAL de las Samsung (Application-URL http://IP:8080/ws/apps/). */
+export const SAMSUNG_DIAL_PORT = 8080;
+const DIAL_TIMEOUT_MS = 4_000;
+const YT_VIDEO_ID =
+  /(?:youtu\.be\/|[?&]v=|^v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/;
+
+/**
+ * Arranca una app por DIAL (el protocolo con el que el móvil «envía» Netflix o
+ * YouTube a la tele): `POST http://IP:8080/ws/apps/<App>` con el contenido en
+ * el cuerpo. No pasa por el WebSocket ni por `ed.apps.launch` (que algunos
+ * firmwares ignoran con contenido). Solo IPs privadas.
+ */
+export async function samsungDialLaunch(
+  host: string,
+  app: 'YouTube' | 'Netflix',
+  body: string,
+  deps: SamsungDeps = {},
+): Promise<void> {
+  const ip = assertTvHost(host);
+  let res: Response;
+  try {
+    res = await (deps.fetchImpl ?? fetch)(`http://${ip}:${SAMSUNG_DIAL_PORT}/ws/apps/${app}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body,
+      redirect: 'error',
+      signal: AbortSignal.timeout(DIAL_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new SamsungError(
+      `No llego a la Samsung por DIAL (${ip}:${SAMSUNG_DIAL_PORT}): ¿está encendida? (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+  if (!res.ok) throw new SamsungError(`La Samsung no abrió ${app} (DIAL ${res.status}).`);
+}
+
+/** Id de vídeo de YouTube en lo pedido (enlace o «v=ID»), o null si es texto. */
+export function youtubeVideoId(query: string): string | null {
+  return YT_VIDEO_ID.exec(query.trim())?.[1] ?? null;
+}
 
 /**
  * Apps instaladas de verdad: «ed.installedApp.get» por el mismo canal del
@@ -484,5 +524,33 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
       ]);
     },
     apps: () => listApps(),
+    search: async (query, appId) => {
+      const q = query.trim().slice(0, 200);
+      if (!q) throw new SamsungError('¿Qué busco en la Samsung? Dime el título.');
+      const app = lgAppIdFor(appId ?? '');
+      if (app === 'netflix') {
+        // El mismo contenido «m=<url>&source_type=4» que la receta de la LG.
+        await samsungDialLaunch(
+          conn.host,
+          'Netflix',
+          `m=https://www.netflix.com/search?q=${encodeURIComponent(q)}&source_type=4`,
+          deps,
+        );
+        return;
+      }
+      if (app === 'youtube.leanback.v4') {
+        const id = youtubeVideoId(query);
+        if (id) {
+          await samsungDialLaunch(conn.host, 'YouTube', `v=${id}`, deps);
+          return;
+        }
+        throw new SamsungError(
+          'La Samsung no deja buscar texto dentro de YouTube desde fuera: pásame el enlace del vídeo y lo pongo, o dime «abre YouTube» y lo buscas con el mando.',
+        );
+      }
+      throw new SamsungError(
+        'En la Samsung solo sé buscar dentro de Netflix y poner vídeos de YouTube por enlace.',
+      );
+    },
   };
 }
