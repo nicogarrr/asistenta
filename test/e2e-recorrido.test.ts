@@ -215,6 +215,10 @@ function daemon(core: InstanceType<typeof Core>) {
   };
 }
 
+const realNow = Date.now.bind(Date);
+const realSetImmediate = setImmediate;
+const cederAlBucleReal = (): Promise<void> => new Promise((r) => realSetImmediate(r));
+
 const lastText = (): string => bot.sent.at(-1)?.text ?? '';
 
 /**
@@ -229,8 +233,16 @@ async function drive<T>(p: Promise<T>): Promise<T> {
     settled = true;
   });
   await vi.advanceTimersByTimeAsync(0);
-  for (let step = 0; !settled && step < 300; step++) await vi.advanceTimersByTimeAsync(100);
-  if (!settled) throw new Error('drive: no terminó tras 30 s de reloj falso');
+  // Los pasos de reloj falso se acaban (30 s), pero la E/S real de verdad (disco, hilos)
+  // no avanza con el reloj: hay que cederle el turno al bucle real y esperarla por
+  // tiempo real, no por número de pasos. Con la máquina cargada 300 pasos pasaban en
+  // milisegundos y el test moría con «no terminó» antes de que el disco respondiera.
+  const inicio = realNow();
+  for (let step = 0; !settled; step++) {
+    if (realNow() - inicio > 30_000) throw new Error('drive: no terminó tras 30 s reales');
+    if (step < 300) await vi.advanceTimersByTimeAsync(100);
+    await cederAlBucleReal();
+  }
   return done;
 }
 
