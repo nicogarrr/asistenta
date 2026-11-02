@@ -25,6 +25,8 @@ export interface BriefingInput {
   followups: Array<{ subject: string; due?: string }>;
   reminders: Array<{ text: string; at?: string }>;
   agenda: Array<{ title: string; when: string }>;
+  /** Festivo o puente de los próximos 7 días, en una línea; solo con agenda (calendario). */
+  festivo?: string | null;
   /** Tareas del tablero para hoy sin hacer, y las atrasadas. */
   tasks?: Array<{ title: string; time?: string; late?: boolean }>;
   /** Paquetes en camino, ya redactados («SEUR (123): en reparto»). */
@@ -174,7 +176,10 @@ export function buildBriefing(input: BriefingInput): string {
   const blocks: Array<{ title: string; items: string[] }> = [
     {
       title: 'Hoy',
-      items: section(input.agenda.map(agendaLine)),
+      items: section([
+        ...input.agenda.map(agendaLine),
+        input.festivo ? oneLine(input.festivo, 160) || null : null,
+      ]),
     },
     {
       title: 'Tareas',

@@ -38,6 +38,11 @@ export interface DailyBriefingDeps {
   owner: () => string | null;
   send: (chatId: string, text: string) => Promise<boolean>;
   agenda?: () => Promise<BriefingInput['agenda']>;
+  /**
+   * Festivo o puente de los próximos 7 días («Festivo el martes 8…»). Solo se mira si hay
+   * agenda: va como una línea más de «Hoy», nunca como sección propia.
+   */
+  festivo?: (now: Date) => Promise<string | null>;
   routines?: () => BriefingInput['routines'] | Promise<BriefingInput['routines']>;
   reminders?: () => BriefingInput['reminders'] | Promise<BriefingInput['reminders']>;
   followups?: () => BriefingInput['followups'] | Promise<BriefingInput['followups']>;
@@ -131,10 +136,16 @@ export async function composeDailyBriefing(
       within('tareas', deps.tasks, [], ms, deps.warn),
       within('repartos', deps.deliveries, [], ms, deps.warn),
     ]);
+  const festivoDep = deps.festivo;
+  const festivo =
+    deps.agenda && festivoDep
+      ? await within('festivos', () => festivoDep(now), null, ms, deps.warn)
+      : null;
   const input: BriefingInput = {
     greeting: greetingFor(now),
     today: now,
     agenda: agenda ?? [],
+    festivo,
     routines: routines ?? [],
     reminders: reminders ?? [],
     followups: followups ?? [],
