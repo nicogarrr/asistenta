@@ -189,3 +189,70 @@ export async function braviaSystemInfo(
     ...(info.model ? { model: info.model } : {}),
   };
 }
+
+/** Letra final del modelo Sony -> ano de la gama (C=2015 ... L=2023). Estimacion. */
+const SONY_YEAR_BY_LETTER: Record<string, number> = {
+  C: 2015,
+  D: 2016,
+  E: 2017,
+  F: 2018,
+  G: 2019,
+  H: 2020,
+  J: 2021,
+  K: 2022,
+  L: 2023,
+};
+
+/** Año aproximado de una Bravia por la letra del modelo (XR-55X90J -> 2021). */
+export function sonyModelYear(model: string): number | undefined {
+  const m = /([A-L])(?:[ .-]?A?[EPB]?)?$/i.exec(model.trim());
+  const letter = m?.[1]?.toUpperCase();
+  return letter ? SONY_YEAR_BY_LETTER[letter] : undefined;
+}
+
+/** «2021 aprox.» o «año por confirmar» (la letra del modelo es una estimación). */
+export function sonyModelYearText(model: string): string {
+  const year = sonyModelYear(model);
+  return year ? `${year} aprox.` : 'año por confirmar';
+}
+
+/** Metodos REST que usa Asistenta (todos de la v1.0, Bravia 2013+). */
+export const BRAVIA_METHODS_USED = [
+  { service: 'system', method: 'getPowerStatus' },
+  { service: 'system', method: 'setPowerStatus' },
+  { service: 'audio', method: 'getVolumeInformation' },
+  { service: 'audio', method: 'setAudioVolume' },
+  { service: 'audio', method: 'setAudioMute' },
+  { service: 'avContent', method: 'getPlayingContentInfo' },
+  { service: 'system', method: 'getSystemInformation' },
+] as const;
+
+/**
+ * Valida contra la tele real los metodos que Asistenta necesita (en setup,
+ * tele ya con PSK). Los de escritura NO se prueban de verdad: se llama a su
+ * version de lectura equivalente... salvo set*, que se dan por buenos si la
+ * tele contesta getSystemInformation con su generacion de API.
+ */
+export async function braviaValidateMethods(
+  host: string,
+  psk: string,
+  deps: BraviaDeps = {},
+): Promise<{ ok: string[]; failed: string[] }> {
+  const ok: string[] = [];
+  const failed: string[] = [];
+  const checks: { name: string; run: () => Promise<unknown> }[] = [
+    { name: 'getSystemInformation', run: () => braviaSystemInfo(host, psk, deps) },
+    { name: 'getPowerStatus', run: () => braviaPowerStatus(host, psk, deps) },
+    { name: 'getVolumeInformation', run: () => braviaVolume(host, psk, deps) },
+    { name: 'getPlayingContentInfo', run: () => braviaPlaying(host, psk, deps) },
+  ];
+  for (const check of checks) {
+    try {
+      await check.run();
+      ok.push(check.name);
+    } catch {
+      failed.push(check.name);
+    }
+  }
+  return { ok, failed };
+}

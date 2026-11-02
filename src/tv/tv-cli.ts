@@ -1,13 +1,16 @@
 /** Comandos `pa tv ...`: setup (pairing una vez), toast, apps, launch, off. */
 
 import { existsSync, writeFileSync } from 'node:fs';
+import { ensureActiveTv } from './auto-select.js';
 import {
   braviaPowerOff,
   braviaPowerStatus,
   braviaSetMute,
   braviaSetVolume,
   braviaSystemInfo,
+  braviaValidateMethods,
   braviaVolume,
+  sonyModelYearText,
 } from './bravia.js';
 import { discoverWebOsTvs } from './discover.js';
 import {
@@ -32,7 +35,13 @@ const TV_ACTIVE_BRAND = 'tv:activeBrand';
 const sonyPskKey = (host: string) => `tv:sonyPsk:${host}`;
 
 async function requireSonyPsk(): Promise<{ host: string; psk: string }> {
-  const { vaultGet } = await import('../vault.js');
+  const { vaultGet, vaultSetMany } = await import('../vault.js');
+  const ensured = await ensureActiveTv({ vaultGet, vaultSetMany }).catch(() => null);
+  if (ensured?.switchedTo) {
+    process.stderr.write(
+      `Tele activa ahora: ${ensured.switchedTo.name ?? ensured.switchedTo.host} (la anterior no responde en esta red).\n`,
+    );
+  }
   const host = await vaultGet(TV_HOST_KEY);
   const psk = host ? await vaultGet(sonyPskKey(host)) : undefined;
   if (!host || !psk) {
@@ -90,7 +99,15 @@ async function requirePaired(): Promise<{
   allowPlaintext: boolean;
   onNewClientKey: (key: string) => Promise<void>;
 }> {
-  const { vaultGet } = await import('../vault.js');
+  const { vaultGet, vaultSetMany } = await import('../vault.js');
+  // Multi-casa: si la activa no responde en esta red y hay otra conocida
+  // encendida, pasa a ser la activa (sin re-emparejar).
+  const ensured = await ensureActiveTv({ vaultGet, vaultSetMany }).catch(() => null);
+  if (ensured?.switchedTo) {
+    process.stderr.write(
+      `Tele activa ahora: ${ensured.switchedTo.name ?? ensured.switchedTo.host} (la anterior no responde en esta red).\n`,
+    );
+  }
   if ((await vaultGet(TV_ACTIVE_BRAND)) === 'sony') {
     throw new Error(
       'La tele activa es la Sony y esa orden es de la LG. Cambia con `pa tv usar <ip>` o usa `pa tv sony ...`.',
@@ -307,6 +324,8 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         return null;
       });
       if (!info) return 1;
+      // Validacion real contra el modelo detectado: que responda lo que usamos.
+      const validation = await braviaValidateMethods(host, psk.trim());
       const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
       await vaultSet(sonyPskKey(host), psk.trim());
       await vaultSet(
@@ -325,8 +344,15 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       );
       await vaultSetMany({ [TV_HOST_KEY]: host, [TV_ACTIVE_BRAND]: 'sony' });
       process.stdout.write(
-        `Sony Bravia emparejada y activa${info.model ? ` (${info.model})` : ''}. Prueba: pa tv sony estado\n`,
+        `Sony Bravia emparejada y activa${info.model ? ` (${info.model}, ${sonyModelYearText(info.model)})` : ''}.\n`,
       );
+      if (validation.failed.length > 0) {
+        process.stdout.write(
+          `Ojo: no me ha respondido a ${validation.failed.join(', ')}; lo demas (${validation.ok.length} metodos) va bien.\n`,
+        );
+      } else {
+        process.stdout.write('Validada contra la tele: responde a todo lo que uso.\n');
+      }
       return 0;
     }
     case 'sony': {
@@ -384,8 +410,10 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       for (const tv of found) {
         const partes = [
           tv.ip,
-          tv.brand === 'sony' ? 'Sony Bravia' : (tv.name ?? 'sin nombre'),
-          ...(tv.model ? [tv.model] : []),
+          tv.brand === 'sony'
+            ? `Sony Bravia${tv.model ? ` ${tv.model}` : ''}${tv.model ? ` (${sonyModelYearText(tv.model)})` : ''}`
+            : (tv.name ?? 'sin nombre'),
+          ...(tv.brand === 'sony' ? [] : tv.model ? [tv.model] : []),
           tv.glasshouse ? 'rooteada (Glasshouse)' : tv.brand === 'sony' ? 'IP Control' : 'webOS',
           findTv(known, tv.ip)
             ? 'ya emparejada'
@@ -394,6 +422,31 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
               : `emparejar: pa tv setup ${tv.ip}`,
         ];
         process.stdout.write(`${partes.join('  ·  ')}\n`);
+      }
+      return 0;
+    }
+    case 'donde': {
+      const { vaultGet, vaultSetMany } = await import('../vault.js');
+      const ensured = await ensureActiveTv({ vaultGet, vaultSetMany });
+      if (ensured.switchedTo) {
+        process.stdout.write(
+          `Cambio de tele: ahora la activa es ${ensured.switchedTo.name ?? ensured.switchedTo.host}.\n`,
+        );
+      }
+      const found = await discoverWebOsTvs({ probeGlasshouse: false });
+      const known = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const active = await vaultGet(TV_HOST_KEY);
+      if (found.length === 0) {
+        process.stdout.write('No veo ninguna tele encendida en esta red.\n');
+        return 0;
+      }
+      for (const tv of found) {
+        const k = findTv(known, tv.ip);
+        const marca = tv.brand === 'sony' ? 'Sony Bravia' : 'LG webOS';
+        const quien = k ? `tu tele${tv.ip === active ? ' (activa)' : ''}` : 'no emparejada';
+        process.stdout.write(
+          `${tv.ip}  ${marca}${tv.model ? ` ${tv.model}` : ''}${tv.brand === 'sony' && tv.model ? ` (${sonyModelYearText(tv.model)})` : ''}  ${quien}\n`,
+        );
       }
       return 0;
     }

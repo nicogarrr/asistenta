@@ -18,6 +18,8 @@ export interface KnownTv {
   /** '1' = wss (defecto); '0' = pairing por ws 3000, downgrade prohibido. */
   secure: '1' | '0';
   mac?: string;
+  /** UUID SSDP (usn): identidad estable aunque cambie la IP. */
+  uuid?: string;
   /** ISO de cuando se emparejo. */
   pairedAt?: string;
 }
@@ -44,6 +46,7 @@ export function parseRegistry(raw: string | undefined | null): KnownTv[] {
         ...(typeof t.model === 'string' && t.model.trim() ? { model: t.model.trim() } : {}),
         secure: t.secure === '0' ? '0' : '1',
         ...(typeof t.mac === 'string' && t.mac.trim() ? { mac: t.mac.trim() } : {}),
+        ...(typeof t.uuid === 'string' && t.uuid.trim() ? { uuid: t.uuid.trim() } : {}),
         ...(typeof t.pairedAt === 'string' ? { pairedAt: t.pairedAt } : {}),
       });
     }

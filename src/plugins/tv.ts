@@ -17,7 +17,7 @@ import { tvKey, tvRequest, tvScreenshot, tvToast } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
 import { readTvStatus } from '../tv/status.js';
 import { sendWakeOnLan } from '../tv/wol.js';
-import { vaultGet, vaultSet } from '../vault.js';
+import { vaultGet, vaultSet, vaultSetMany } from '../vault.js';
 import type { CapabilityPlugin } from './types.js';
 
 /**
@@ -44,6 +44,22 @@ export function tvToolDeps(store: Store): TvToolDeps {
     clientKey: string;
     allowPlaintext: boolean;
   }> => {
+    // Multi-casa: si la activa no responde en esta red y hay otra tele
+    // conocida encendida, la activa pasa a ser esa (sin re-emparejar).
+    try {
+      const { ensureActiveTv } = await import('../tv/auto-select.js');
+      const ensured = await ensureActiveTv({ vaultGet, vaultSetMany });
+      if (ensured.switchedTo) {
+        log.info('tv: tele activa cambiada al llegar a otra red', {
+          host: ensured.switchedTo.host,
+          brand: ensured.switchedTo.brand,
+        });
+      }
+    } catch (err) {
+      log.warn('tv: auto-seleccion de tele fallo; sigo con la activa guardada', {
+        err: String(err),
+      });
+    }
     const host = await vaultGet('tv:host');
     const clientKey = await vaultGet('tv:clientKey');
     if (!host || !clientKey) {

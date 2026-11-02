@@ -91,6 +91,8 @@ export interface DiscoveredTv {
   server?: string;
   st?: string;
   usn?: string;
+  /** uuid del USN SSDP: identidad estable de la tele aunque cambie su IP. */
+  uuid?: string;
   /** true si responde la API de Glasshouse (:8080): tele rooteada, control total. */
   glasshouse: boolean;
 }
@@ -160,9 +162,9 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
       byIp.set(rinfo.address, {
         ip: rinfo.address,
         brand: prev?.brand ?? 'lg',
-        ...((parsed.server ?? prev?.server) ? { server: (parsed.server ?? prev?.server)! } : {}),
-        ...((parsed.st ?? prev?.st) ? { st: (parsed.st ?? prev?.st)! } : {}),
-        ...((parsed.usn ?? prev?.usn) ? { usn: (parsed.usn ?? prev?.usn)! } : {}),
+        ...((parsed.server ?? prev?.server) ? { server: parsed.server ?? prev?.server ?? '' } : {}),
+        ...((parsed.st ?? prev?.st) ? { st: parsed.st ?? prev?.st ?? '' } : {}),
+        ...((parsed.usn ?? prev?.usn) ? { usn: parsed.usn ?? prev?.usn ?? '' } : {}),
         glasshouse: prev?.glasshouse ?? false,
       });
       if (parsed.location) locations.set(rinfo.address, parsed.location);
@@ -231,6 +233,8 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
       ...(name ? { name } : {}),
       ...(model ? { model } : {}),
       ...(tv.server ? { server: tv.server } : {}),
+      ...(tv.usn ? { usn: tv.usn } : {}),
+      ...(tv.uuid ? { uuid: tv.uuid } : {}),
       glasshouse: tv.glasshouse,
     });
   }
