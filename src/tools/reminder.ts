@@ -9,6 +9,7 @@ import type { Routine, Store } from '../db.js';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
+import { foldAccents } from '../text.js';
 
 /**
  * Reminders as a tool: "recuérdame dentro de 3 horas que apague el horno",
@@ -483,7 +484,9 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<typeof Params>
           .trim()
           .toLowerCase();
         if (!needle) return reply('cancel necesita text: una palabra del recordatorio.', true);
-        const hits = mine().filter((r) => reminderText(r).toLowerCase().includes(needle));
+        const hits = mine().filter((r) =>
+          foldAccents(reminderText(r)).includes(foldAccents(needle)),
+        );
         if (hits.length === 0)
           return reply(`No encuentro ningún recordatorio con "${needle}".`, true);
         if (hits.length > 1) {
@@ -770,20 +773,23 @@ export function pickReminder(
       ok: false,
       error: '¿Cuál quito? Dime su número de la lista o una palabra.',
     };
-  if (/^\d+$/.test(want)) {
-    const row = rows[Number(want) - 1];
+  // «2.», «el 2», «#2», «nº 2»: también es el número de la lista (antes se buscaba como palabra).
+  const number = /^(?:(?:el|la|n[ºo°]\.?|num(?:ero)?\.?|#)\s*)?(\d+)\.?$/i.exec(want)?.[1];
+  if (number !== undefined) {
+    const row = rows[Number(number) - 1];
     if (!row) {
       return {
         ok: false,
         error: rows.length
-          ? `No hay recordatorio ${want}: elige entre 1 y ${rows.length}.`
+          ? `No hay recordatorio ${number}: elige entre 1 y ${rows.length}.`
           : 'No tienes recordatorios.',
       };
     }
     return { ok: true, routine: row.routine };
   }
-  const needle = want.toLowerCase();
-  const hits = rows.filter((r) => reminderText(r.routine).toLowerCase().includes(needle));
+  // Sin tildes en ningún lado: «jose» encuentra «Llamar a José» (en el móvil se escribe así).
+  const needle = foldAccents(want);
+  const hits = rows.filter((r) => foldAccents(reminderText(r.routine)).includes(needle));
   if (hits.length === 0)
     return { ok: false, error: `No encuentro ningún recordatorio con «${want}».` };
   if (hits.length > 1) {
