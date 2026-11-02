@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Sin modelo ni red: un whisper falso por checkpoint, que deja ver cuál transcribe.
 const st = vi.hoisted(() => ({
   loads: [] as string[],
+  /** Checkpoints cuyo pipeline ya terminó de cargar (para esperar sin sondear la transcripción). */
+  loaded: [] as string[],
   failLoad: new Set<string>(),
   holdLoad: null as null | Promise<void>,
 }));
@@ -21,6 +23,7 @@ vi.mock('@huggingface/transformers', () => ({
     st.loads.push(model);
     if (st.holdLoad) await st.holdLoad;
     if (st.failLoad.has(model)) throw new Error('Protobuf parsing failed');
+    st.loaded.push(model);
     const name = model.includes('turbo') ? 'turbo' : 'small';
     const pipe = async () => ({ text: ` oído por ${name}` });
     return Object.assign(pipe, {
@@ -55,11 +58,13 @@ import {
 
 const GB = 1024 ** 3;
 const nota = Buffer.from('OggS falso');
+const WAIT = { timeout: 15_000, interval: 10 };
 const big = { env: {}, totalMem: 16 * GB };
 
 beforeEach(() => {
   resetSttStateForTests();
   st.loads.length = 0;
+  st.loaded.length = 0;
   st.failLoad.clear();
   st.holdLoad = null;
 });
@@ -86,7 +91,7 @@ describe('notas de voz: el modelo grande (large-v3-turbo) por defecto, small de 
       release = r;
     });
     const first = transcribeVoiceNote(nota, {}, { ...big, isCached: () => false });
-    await vi.waitFor(() => expect(st.loads).toContain(SMALL_STT_MODEL));
+    await vi.waitFor(() => expect(st.loads).toContain(SMALL_STT_MODEL), WAIT);
     expect(st.loads).toContain(TURBO_STT_MODEL);
     release();
     st.holdLoad = null;
@@ -95,11 +100,14 @@ describe('notas de voz: el modelo grande (large-v3-turbo) por defecto, small de 
     expect(r1.notice).toBe(STT_DOWNLOAD_NOTICE);
     expect(STT_DOWNLOAD_NOTICE).toMatch(/Descargando el modelo de voz/);
     // Ya bajado y cargado: la siguiente va con turbo, sin repetir el aviso ni la descarga.
-    await vi.waitFor(async () => {
-      const r2 = await transcribeVoiceNote(nota, {}, { ...big, isCached: () => false });
-      expect(r2.text).toBe('oído por turbo');
-      expect(r2.notice).toBeUndefined();
-    });
+    // Antes se sondeaba transcribiendo con el timeout por defecto (1 s), que con la máquina
+    // cargada no daba: se espera a que turbo termine de cargar y luego se cede un turno para
+    // que stt.ts lo marque listo.
+    await vi.waitFor(() => expect(st.loaded).toContain(TURBO_STT_MODEL), WAIT);
+    await new Promise((r) => setImmediate(r));
+    const r2 = await transcribeVoiceNote(nota, {}, { ...big, isCached: () => false });
+    expect(r2.text).toBe('oído por turbo');
+    expect(r2.notice).toBeUndefined();
     expect(st.loads.filter((m) => m === TURBO_STT_MODEL)).toHaveLength(1);
   });
 
@@ -109,7 +117,10 @@ describe('notas de voz: el modelo grande (large-v3-turbo) por defecto, small de 
     const deps = { ...big, isCached: () => false, now: () => now };
     const r1 = await transcribeVoiceNote(nota, {}, deps);
     expect(r1.text).toBe('oído por small');
-    await vi.waitFor(() => expect(st.loads.filter((m) => m === TURBO_STT_MODEL)).toHaveLength(1));
+    await vi.waitFor(
+      () => expect(st.loads.filter((m) => m === TURBO_STT_MODEL)).toHaveLength(1),
+      WAIT,
+    );
     await new Promise((r) => setTimeout(r, 0));
     const r2 = await transcribeVoiceNote(nota, {}, deps);
     expect(r2.text).toBe('oído por small');
@@ -117,7 +128,10 @@ describe('notas de voz: el modelo grande (large-v3-turbo) por defecto, small de 
     expect(st.loads.filter((m) => m === TURBO_STT_MODEL)).toHaveLength(1);
     now += 11 * 60_000;
     await transcribeVoiceNote(nota, {}, deps);
-    await vi.waitFor(() => expect(st.loads.filter((m) => m === TURBO_STT_MODEL)).toHaveLength(2));
+    await vi.waitFor(
+      () => expect(st.loads.filter((m) => m === TURBO_STT_MODEL)).toHaveLength(2),
+      WAIT,
+    );
   });
 
   it('turbo descargado pero no carga (archivo roto, sin memoria): la nota va con small', async () => {
