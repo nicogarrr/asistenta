@@ -6821,7 +6821,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
-          prompt = voiceNotePrompt(heard, inbound.forwardedFrom);
+          prompt = voiceNotePrompt(heard, inbound.forwardedFrom, text);
           // El acuse queda con lo entendido: si oyó mal, se ve antes de la respuesta.
           await receipt.update(voiceHeardText(heard.text));
           log.info('voice transcribed', {
@@ -8549,9 +8549,17 @@ function fileErrorReason(raw: string): string | null {
 export function voiceNotePrompt(
   heard: { text: string; truncated?: boolean },
   forwardedFrom?: string,
+  caption?: string,
 ): string {
   const voice = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
-  return forwardedFrom ? `${forwardedFrom}\n${voice}` : voice;
+  // El texto que acompañaba al audio se perdía. Si es tuyo va delante, como tus palabras;
+  // si el audio es reenviado, va dentro de la marca del reenvío, como lo demás del otro.
+  const said = caption?.trim() ?? '';
+  if (forwardedFrom) {
+    const theirs = said.startsWith(forwardedFrom) ? said.slice(forwardedFrom.length).trim() : said;
+    return [forwardedFrom, theirs, voice].filter(Boolean).join('\n');
+  }
+  return said ? `${said}\n${voice}` : voice;
 }
 
 /**
