@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { createReadStream, rmSync, statSync } from 'node:fs';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { log } from '../log.js';
+import { createServer } from '../node-http.js';
 
 /**
  * Un servidor HTTP de UN solo fichero para que la tele pueda descargar un audio.
