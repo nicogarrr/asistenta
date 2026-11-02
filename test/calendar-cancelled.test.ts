@@ -3,11 +3,11 @@ import { parseIcs } from '../src/tools/calendar.js';
 
 const wrap = (body: string) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${body}\r\nEND:VCALENDAR\r\n`;
 const NOW = new Date('2026-11-02T07:00:00Z');
-const titles = (body: string) =>
-  parseIcs(wrap(body), NOW).map((e) => `${e.summary}@${e.start.toISOString()}`);
+const titles = async (body: string) =>
+  (await parseIcs(wrap(body), NOW)).map((e) => `${e.summary}@${e.start.toISOString()}`);
 
 describe('calendario: eventos cancelados', () => {
-  it('un evento con STATUS:CANCELLED no aparece', () => {
+  it('un evento con STATUS:CANCELLED no aparece', async () => {
     const body = [
       'BEGIN:VEVENT',
       'UID:a',
@@ -24,10 +24,10 @@ describe('calendario: eventos cancelados', () => {
       'SUMMARY:Sigue',
       'END:VEVENT',
     ].join('\r\n');
-    expect(titles(body)).toEqual(['Sigue@2026-11-03T10:00:00.000Z']);
+    expect(await titles(body)).toEqual(['Sigue@2026-11-03T10:00:00.000Z']);
   });
 
-  it('una instancia cancelada de una serie (RECURRENCE-ID) desaparece; las demás siguen', () => {
+  it('una instancia cancelada de una serie (RECURRENCE-ID) desaparece; las demás siguen', async () => {
     const body = [
       'BEGIN:VEVENT',
       'UID:serie',
@@ -45,13 +45,13 @@ describe('calendario: eventos cancelados', () => {
       'SUMMARY:Semanal',
       'END:VEVENT',
     ].join('\r\n');
-    expect(titles(body)).toEqual([
+    expect(await titles(body)).toEqual([
       'Semanal@2026-11-02T08:00:00.000Z',
       'Semanal@2026-11-16T08:00:00.000Z',
     ]);
   });
 
-  it('una serie cancelada entera no deja ninguna instancia', () => {
+  it('una serie cancelada entera no deja ninguna instancia', async () => {
     const body = [
       'BEGIN:VEVENT',
       'UID:s2',
@@ -62,6 +62,6 @@ describe('calendario: eventos cancelados', () => {
       'SUMMARY:Fuera',
       'END:VEVENT',
     ].join('\r\n');
-    expect(titles(body)).toEqual([]);
+    expect(await titles(body)).toEqual([]);
   });
 });

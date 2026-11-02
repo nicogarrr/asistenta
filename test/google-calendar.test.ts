@@ -64,8 +64,8 @@ describe('Google Calendar', () => {
     expect(DEFAULT_SCOPES).toEqual(['https://www.googleapis.com/auth/calendar.readonly']);
   });
 
-  it('convierte los eventos de Google a iCal que la agenda entiende', () => {
-    const events = parseIcs(googleEventsToIcs(items), new Date(NOW));
+  it('convierte los eventos de Google a iCal que la agenda entiende', async () => {
+    const events = await parseIcs(googleEventsToIcs(items), new Date(NOW));
     expect(events.map((e) => e.summary)).toEqual(['Dentista; revisión', 'Puente']);
     expect(events[0]?.start.toISOString()).toBe('2026-11-03T09:00:00.000Z');
     expect(events[0]?.location).toBe('C/ Mayor, 3');

@@ -61,7 +61,7 @@ describe('agenda en PA_TIMEZONE con el proceso en otra zona', () => {
     expect(out).toContain('09:00-10:00 +02:00  Verano');
   });
 
-  it('un evento de día completo conserva su fecha', () => {
+  it('un evento de día completo conserva su fecha', async () => {
     const ics = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
@@ -73,7 +73,7 @@ describe('agenda en PA_TIMEZONE con el proceso en otra zona', () => {
       'END:VEVENT',
       'END:VCALENDAR',
     ].join('\r\n');
-    const events = parseIcs(ics, new Date('2026-11-01T00:00:00Z'));
+    const events = await parseIcs(ics, new Date('2026-11-01T00:00:00Z'));
     const out = summarizeForModel(events);
     expect(out).toContain('Sat 7 Nov 2026');
     expect(out).toContain('all day  Puente');
