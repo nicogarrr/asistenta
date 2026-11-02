@@ -380,7 +380,11 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
-    if (isGroup && !isAddressedToBot(text, msg, ctx.me.username, ctx.me.id)) {
+    if (
+      isGroup &&
+      !isAddressedToBot(text, msg, ctx.me.username, ctx.me.id) &&
+      !this.#continuesHeldSplit(ctx, msg, user.id)
+    ) {
       // Groups are read-only by default: the bot only acts when mentioned or
       // replied to. Otherwise every group message would burn a computer-use run,
       // and the reply would leak to members who are not allowlisted.
@@ -524,6 +528,22 @@ export class TelegramChannel implements ChannelAdapter {
     string,
     { inbound: Inbound; timer: ReturnType<typeof setTimeout> }
   >();
+
+  /**
+   * En un grupo, Telegram parte un texto largo y solo el primer trozo lleva la
+   * mención: la continuación llegaba sin ella y se descartaba. Cuenta como dirigida al
+   * bot solo si es texto (sin comando) del MISMO usuario con un texto suyo retenido
+   * en este chat y tema; cualquier otro mensaje sin mención se sigue ignorando.
+   */
+  #continuesHeldSplit(
+    ctx: Context,
+    msg: { text?: string; message_thread_id?: number },
+    userId: number,
+  ): boolean {
+    if (typeof msg.text !== 'string' || msg.text.trim().startsWith('/')) return false;
+    const thread = msg.message_thread_id ? String(msg.message_thread_id) : '';
+    return this.#splitHeld.has(`${String(ctx.chat?.id ?? '')}:${thread}:${userId}`);
+  }
 
   #holdSplit(key: string, inbound: Inbound, handlers: ChannelHandlers): void {
     const timer = setTimeout(() => this.#flushSplit(key, handlers), SPLIT_TEXT_WAIT_MS);
