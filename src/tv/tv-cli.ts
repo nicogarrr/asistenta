@@ -26,6 +26,7 @@ import {
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 import { readNeighborMac } from './neighbor-mac.js';
 import { findTv, parseRegistry, registryToJson, upsertTv, validateTvName } from './registry.js';
+import { rokuDeviceInfo } from './roku.js';
 import { withoutTvPlace } from './target.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { sendWakeOnLan, validateTvMac } from './wol.js';
@@ -115,6 +116,11 @@ async function requirePaired(): Promise<{
       'La tele activa es la Sony y esa orden es de la LG. Cambia con `pa tv usar <ip>` o usa `pa tv sony ...`.',
     );
   }
+  if ((await vaultGet(TV_ACTIVE_BRAND)) === 'roku') {
+    throw new Error(
+      'La tele activa es un Roku y esa orden es de la LG. Al Roku dale órdenes en palabras: pa tv orden "baja el volumen". Cambia de tele con `pa tv usar <ip>`.',
+    );
+  }
   const host = await vaultGet(TV_HOST_KEY);
   const clientKey = await vaultGet(TV_CLIENT_KEY);
   if (!host || !clientKey) {
@@ -139,6 +145,8 @@ export interface TvCliDeps {
   err?: (s: string) => void;
   /** `pa tv mac auto`: MAC de la IP en la tabla de vecinos (tests: falso). */
   neighborMac?: (ip: string) => Promise<string | null>;
+  /** `pa tv setup-roku`: fetch del ECP (tests: falso). */
+  rokuFetch?: typeof fetch;
   /** `pa tv buscar` / `pa tv setup` sin IP: descubrimiento SSDP (tests: falso). */
   discover?: () => Promise<DiscoveredTv[]>;
 }
@@ -149,6 +157,7 @@ function tvLabel(tv: {
   brand?: string | undefined;
 }): string {
   if (tv.brand === 'sony') return `Sony Bravia (${tv.host})`;
+  if (tv.brand === 'roku') return tv.name ? `${tv.name} (Roku, ${tv.host})` : `Roku (${tv.host})`;
   return tv.name ? `${tv.name} (${tv.host})` : tv.host;
 }
 
@@ -467,12 +476,20 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
             ? `Sony Bravia${tv.model ? ` ${tv.model}` : ''}${tv.model ? ` (${sonyModelYearText(tv.model)})` : ''}`
             : (tv.name ?? 'sin nombre'),
           ...(tv.brand === 'sony' ? [] : tv.model ? [tv.model] : []),
-          tv.glasshouse ? 'rooteada (Glasshouse)' : tv.brand === 'sony' ? 'IP Control' : 'webOS',
+          tv.glasshouse
+            ? 'rooteada (Glasshouse)'
+            : tv.brand === 'sony'
+              ? 'IP Control'
+              : tv.brand === 'roku'
+                ? 'Roku (ECP)'
+                : 'webOS',
           findTv(known, tv.ip)
             ? 'ya emparejada'
             : tv.brand === 'sony'
               ? `emparejar: pa tv setup-sony ${tv.ip}`
-              : `emparejar: pa tv setup ${tv.ip}`,
+              : tv.brand === 'roku'
+                ? `guardar: pa tv setup-roku ${tv.ip}`
+                : `emparejar: pa tv setup ${tv.ip}`,
         ];
         out(`${partes.join('  ·  ')}\n`);
       }
@@ -516,8 +533,13 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
           tv.host === active ? '(activa)' : '        ',
           tv.host,
           tv.brand === 'sony' ? 'Sony' : (tv.name ?? 'sin nombre'),
+          ...(tv.brand === 'roku' ? ['Roku'] : []),
           ...(tv.model ? [tv.model] : []),
-          tv.secure === '1' ? 'cifrada' : 'sin cifrar',
+          tv.brand === 'roku'
+            ? 'sin emparejar (ECP)'
+            : tv.secure === '1'
+              ? 'cifrada'
+              : 'sin cifrar',
           ...(tv.mac ? [`MAC ${tv.mac}`] : []),
         ];
         process.stdout.write(`${partes.join('  ')}\n`);
@@ -542,13 +564,62 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       await vaultSetMany({
         [TV_HOST_KEY]: tv.host,
         [TV_ACTIVE_BRAND]: tv.brand ?? 'lg',
-        ...(tv.brand === 'sony'
+        ...(tv.brand === 'sony' || tv.brand === 'roku'
           ? {}
           : { [TV_CLIENT_KEY]: tv.clientKey, [TV_SECURE_KEY]: tv.secure }),
         ...(tv.mac ? { [TV_MAC_KEY]: tv.mac } : {}),
       });
       process.stdout.write(
-        `Tele activa: ${tv.brand === 'sony' ? `Sony Bravia (${tv.host})` : tv.name ? `${tv.name} (${tv.host})` : tv.host}.\n`,
+        `Tele activa: ${tv.brand === 'sony' ? `Sony Bravia (${tv.host})` : tv.brand === 'roku' ? tvLabel(tv) : tv.name ? `${tv.name} (${tv.host})` : tv.host}.\n`,
+      );
+      return 0;
+    }
+    case 'setup-roku': {
+      const out = deps.out ?? ((s: string) => void process.stdout.write(s));
+      const err = deps.err ?? ((s: string) => void process.stderr.write(s));
+      const hostArg = rest.find((a) => !a.startsWith('--'))?.trim();
+      let host: string;
+      try {
+        if (!hostArg) throw new Error('uso: pa tv setup-roku <ip>   (Roku encendido, misma wifi)');
+        host = assertTvHost(hostArg);
+      } catch (e) {
+        err(`${e instanceof Error ? e.message : String(e)}\n`);
+        return 2;
+      }
+      let info: Awaited<ReturnType<typeof rokuDeviceInfo>>;
+      try {
+        info = await rokuDeviceInfo(host, deps.rokuFetch ? { fetchImpl: deps.rokuFetch } : {});
+      } catch (e) {
+        err(`${e instanceof Error ? e.message : String(e)}\n`);
+        return 1;
+      }
+      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
+      const list = await loadKnownTvs();
+      const prev = findTv(list, host);
+      await vaultSet(
+        TV_REGISTRY_KEY,
+        registryToJson(
+          upsertTv(list, {
+            host,
+            brand: 'roku',
+            clientKey: '',
+            secure: '1',
+            ...((prev?.name ?? info.name) ? { name: prev?.name ?? info.name ?? '' } : {}),
+            ...(info.model ? { model: info.model } : {}),
+            ...(info.serial ? { uuid: `roku-${info.serial.toLowerCase()}` } : {}),
+            pairedAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      // Sin ninguna tele activa, el Roku pasa a serlo; si ya hay una, se queda como estaba.
+      const becameActive = !(await vaultGet(TV_HOST_KEY));
+      if (becameActive) await vaultSetMany({ [TV_HOST_KEY]: host, [TV_ACTIVE_BRAND]: 'roku' });
+      const label = tvLabel({ host, brand: 'roku', name: prev?.name ?? info.name });
+      out(
+        `Guardado ${label}${info.isTv ? '' : ' (es un reproductor, no una tele: el volumen depende de la tele o la barra)'}. ` +
+          (becameActive
+            ? 'Es la tele activa.\n'
+            : `Nómbralo en las órdenes («apaga la tele del ${prev?.name ?? info.name ?? 'roku'}») o hazlo el activo con: pa tv usar ${host}\n`),
       );
       return 0;
     }
