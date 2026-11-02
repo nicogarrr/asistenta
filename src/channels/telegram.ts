@@ -483,6 +483,26 @@ export class TelegramChannel implements ChannelAdapter {
     // id even though there is nothing to say about it.
     // Un sticker, vídeo, ubicación, contacto o encuesta sin texto se perdía en
     // silencio y el usuario esperaba una respuesta que nunca llegaba. Ahora se dice.
+    // Un vídeo dentro de un álbum de fotos: antes recibía su propio aviso suelto y
+    // las fotos su turno aparte. Ahora se une al álbum, con un solo aviso.
+    const albumId = (msg as { media_group_id?: string }).media_group_id;
+    if (
+      albumId &&
+      ('video' in msg || 'animation' in msg) &&
+      !inbound.photoFileId &&
+      !inbound.audioFileId &&
+      !inbound.documentFileId
+    ) {
+      this.#holdAlbum(`${inbound.chatId}:${albumId}`, inbound, handlers, () =>
+        ctx
+          .reply(ALBUM_VIDEO_NOTE, {
+            message_thread_id: msg.message_thread_id,
+            reply_to_message_id: msg.message_id,
+          } as never)
+          .catch(() => {}),
+      );
+      return;
+    }
     const unsupported = unsupportedKindNote(msg);
     if (
       unsupported &&
@@ -594,7 +614,13 @@ export class TelegramChannel implements ChannelAdapter {
   /** Álbumes de fotos a la espera de su última foto (chat:media_group_id). */
   readonly #albumHeld = new Map<
     string,
-    { inbound: Inbound; timer: ReturnType<typeof setTimeout> }
+    {
+      inbound: Inbound;
+      timer: ReturnType<typeof setTimeout>;
+      /** Vídeos del álbum (no se ven) y su aviso, que sale una sola vez. */
+      videos?: number;
+      videoNotice?: () => Promise<unknown>;
+    }
   >();
 
   /**
@@ -602,18 +628,30 @@ export class TelegramChannel implements ChannelAdapter {
    * ficheros, y el texto si venía en otro. Sale como un solo turno cuando deja de
    * llegar ninguno.
    */
-  #holdAlbum(key: string, inbound: Inbound, handlers: ChannelHandlers): void {
+  #holdAlbum(
+    key: string,
+    inbound: Inbound,
+    handlers: ChannelHandlers,
+    videoNotice?: () => Promise<unknown>,
+  ): void {
     const held = this.#albumHeld.get(key);
     const timer = setTimeout(() => this.#flushAlbum(key, handlers), ALBUM_WAIT_MS);
     if (!held) {
-      this.#albumHeld.set(key, { inbound, timer });
+      this.#albumHeld.set(key, { inbound, timer, videos: videoNotice ? 1 : 0, videoNotice });
       return;
     }
     clearTimeout(held.timer);
     held.timer = timer;
+    if (videoNotice) {
+      held.videos = (held.videos ?? 0) + 1;
+      held.videoNotice ??= videoNotice;
+    }
     const first = held.inbound;
     const more = first.albumPhotoFileIds ?? [];
-    if (inbound.photoFileId && more.length < ALBUM_MAX_PHOTOS - 1) {
+    if (inbound.photoFileId && !first.photoFileId) {
+      // El álbum empezó por un vídeo: la primera foto pasa a ser la principal.
+      first.photoFileId = inbound.photoFileId;
+    } else if (inbound.photoFileId && more.length < ALBUM_MAX_PHOTOS - 1) {
       first.albumPhotoFileIds = [...more, inbound.photoFileId];
     }
     const docs = first.albumDocuments ?? [];
@@ -636,7 +674,14 @@ export class TelegramChannel implements ChannelAdapter {
     if (!held) return;
     clearTimeout(held.timer);
     this.#albumHeld.delete(key);
-    void Promise.resolve(handlers.onMessage(held.inbound)).catch((err: unknown) => {
+    const first = held.inbound;
+    if (held.videos) {
+      // Un solo aviso por álbum. Si solo traía vídeos sin texto, no hay turno.
+      void held.videoNotice?.();
+      if (!first.text && !first.photoFileId) return;
+      first.albumVideos = held.videos;
+    }
+    void Promise.resolve(handlers.onMessage(first)).catch((err: unknown) => {
       handlers.log('error', 'held album failed', { error: String(err) });
     });
   }
@@ -2195,6 +2240,9 @@ const SPLIT_TEXT_WAIT_MS = 1500;
 const ALBUM_WAIT_MS = 1200;
 /** Un álbum de Telegram tiene como mucho 10 fotos. */
 const ALBUM_MAX_PHOTOS = 10;
+/** Aviso único de un álbum con vídeos: las fotos y el texto sí se leen. */
+export const ALBUM_VIDEO_NOTE =
+  'Aún no puedo ver vídeos ni GIF: del álbum te contesto a las fotos y al texto.';
 
 /** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
 export const EDITED_MESSAGE_NOTE =

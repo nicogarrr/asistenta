@@ -47,6 +47,8 @@ export interface Inbound {
    * media_group_id): llegan en el mismo turno que `photoFileId`, también perezosas.
    */
   albumPhotoFileIds?: string[];
+  /** Vídeos o GIF que traía el álbum y no se ven (ya avisado una vez en el chat). */
+  albumVideos?: number;
   /**
    * Voice note or audio file, also fetched lazily. Telegram voice notes are
    * ogg/opus at 16-48kbps; the mime type matters because it picks the decoder

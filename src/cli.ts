@@ -6696,6 +6696,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           );
         documentNote = notes.filter(Boolean).join('\n');
       }
+      // Los vídeos del álbum no se ven: el modelo lo sabe y no habla de ellos como vistos.
+      if (inbound.albumVideos) {
+        documentNote = [documentNote, albumVideosNote(inbound.albumVideos)]
+          .filter(Boolean)
+          .join('\n');
+      }
       // Un documento (y cada uno más de un álbum: varios ficheros enviados de una vez)
       // se lee e indexa igual; antes cada fichero del álbum era un turno suelto.
       const indexDocument = async (doc: InboundDocument): Promise<string> => {
@@ -8586,6 +8592,12 @@ export function inboundDocuments(inbound: Inbound): InboundDocument[] {
     },
     ...(inbound.albumDocuments ?? []).map((d) => ({ ...d, ref: d.fileId })),
   ];
+}
+
+/** Nota para el modelo: el álbum traía vídeos o GIF que no se ven. */
+export function albumVideosNote(count: number): string {
+  const what = count === 1 ? 'un vídeo o GIF' : `${count} vídeos o GIF`;
+  return `[Álbum: traía también ${what} que no puedo ver; solo vi las fotos y el texto.]`;
 }
 
 /**
