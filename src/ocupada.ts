@@ -9,6 +9,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeFileReplacing } from './fs-tmp.js';
+import { sliceSafe } from './text.js';
 
 export const BUSY_DIR = 'autoupdate';
 export const BUSY_FILE = 'ocupada.json';
@@ -112,14 +113,16 @@ function previousOpenItems(file: string): BusyItem[] {
 /** Abre un turno o una aprobación; la función devuelta lo cierra (una sola vez). */
 export function busyBegin(kind: BusyKind, label = ''): () => void {
   counts[kind] += 1;
-  const item: BusyItem = { kind, label: label.slice(0, 80), since: new Date().toISOString() };
+  const item: BusyItem = { kind, label: sliceSafe(label, 80), since: new Date().toISOString() };
   open.add(item);
   write();
   let isOpen = true;
   return () => {
     if (!isOpen) return;
     isOpen = false;
-    open.delete(item);
+    // Ya liberado por /stop (releaseBusyOpenedBefore): descontar otra vez dejaba el
+    // contador por debajo de lo real con otro turno abierto.
+    if (!open.delete(item)) return;
     counts[kind] = Math.max(0, counts[kind] - 1);
     write();
   };

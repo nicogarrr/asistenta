@@ -9,6 +9,8 @@ export interface AltavozInbound {
   text: string;
   audioFileId?: string;
   audioMimeType?: string;
+  /** Resto de audios enviados juntos (álbum): suenan detrás del primero. */
+  albumAudios?: ReadonlyArray<{ fileId: string; mimeType?: string }>;
 }
 
 export interface AltavozInboundDeps {
@@ -111,24 +113,37 @@ export function routeInboundToAltavoz(
 ): AltavozInboundResult {
   const mode = altavozTarget(inbound, deps);
   if (!mode || !inbound.audioFileId) return 'skipped';
-  const fileId = inbound.audioFileId;
-  const mimeType = inbound.audioMimeType ?? 'audio/ogg';
-  const queued = deps.player.enqueue(
-    mode,
-    async () => {
-      const bytes = await deps.download(fileId).catch(() => null);
-      return bytes ? { bytes, mimeType } : null;
-    },
-    (err) => {
-      const why = err instanceof Error ? err.message : String(err);
-      deps.reply(`🔇 No he podido soltarla en el altavoz: ${why}`);
-    },
-    deps.key,
-    (text) => deps.reply(text),
-  );
-  if (!queued) {
-    deps.reply('Hay demasiadas notas en cola en el altavoz; esta no la suelto.');
-    return 'full';
+  // Varios audios enviados juntos (álbum) suenan todos, en orden: antes solo el primero,
+  // y en modo megáfono los demás ni sonaban ni se transcribían.
+  const notes = [
+    { fileId: inbound.audioFileId, mimeType: inbound.audioMimeType },
+    ...(inbound.albumAudios ?? []),
+  ];
+  for (const [i, note] of notes.entries()) {
+    const mimeType = note.mimeType ?? 'audio/ogg';
+    const queued = deps.player.enqueue(
+      mode,
+      async () => {
+        const bytes = await deps.download(note.fileId).catch(() => null);
+        return bytes ? { bytes, mimeType } : null;
+      },
+      (err) => {
+        const why = err instanceof Error ? err.message : String(err);
+        deps.reply(`🔇 No he podido soltarla en el altavoz: ${why}`);
+      },
+      deps.key,
+      (text) => deps.reply(text),
+    );
+    if (queued) continue;
+    if (i === 0) {
+      deps.reply('Hay demasiadas notas en cola en el altavoz; esta no la suelto.');
+      return 'full';
+    }
+    const left = notes.length - i;
+    deps.reply(
+      `Hay demasiadas notas en cola en el altavoz; ${left === 1 ? 'la última no la suelto' : `las ${left} últimas no las suelto`}.`,
+    );
+    break;
   }
   return 'queued';
 }
