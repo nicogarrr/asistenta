@@ -12,7 +12,8 @@
  * - el mensaje nombra la tele («…de la tele», «en la tv») o una tele conocida
  *   por su nombre («en el salón»), o
  * - hace menos de 3 min hubo otra orden de tele (estás navegando), y no es un
- *   «ok/vale/sí» suelto ni abrir una app que no es de tele.
+ *   «ok/vale/sí» suelto ni abrir una app que no es de tele, o
+ * - es «pon X en YouTube/Netflix» y hay una tele configurada.
  * Nunca con hora o condición («a las 9», «cuando…»), ni si nombra el PC.
  */
 import { APP_ALIASES, normalizeTvText } from './apps.js';
@@ -35,7 +36,12 @@ export interface TvFastPathInput {
   lastTvOrderAt: number | null;
   /** Nombres de las teles conocidas («salón», «dormitorio»). */
   tvNames?: readonly string[];
+  /** Hay una tele configurada (activa o en el registro). */
+  hasTv?: boolean;
 }
+
+/** «pon …», «ponme …», «reproduce …»: poner algo a ver, no buscarlo en el PC. */
+const PLAY_VERB = /^\s*(?:pon|ponme|reproduce|reproduceme)\b/i;
 
 function namesKnownTv(text: string, names: readonly string[]): boolean {
   const t = ` ${normalizeTvText(text)} `;
@@ -74,6 +80,11 @@ export function tvFastPathIntent(input: TvFastPathInput): TvIntent | null {
   const intent = parseTvCommand(text) ?? parseTvCommand(withoutTvPlace(text));
   if (!intent) return null;
   if (MENTIONS_TV.test(text)) return intent;
+  // «pon en YouTube Bailando», «pon el tráiler de Dune en Netflix»: con una
+  // tele configurada y sin nombrar el PC, es para verlo en la tele. Antes iba
+  // al modelo y en la tele solo podía abrir la app de YouTube, sin buscar.
+  // «busca X en YouTube» sin más puede ser del navegador: sigue al modelo.
+  if (intent.action === 'search' && input.hasTv && PLAY_VERB.test(text)) return intent;
   const recent =
     input.lastTvOrderAt !== null &&
     input.now >= input.lastTvOrderAt &&
