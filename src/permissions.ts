@@ -1580,7 +1580,7 @@ export class Gate {
       this.#isFactoryInstall(call) ||
       this.#isGoalActivate(call) ||
       this.#isGestionEjecutar(call) ||
-      (call.tool === 'shell' && DESTRUCTIVE.test(argString(call.args, 'command'))) ||
+      (call.tool === 'shell' && isRiskyShell(argString(call.args, 'command'))) ||
       // Guardar o reescribir una habilidad es una instrucción PERSISTENTE del
       // agente: justo lo que una página o un resumen inyectado querrían cambiar.
       (call.tool === 'skills' && ['save', 'improve'].includes(argString(call.args, 'action')))
@@ -1799,7 +1799,7 @@ export class Gate {
     // destructivo ni instalar nada: eso pregunta comando a comando.
     if (call.tool === 'shell') {
       const command = argString(call.args, 'command');
-      if (DESTRUCTIVE.test(command) || SHELL_INSTALL.test(command)) return false;
+      if (isRiskyShell(command)) return false;
     }
     if (this.#isPaymentConfirmation(call)) return false;
     // Un atajo del sistema (Win+R abre «Ejecutar», Win+X el menú de administración,
@@ -2682,6 +2682,43 @@ export class Gate {
  */
 const SHELL_INSTALL =
   /(^|[;&|]\s*)(npm|pnpm|yarn|bun)(\.cmd|\.exe)?\s+(install|i|ci|add)\b|(^|[;&|]\s*)pip\d?(\.exe)?\s+install\b|(^|[;&|]\s*)winget\s+install\b/i;
+
+/**
+ * Lo que la regla de Nico («lo destructivo e instalar cosas preguntan siempre») cubre
+ * pero DESTRUCTIVE/SHELL_INSTALL no veían (revisión de #1881, 2-nov-2026): con un
+ * comando aprobado, la ventana de 90 s dejaba pasar sin preguntar `ri -r -fo`,
+ * `rd /s /q`, `npx paquete`, `python -m pip install`, bajar un script y ejecutarlo,
+ * `schtasks /create`, `reg add …\Run` o escribir en `$PROFILE`, también tras leer una
+ * web. Nada de esto es «un shell de diagnóstico»: fuera de la ventana y, tras leer
+ * contenido externo, pregunta aunque haya «Siempre» o control total. Solo endurece.
+ */
+function isRiskyShell(command: string): boolean {
+  return DESTRUCTIVE.test(command) || SHELL_INSTALL.test(command) || SHELL_NO_WINDOW.test(command);
+}
+
+const SHELL_NO_WINDOW = new RegExp(
+  [
+    // Borrar con alias de PowerShell/cmd o desde código.
+    String.raw`(^|[\s;&|(])(ri|rd|erase|del|rm)\s`,
+    String.raw`\b(Clear-Content|Remove-ItemProperty|Clear-RecycleBin|Format-Volume|Stop-Computer|Restart-Computer|shutdown(\.exe)?)\b`,
+    String.raw`\b(rmtree|os\.remove|os\.unlink|unlinkSync|rmSync|rimraf)\b`,
+    // Código en línea o en otro intérprete: lo que corre no se ve en el comando.
+    String.raw`\b(python\d?|py|node|pwsh|powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?\s+[^;|&]*?(^|\s)(-c|-e|-p|--eval|--print|-Command|-EncodedCommand|-enc|-File|/c|/k)(\s|$)`,
+    String.raw`-ExecutionPolicy\s+(Bypass|Unrestricted)`,
+    // Instalar o ejecutar paquetes sin «install».
+    String.raw`\b(npx|bunx)\b|\b(pnpm|yarn)\s+dlx\b|-m\s+pip\s+install\b|\b(choco|scoop)\s+install\b`,
+    String.raw`\b(Install-Module|Install-Package|Install-Script|Add-AppxPackage|msiexec)\b|\bwinget\s+upgrade\b`,
+    // Persistencia: tareas programadas, registro, servicios, perfil, inicio.
+    String.raw`\bschtasks(\.exe)?\b[^;|&]*/create\b|\bRegister-ScheduledTask\b`,
+    String.raw`\breg(\.exe)?\s+(add|import|load|copy|restore)\b|\b(Set-ItemProperty|New-Service)\b|\bsc(\.exe)?\s+(create|config)\b`,
+    String.raw`\$PROFILE\b|shell:startup|\\Startup\\|\\Start Menu\\`,
+    // Bajar un archivo y lanzar cosas.
+    String.raw`\b(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|wget|curl(\.exe)?|Start-BitsTransfer|bitsadmin)\b[^;|&]*\s(-OutFile|-o|-O|--output|/transfer)(\s|$)`,
+    String.raw`\b(Start-Process|saps|Invoke-Item)\b|(^|[\s;&|(])(start|ii)\s`,
+    String.raw`\.(ps1|bat|vbs|hta|scr)\b`,
+  ].join('|'),
+  'i',
+);
 
 const DESTRUCTIVE =
   /\b(rm\s+-[rf]|Remove-Item|rmdir|del\s+\/|format\s|certutil|New-ItemProperty|Set-ExecutionPolicy|reg\s+delete|diskpart|takeown|icacls|Invoke-Expression|iex\s|curl\s+.*\|\s*(sh|bash)|wget\s+.*\|\s*(sh|bash))\b/i;
