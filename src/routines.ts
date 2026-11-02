@@ -1,6 +1,6 @@
 import { Cron } from 'croner';
 import { loadConfig } from './config.js';
-import { localTimeZone } from './datecontext.js';
+import { localDay, localTimeZone } from './datecontext.js';
 import {
   type Routine,
   type RoutineParam,
@@ -8,6 +8,7 @@ import {
   type Store,
   validateRoutineParams,
 } from './db.js';
+import { createHolidayCheck, skipsHolidays } from './festivos-rutinas.js';
 import { normalizeDomain } from './gestor/login.js';
 import { log, redact } from './log.js';
 import { withTimeout } from './utils.js';
@@ -248,6 +249,11 @@ export interface RoutineRunnerDeps {
    * window (half the period, 2 min–2 h). Off unless the caller turns it on.
    */
   catchUp?: boolean;
+  /**
+   * ¿Es festivo ese día local («YYYY-MM-DD»)? Solo se pregunta para rutinas y
+   * recordatorios «excepto festivos». Por defecto, los datos de la herramienta de festivos.
+   */
+  isHoliday?: (day: string) => Promise<boolean>;
 }
 
 export interface ScheduledRoutine {
@@ -502,6 +508,7 @@ export class RoutineRunner {
   readonly #jobs = new Map<string, { job: Cron; schedule: string; startAt: string | null }>();
   readonly #inFlight = new Set<string>();
   readonly #catchUp: boolean;
+  readonly #isHoliday: (day: string) => Promise<boolean>;
   #catchUpTimer: ReturnType<typeof setInterval> | null = null;
   /** Slots already recovered or reported, so a slot is handled once. */
   readonly #handledSlots = new Set<string>();
@@ -516,6 +523,7 @@ export class RoutineRunner {
     this.#timeoutMs = deps.timeoutMs ?? loadConfig().runTimeoutMs;
     this.#now = deps.now ?? (() => new Date());
     this.#catchUp = deps.catchUp ?? false;
+    this.#isHoliday = deps.isHoliday ?? createHolidayCheck({ now: this.#now });
   }
 
   start(): void {
@@ -694,10 +702,10 @@ export class RoutineRunner {
               name: routine.name,
               slot: localStamp(slot),
             });
-            void this.#runRoutine(fresh, { scheduledFor: slot });
+            void this.#runScheduled(fresh, slot, { scheduledFor: slot });
             return;
           }
-          void this.#runRoutine(fresh);
+          void this.#runScheduled(fresh, slot ?? this.#now());
         },
       );
       expected = job.nextRun();
@@ -762,8 +770,41 @@ export class RoutineRunner {
         name: routine.name,
         slot: localStamp(missed.slot),
       });
-      void this.#runRoutine(routine, { scheduledFor: missed.slot });
+      void this.#runScheduled(routine, missed.slot, { scheduledFor: missed.slot });
     }
+  }
+
+  /**
+   * Un disparo del horario (a su hora, con retraso o recuperado). «Excepto festivos»: si
+   * el día de ese hueco es festivo no suena, y no se recupera otro día. «Hazlo ahora»
+   * (`fire`) no pasa por aquí: lo pide el dueño.
+   */
+  async #runScheduled(routine: Routine, slot: Date, late?: { scheduledFor: Date }): Promise<void> {
+    if (skipsHolidays(`${routine.name} ${routine.prompt ?? ''}`)) {
+      const day = localDay(slot);
+      let holiday = false;
+      try {
+        holiday = await this.#isHoliday(day);
+      } catch (err) {
+        log.warn('festivos: no pude mirar si hoy es festivo; la rutina suena', {
+          scope: routine.scope,
+          name: routine.name,
+          ...redact({ err }),
+        });
+      }
+      if (holiday) {
+        const handled = `${routineKey(routine.scope, routine.name)}@${slot.toISOString()}`;
+        if (this.#handledSlots.size > 1000) this.#handledSlots.clear();
+        this.#handledSlots.add(handled);
+        log.info('routine skipped: holiday («excepto festivos»)', {
+          scope: routine.scope,
+          name: routine.name,
+          day,
+        });
+        return;
+      }
+    }
+    await this.#runRoutine(routine, late);
   }
 
   async #runRoutine(routine: Routine, late?: { scheduledFor: Date }): Promise<boolean> {

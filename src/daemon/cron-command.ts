@@ -21,6 +21,7 @@ import { programadaEs, scheduleEs } from '../cron/describe-es.js';
 import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
 import { localDay, wallDateMinute } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
+import { festivosQueCuentan, skipsHolidays } from '../festivos-rutinas.js';
 import { GOAL_ROUTINE_PREFIX, goalIdOf, isGoalRoutine } from '../goals/runner.js';
 import type { GoalStore } from '../goals/store.js';
 import {
@@ -539,10 +540,12 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     const live = deps.routineRunner
       .status()
       .find((st) => st.scope === created.scope && st.name === created.name);
+    // «excepto festivos»: se dice qué festivos cuentan (sin comunidad reconocida, solo nacionales).
+    const sinFestivos = skipsHolidays(created.prompt) ? `, excepto ${festivosQueCuentan()}` : '';
     return [
       name !== base
-        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${scheduleEs(created.schedule ?? '') ?? created.schedule}.`
-        : `Rutina "${created.name}" ${programadaEs(created.schedule)}.`,
+        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${scheduleEs(created.schedule ?? '') ?? created.schedule}${sinFestivos}.`
+        : `Rutina "${created.name}" ${programadaEs(created.schedule)}${sinFestivos}.`,
       `Tarea: ${created.prompt}`,
       `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
     ].join('\n');

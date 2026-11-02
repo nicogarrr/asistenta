@@ -1,3 +1,4 @@
+import { skipsHolidays, withoutSkipHolidays } from '../festivos-rutinas.js';
 import { foldAccents } from '../text.js';
 /**
  * Turns how a person asks for a recurring job («resúmeme el día cada mañana a las 8»)
@@ -370,17 +371,20 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     ).test(normalised)
   )
     return null;
-  // «excepto festivos», «salvo los festivos», «los festivos a las 10»: un cron no sabe qué
-  // días son festivos y antes se ignoraba (sonaba también en Navidad). Se pregunta.
+  // «los festivos a las 10»: solo en festivos no cabe en un cron. Se pregunta.
   if (
-    /\b(?:excepto|menos|salvo|quitando|sin contar|que no sean?|no) (?:en )?(?:el |los )?(?:dias? )?festivos?\b/.test(
-      normalised,
-    ) ||
     /^(?:los |todos los |cada )(?:dias )?festivos?\b|\b(?:los|todos los|cada) (?:dias )?festivos? a las?\b/.test(
       normalised,
     )
   )
     return null;
+  // «excepto festivos», «salvo los festivos»: el horario es el del resto de la frase y la
+  // tarea guarda la coletilla; al sonar, la rutina mira si ese día es festivo y no suena
+  // (festivos-rutinas.ts). Antes se preguntaba (#1721).
+  if (skipsHolidays(normalised)) {
+    const rest = parseNaturalCore(withoutSkipHolidays(normalised));
+    return rest ? { schedule: rest.schedule, prompt: text.trim() } : null;
+  }
   // «cada segundo martes», «el primer lunes de mes», «el último viernes»: tampoco cabe en
   // un cron. Antes «cada segundo martes» sonaba todos los días.
   if (
