@@ -17,9 +17,13 @@ import { dotEnvFiles } from './envfile.js';
 /** Marca de «ya migrado»: un pin nuevo a mano con la marca presente se respeta. */
 export const PRESET_MIGRATION_MARKER = '# pa:preset-migrado-a-opencode-go';
 
-const PIN_LOCAL = /^[ \t]*PA_PROVIDER_PRESET[ \t]*=[ \t]*opencode-local[ \t]*$/m;
+// `(\r?)`: un .env guardado en Windows (Bloc de notas) va en CRLF; se conserva el `\r`
+// para no dejar líneas sueltas con LF en medio del archivo.
+const PIN_LOCAL = /^[ \t]*PA_PROVIDER_PRESET[ \t]*=[ \t]*opencode-local[ \t]*(\r?)$/m;
 /** El modelo -free del montaje local/zen roto: con PA_MODEL fijado pisaría el default. */
-const PIN_MODEL_FREE = /^[ \t]*PA_MODEL[ \t]*=[ \t]*deepseek-v4\.1-flash-free[ \t]*$/m;
+const PIN_MODEL_FREE = /^[ \t]*PA_MODEL[ \t]*=[ \t]*deepseek-v4\.1-flash-free[ \t]*(\r?)$/m;
+const MARKER_NOTE =
+  '(2-nov-2026: DeepSeek V4.1 Flash por OpenCode Go; para volver al serve local, borra esta marca y pon opencode-local)';
 
 export interface PresetMigrationDeps {
   readFile?: (path: string) => Buffer;
@@ -51,9 +55,17 @@ export function migrateLocalPresetPin(deps: PresetMigrationDeps = {}): string | 
     if (!PIN_LOCAL.test(text) && !PIN_MODEL_FREE.test(text)) continue;
     let out = text.replace(
       PIN_LOCAL,
-      `PA_PROVIDER_PRESET=opencode\n${PRESET_MIGRATION_MARKER} (2-nov-2026: DeepSeek V4.1 Flash por OpenCode Go; para volver al serve local, borra esta marca y pon opencode-local)`,
+      (_m, cr: string) =>
+        `PA_PROVIDER_PRESET=opencode${cr}\n${PRESET_MIGRATION_MARKER} ${MARKER_NOTE}${cr}`,
     );
-    out = out.replace(PIN_MODEL_FREE, 'PA_MODEL=deepseek-v4.1-flash');
+    out = out.replace(PIN_MODEL_FREE, (_m, cr: string) => `PA_MODEL=deepseek-v4.1-flash${cr}`);
+    // La marca va SIEMPRE (también si solo se cambió PA_MODEL): un -free puesto a
+    // conciencia después de la migración no se vuelve a pisar en cada arranque.
+    if (!out.includes(PRESET_MIGRATION_MARKER)) {
+      const eol = text.includes('\r\n') ? '\r\n' : '\n';
+      if (out.length > 0 && !out.endsWith('\n')) out += eol;
+      out += `${PRESET_MIGRATION_MARKER} ${MARKER_NOTE}${eol}`;
+    }
     try {
       write(file, out);
     } catch {
