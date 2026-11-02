@@ -38,6 +38,8 @@ export interface TurnOutput {
   file?(f: TurnFile): boolean;
   /** Un especialista terminó una tarea delegada (nombre canónico, ver core/specialists). */
   specialist?(name: string): void;
+  /** Un especialista pidió permiso y no se le dio ninguno: no hizo nada. */
+  specialistDenied?(name: string): void;
 }
 
 /** Un archivo enviado por un turno: los bytes y el nombre con que se descarga. */
@@ -106,25 +108,47 @@ export function imageDataUrl(bytes: Buffer): string | null {
   return null;
 }
 
-/**
- * Línea final de la respuesta del panel con los especialistas que trabajaron, en
- * orden y sin repetir; un nombre que no está en el registro no sale. `null` si ninguno.
- */
-export function specialistNote(names: readonly string[]): string | null {
+function titlesOf(names: readonly string[]): string[] {
   const titles: string[] = [];
   for (const name of names) {
     const title = resolveSpecialist(name)?.title;
     if (title && !titles.includes(title)) titles.push(title);
   }
-  if (titles.length === 0) return null;
-  if (titles.length === 1) return `🧩 Lo hizo el especialista ${titles[0]}.`;
-  const list = `${titles.slice(0, -1).join(', ')} y ${titles[titles.length - 1]}`;
-  return `🧩 Lo hicieron los especialistas ${list}.`;
+  return titles;
+}
+
+function joinTitles(titles: readonly string[]): string {
+  return `${titles.slice(0, -1).join(', ')} y ${titles[titles.length - 1]}`;
+}
+
+/**
+ * Línea final de la respuesta del panel con los especialistas que trabajaron, en
+ * orden y sin repetir; un nombre que no está en el registro no sale. `null` si ninguno.
+ * `denied`: los que pidieron permiso y no se les dio ninguno; salen aparte, con una
+ * línea que dice que no hicieron nada (salvo que otra delegación suya sí hiciera algo).
+ */
+export function specialistNote(
+  names: readonly string[],
+  denied: readonly string[] = [],
+): string | null {
+  const titles = titlesOf(names);
+  const idle = titlesOf(denied).filter((t) => !titles.includes(t));
+  const lines: string[] = [];
+  if (titles.length === 1) lines.push(`🧩 Lo hizo el especialista ${titles[0]}.`);
+  else if (titles.length > 1) lines.push(`🧩 Lo hicieron los especialistas ${joinTitles(titles)}.`);
+  if (idle.length === 1) lines.push(`🧩 El especialista ${idle[0]} no hizo nada: no tuvo permiso.`);
+  else if (idle.length > 1)
+    lines.push(`🧩 Los especialistas ${joinTitles(idle)} no hicieron nada: no tuvieron permiso.`);
+  return lines.length > 0 ? lines.join('\n') : null;
 }
 
 /** El texto con la línea del especialista al final (Telegram); igual si no trabajó ninguno. */
-export function withSpecialistNote(text: string, names: readonly string[]): string {
-  const note = specialistNote(names);
+export function withSpecialistNote(
+  text: string,
+  names: readonly string[],
+  denied: readonly string[] = [],
+): string {
+  const note = specialistNote(names, denied);
   if (!note || text.includes(note)) return text;
   return `${text}\n\n${note}`.trim();
 }
@@ -152,6 +176,7 @@ export async function runPanelChat<T extends PanelChatThread>(
     const images: string[] = [];
     const files: PanelFileLink[] = [];
     const specialists: string[] = [];
+    const deniedSpecialists: string[] = [];
     let dropped = 0;
     const direct = deps.command?.(thread, text) ?? null;
     if (direct !== null) return { text: direct };
@@ -176,8 +201,11 @@ export async function runPanelChat<T extends PanelChatThread>(
       specialist: (name) => {
         specialists.push(name);
       },
+      specialistDenied: (name) => {
+        deniedSpecialists.push(name);
+      },
     });
-    const worked = specialistNote(specialists);
+    const worked = specialistNote(specialists, deniedSpecialists);
     if (worked) notes.push(worked);
     if (dropped > 0) notes.push(`(${dropped} imagen(es) más no se muestran en el panel)`);
     const reply = [answer.trim(), ...notes].filter(Boolean).join('\n\n');

@@ -38,6 +38,6 @@ describe('cableado en cli.ts', () => {
     expect(source).toContain(
       "if (!out && inbound.channel === 'telegram' && result.error === null)",
     );
-    expect(source).toContain('withSpecialistNote(result.text, specialistsUsed)');
+    expect(source).toContain('withSpecialistNote(result.text, specialistsUsed, specialistsDenied)');
   });
 });

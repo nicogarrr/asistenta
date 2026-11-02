@@ -53,6 +53,8 @@ export interface DelegateDetails {
   specialist?: string;
   /** Nombre pedido que no existe: lo hizo un subagente generico. */
   unknownSpecialist?: string;
+  /** Pidió permiso para alguna acción y no se le dio ninguno: no hizo lo que pidió. */
+  denied?: true;
   error?: string;
 }
 
@@ -86,6 +88,14 @@ export function emptyResultNotice(specialistTitle?: string): string {
 }
 
 /**
+ * El especialista pidió permiso para una o más acciones y no se le dio ninguno
+ * (denegadas, retiradas o caducadas): no hizo nada de lo que pidió.
+ */
+export function deniedActionsNotice(specialistTitle: string): string {
+  return `Aviso: el especialista ${specialistTitle} no tuvo permiso para ninguna de las acciones que pidió (denegadas o caducadas), así que no hizo ninguna. No lo des por hecho.`;
+}
+
+/**
  * Crea la tool `delegate` sobre un pool ya configurado. `depthOf` devuelve la
  * profundidad del agente actual (el padre); el pool calcula la del hijo.
  */
@@ -96,7 +106,7 @@ export function createDelegateTool(
   thread?: {
     parentTools: () => readonly AgentTool[];
     /** Pregunta al humano del hilo; solo la usan los especialistas con efectos. */
-    approve?: (question: string) => Promise<boolean>;
+    approve?: (question: string, signal?: AbortSignal) => Promise<boolean>;
   },
 ): AgentTool<ReturnType<typeof DelegateParams>, DelegateDetails> {
   return {
@@ -114,6 +124,19 @@ export function createDelegateTool(
     execute: async (_toolCallId, args, signal) => {
       const specialist =
         args.specialist === undefined ? undefined : resolveSpecialist(args.specialist);
+      // Cuántas preguntas hizo esta delegación y a cuántas se dijo que sí (solo cuenta:
+      // la respuesta del humano pasa tal cual).
+      let asked = 0;
+      let granted = 0;
+      const ask = thread?.approve;
+      const approve = ask
+        ? async (question: string, signal?: AbortSignal) => {
+            asked++;
+            const ok = await ask(question, signal);
+            if (ok === true) granted++;
+            return ok;
+          }
+        : undefined;
       const result = await pool.run({
         task: args.task,
         parentDepth: depthOf(),
@@ -126,7 +149,7 @@ export function createDelegateTool(
           ? {
               context: {
                 parentTools: thread.parentTools,
-                ...(thread.approve ? { approve: thread.approve } : {}),
+                ...(approve ? { approve } : {}),
               },
             }
           : {}),
@@ -137,7 +160,13 @@ export function createDelegateTool(
       // Sin error pero sin texto: se dice como fallo (y sin línea «🧩 Lo hizo…»).
       const empty = result.error === undefined && result.text.trim() === '';
       const error = empty ? emptyResultNotice(specialist?.title) : result.error;
-      const body = error ?? result.text;
+      // Pidió permiso y no se le dio ninguno: no es un «Lo hizo» (ni para el modelo).
+      const denied = error === undefined && specialist !== undefined && asked > 0 && granted === 0;
+      const body =
+        error ??
+        (denied && specialist
+          ? `${result.text}\n\n${deniedActionsNotice(specialist.title)}`
+          : result.text);
       // Un nombre que no existe no debe pasar desapercibido: el modelo lo lee aquí
       // (y no solo en details) para no volver a pedirlo ni creer que lo hizo el bueno.
       const text =
@@ -147,6 +176,7 @@ export function createDelegateTool(
       const details: DelegateDetails = { depth: result.depth };
       if (specialist) details.specialist = specialist.name;
       else if (args.specialist !== undefined) details.unknownSpecialist = args.specialist;
+      if (denied) details.denied = true;
       if (error) details.error = error;
 
       return {

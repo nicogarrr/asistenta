@@ -75,8 +75,21 @@ function delegateSpecialist(tool: string, result: unknown): string | undefined {
   if (tool !== 'delegate') return undefined;
   const details = (result as { details?: unknown } | null | undefined)?.details;
   if (!details || typeof details !== 'object') return undefined;
-  const d = details as { specialist?: unknown; error?: unknown };
-  return typeof d.specialist === 'string' && d.error === undefined ? d.specialist : undefined;
+  const d = details as { specialist?: unknown; error?: unknown; denied?: unknown };
+  return typeof d.specialist === 'string' && d.error === undefined && d.denied !== true
+    ? d.specialist
+    : undefined;
+}
+
+/** Especialista de un `delegate` que pidió permiso y no se le dio ninguno (no hizo nada). */
+function delegateDenied(tool: string, result: unknown): string | undefined {
+  if (tool !== 'delegate') return undefined;
+  const details = (result as { details?: unknown } | null | undefined)?.details;
+  if (!details || typeof details !== 'object') return undefined;
+  const d = details as { specialist?: unknown; error?: unknown; denied?: unknown };
+  return typeof d.specialist === 'string' && d.error === undefined && d.denied === true
+    ? d.specialist
+    : undefined;
 }
 
 /**
@@ -96,6 +109,8 @@ export interface RunHooks {
     blocked: boolean;
     /** Solo `delegate` que llegó a correr: nombre canónico del especialista que lo hizo. */
     specialist?: string;
+    /** `delegate` cuyo especialista pidió permiso y no se le dio ninguno: no hizo nada. */
+    specialistDenied?: string;
   }) => void;
   /**
    * Texto incremental del asistente: un aviso por cada `text_delta` de pi, en
@@ -1347,11 +1362,15 @@ export class PersonalAgent {
             const specialist = event.isError
               ? undefined
               : delegateSpecialist(event.toolName, event.result);
+            const specialistDenied = event.isError
+              ? undefined
+              : delegateDenied(event.toolName, event.result);
             hooks.onToolEnd({
               tool: event.toolName,
               ok: !event.isError,
               blocked: gateBlocked,
               ...(specialist ? { specialist } : {}),
+              ...(specialistDenied ? { specialistDenied } : {}),
             });
           } catch (err) {
             log.warn('tool end hook failed', { err: String(err) });
