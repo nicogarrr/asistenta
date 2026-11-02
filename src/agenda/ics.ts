@@ -276,10 +276,13 @@ export async function loadCalendar(opts: UpcomingOptions): Promise<CalendarSnaps
   ) {
     log.warn('agenda: calendar unavailable', { reason: reasons.join(' ') });
   }
-  const parsed = mergeCalendarEvents(source.local ? parseIcs(source.local, new Date(now)) : [], [
-    ...(source.remote ? parseIcs(source.remote, new Date(now)) : []),
-    ...(source.google ? parseIcs(source.google, new Date(now)) : []),
-  ]);
+  const parsed = mergeCalendarEvents(
+    source.local ? await parseIcs(source.local, new Date(now)) : [],
+    [
+      ...(source.remote ? await parseIcs(source.remote, new Date(now)) : []),
+      ...(source.google ? await parseIcs(source.google, new Date(now)) : []),
+    ],
+  );
   const from = zonedDayStart(now, timeZone);
   // Local midnight `days` calendar days from now, walked by date so a DST change
   // inside the window cannot shift the last day.

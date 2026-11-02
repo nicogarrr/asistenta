@@ -74,8 +74,8 @@ const MIXED = lines(
 const NOW = new Date('2026-03-01T00:00:00Z');
 
 describe('parseIcs', () => {
-  it('reads UTC, TZID, all-day and floating DTSTART into exact instants', () => {
-    const events = parseIcs(MIXED, NOW);
+  it('reads UTC, TZID, all-day and floating DTSTART into exact instants', async () => {
+    const events = await parseIcs(MIXED, NOW);
     expect(events.map((e) => e.id)).toEqual(['utc-1', 'tzid-1', 'allday-1', 'floating-1']);
 
     const utc = events[0] as CalendarEvent;
@@ -106,8 +106,8 @@ describe('parseIcs', () => {
     expect(floating.end.getTime()).toBe(floating.start.getTime());
   });
 
-  it('unfolds RFC 5545 folded lines and unescapes TEXT values', () => {
-    const events = parseIcs(
+  it('unfolds RFC 5545 folded lines and unescapes TEXT values', async () => {
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -132,8 +132,8 @@ describe('parseIcs', () => {
     expect(event.location).toBe('Cafe, Calle Mayor; 4');
   });
 
-  it('unwraps a property that carries parameters and reads TRANSP as busy/free', () => {
-    const events = parseIcs(MIXED, NOW);
+  it('unwraps a property that carries parameters and reads TRANSP as busy/free', async () => {
+    const events = await parseIcs(MIXED, NOW);
     // SUMMARY;LANGUAGE=es:... comes back as {params, val}; the raw object would be
     // rendered as "[object Object]" in the listing.
     expect((events[1] as CalendarEvent).summary).toBe('Reunion de equipo');
@@ -142,8 +142,8 @@ describe('parseIcs', () => {
     expect((events[2] as CalendarEvent).busy).toBe(false);
   });
 
-  it('expands a recurring series and keeps 09:00 local across a DST change', () => {
-    const events = parseIcs(
+  it('expands a recurring series and keeps 09:00 local across a DST change', async () => {
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -169,8 +169,8 @@ describe('parseIcs', () => {
     expect(events[0]?.id).toBe('weekly-1@2026-03-23T08:00:00.000Z');
   });
 
-  it('drops occurrences listed in EXDATE', () => {
-    const events = parseIcs(
+  it('drops occurrences listed in EXDATE', async () => {
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -196,8 +196,8 @@ describe('parseIcs', () => {
     ]);
   });
 
-  it('filters out events that already ended and keeps the ones still running', () => {
-    const events = parseIcs(
+  it('filters out events that already ended and keeps the ones still running', async () => {
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -229,24 +229,24 @@ describe('parseIcs', () => {
     expect(events.map((e) => e.summary)).toEqual(['Still going', 'Tomorrow']);
   });
 
-  it('never throws on input that is not a calendar', () => {
-    expect(parseIcs('', NOW)).toEqual([]);
-    expect(parseIcs('not a calendar at all', NOW)).toEqual([]);
-    expect(parseIcs('<html><body>404</body></html>', NOW)).toEqual([]);
+  it('never throws on input that is not a calendar', async () => {
+    expect(await parseIcs('', NOW)).toEqual([]);
+    expect(await parseIcs('not a calendar at all', NOW)).toEqual([]);
+    expect(await parseIcs('<html><body>404</body></html>', NOW)).toEqual([]);
     // Truncated mid-component: a VEVENT with no DTSTART is skipped, not fatal.
-    expect(parseIcs('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\n', NOW)).toEqual([]);
+    expect(await parseIcs('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\n', NOW)).toEqual([]);
     expect(
-      parseIcs(
+      await parseIcs(
         'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART:not-a-date\r\nEND:VEVENT\r\n',
         NOW,
       ),
     ).toEqual([]);
   });
 
-  it('recovers the rest of a feed when one event makes node-ical reject the document', () => {
+  it('recovers the rest of a feed when one event makes node-ical reject the document', async () => {
     // A duplicated DTSTART throws out of parseICS for the WHOLE document, so a
     // single bad event would otherwise produce an empty agenda.
-    const events = parseIcs(
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -278,10 +278,10 @@ describe('parseIcs', () => {
     expect(events.map((e) => e.summary)).toEqual(['Good one', 'Also good']);
   });
 
-  it('skips a series it cannot enumerate instead of losing the whole agenda', () => {
+  it('skips a series it cannot enumerate instead of losing the whole agenda', async () => {
     // rrule-temporal gives up after 10,000 iterations, so a sub-hourly rule throws
     // out of expandRecurringEvent. It must not take the other events with it.
-    const events = parseIcs(
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -307,10 +307,10 @@ describe('parseIcs', () => {
     expect(events.map((e) => e.summary)).toEqual(['Normal one']);
   });
 
-  it('expands up to the 60 day ceiling and no further', () => {
+  it('expands up to the 60 day ceiling and no further', async () => {
     // NOW is 1 March, so the ceiling lands on 30 April: an event on 29 April is in
     // the window and one on 1 June is not.
-    const events = parseIcs(
+    const events = await parseIcs(
       lines(
         'BEGIN:VCALENDAR',
         'VERSION:2.0',

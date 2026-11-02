@@ -1,11 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { CalendarResponse, EventInstance, VEvent } from 'node-ical';
-// node-ical ships a real ESM entry point (`exports.import` -> node-ical.js) with
-// both named exports and a default namespace object, and its typings are an
-// ambient `declare module 'node-ical'`. Under NodeNext + verbatimModuleSyntax the
-// named imports and `import type` both resolve against that ambient declaration,
-// so there is no default-import interop shim and no `require` path in play.
-import { expandRecurringEvent, parseICS } from 'node-ical';
 import { Type } from 'typebox';
 import {
   type CalendarSources,
@@ -195,6 +189,19 @@ function renderEvent(event: CalendarEvent): string {
   return lines.join('\n');
 }
 
+// node-ical ships a real ESM entry point (`exports.import` -> node-ical.js) with
+// both named exports and a default namespace object, and its typings are an
+// ambient `declare module 'node-ical'`. It is loaded with `import()` (the same ESM
+// entry, no `require` path in play) the first time a feed is parsed: node-ical,
+// rrule-temporal and temporal-polyfill are ~25 modules and ~25 ms that every
+// `pa …` and every daemon start paid at import time even without a calendar.
+type NodeIcal = typeof import('node-ical');
+let icalModule: Promise<NodeIcal> | undefined;
+function loadIcal(): Promise<NodeIcal> {
+  icalModule ??= import('node-ical');
+  return icalModule;
+}
+
 /**
  * Expand one VEVENT into the instances that fall inside the window.
  *
@@ -203,9 +210,9 @@ function renderEvent(event: CalendarEvent): string {
  * for any rule too dense to enumerate, so a single malformed or absurd series
  * would otherwise abort the whole feed and lose every other event with it.
  */
-function expandInstances(event: VEvent, from: Date, to: Date): EventInstance[] {
+function expandInstances(ical: NodeIcal, event: VEvent, from: Date, to: Date): EventInstance[] {
   try {
-    return expandRecurringEvent(event, { from, to, expandOngoing: true });
+    return ical.expandRecurringEvent(event, { from, to, expandOngoing: true });
   } catch {
     return [];
   }
@@ -220,7 +227,7 @@ function expandInstances(event: VEvent, from: Date, to: Date): EventInstance[] {
  * blocks, and a floating DTSTART resolves against whichever one is in scope:
  * dropping it would silently move those events into the host timezone.
  */
-function salvageResponses(text: string): CalendarResponse[] {
+function salvageResponses(ical: NodeIcal, text: string): CalendarResponse[] {
   const responses: CalendarResponse[] = [];
   const parts = text.split(/^BEGIN:VEVENT/m);
   const preamble = parts[0] ?? '';
@@ -228,7 +235,7 @@ function salvageResponses(text: string): CalendarResponse[] {
     const close = part.search(/^END:VEVENT/m);
     const event = close === -1 ? part : part.slice(0, close + 'END:VEVENT'.length);
     try {
-      responses.push(parseICS(`${preamble}BEGIN:VEVENT${event}\nEND:VCALENDAR`));
+      responses.push(ical.parseICS(`${preamble}BEGIN:VEVENT${event}\nEND:VCALENDAR`));
     } catch {
       // This one event is beyond repair; the rest of the feed is still worth having.
     }
@@ -271,15 +278,16 @@ function statusOf(value: unknown): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
-export function parseIcs(text: string, now: Date = new Date()): CalendarEvent[] {
+export async function parseIcs(text: string, now: Date = new Date()): Promise<CalendarEvent[]> {
+  const ical = await loadIcal();
   const events: CalendarEvent[] = [];
   const to = new Date(now.getTime() + MAX_AGENDA_DAYS * DAY_MS);
 
   let responses: CalendarResponse[];
   try {
-    responses = [parseICS(text)];
+    responses = [ical.parseICS(text)];
   } catch {
-    responses = salvageResponses(text);
+    responses = salvageResponses(ical, text);
   }
 
   for (const data of responses) {
@@ -288,7 +296,7 @@ export function parseIcs(text: string, now: Date = new Date()): CalendarEvent[] 
       const event = component;
       if (!(event.start instanceof Date) || Number.isNaN(event.start.getTime())) continue;
 
-      for (const instance of expandInstances(event, now, to)) {
+      for (const instance of expandInstances(ical, event, now, to)) {
         const { start, end } = instance;
         if (!(start instanceof Date) || Number.isNaN(start.getTime())) continue;
         if (!(end instanceof Date) || Number.isNaN(end.getTime())) continue;
@@ -505,9 +513,9 @@ export function createCalendarTool(deps: CalendarSources): AgentTool<typeof Cale
       }
       const now = new Date();
       const horizon = now.getTime() + days * DAY_MS;
-      const events = mergeCalendarEvents(source.local ? parseIcs(source.local, now) : [], [
-        ...(source.remote ? parseIcs(source.remote, now) : []),
-        ...(source.google ? parseIcs(source.google, now) : []),
+      const events = mergeCalendarEvents(source.local ? await parseIcs(source.local, now) : [], [
+        ...(source.remote ? await parseIcs(source.remote, now) : []),
+        ...(source.google ? await parseIcs(source.google, now) : []),
       ]).filter((event) => event.start.getTime() < horizon);
       log.info('calendar agenda', { days, events: events.length });
       return {
