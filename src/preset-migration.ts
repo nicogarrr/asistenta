@@ -18,11 +18,13 @@ import { dotEnvFiles } from './envfile.js';
 export const PRESET_MIGRATION_MARKER = '# pa:preset-migrado-a-opencode-go';
 
 const PIN_LOCAL = /^[ \t]*PA_PROVIDER_PRESET[ \t]*=[ \t]*opencode-local[ \t]*$/m;
+/** El modelo -free del montaje local/zen roto: con PA_MODEL fijado pisaría el default. */
+const PIN_MODEL_FREE = /^[ \t]*PA_MODEL[ \t]*=[ \t]*deepseek-v4\.1-flash-free[ \t]*$/m;
 
 export interface PresetMigrationDeps {
   readFile?: (path: string) => Buffer;
   writeFile?: (path: string, text: string) => void;
-  env?: { PA_PROVIDER_PRESET?: string | undefined };
+  env?: { PA_PROVIDER_PRESET?: string | undefined; PA_MODEL?: string | undefined };
   files?: string[];
 }
 
@@ -46,11 +48,12 @@ export function migrateLocalPresetPin(deps: PresetMigrationDeps = {}): string | 
       continue;
     }
     if (text.includes(PRESET_MIGRATION_MARKER)) continue;
-    if (!PIN_LOCAL.test(text)) continue;
-    const out = text.replace(
+    if (!PIN_LOCAL.test(text) && !PIN_MODEL_FREE.test(text)) continue;
+    let out = text.replace(
       PIN_LOCAL,
       `PA_PROVIDER_PRESET=opencode\n${PRESET_MIGRATION_MARKER} (2-nov-2026: DeepSeek V4.1 Flash por OpenCode Go; para volver al serve local, borra esta marca y pon opencode-local)`,
     );
+    out = out.replace(PIN_MODEL_FREE, 'PA_MODEL=deepseek-v4.1-flash');
     try {
       write(file, out);
     } catch {
@@ -62,5 +65,8 @@ export function migrateLocalPresetPin(deps: PresetMigrationDeps = {}): string | 
   if ((env.PA_PROVIDER_PRESET ?? '').trim().toLowerCase() === 'opencode-local') {
     env.PA_PROVIDER_PRESET = 'opencode';
   }
-  return 'Tu .env fijaba el modelo local (opencode-local): lo he pasado a OpenCode Go con DeepSeek V4.1 Flash, que es el que pediste. Para volver al local algún día: PA_PROVIDER_PRESET=opencode-local en el .env.';
+  if ((env.PA_MODEL ?? '').trim().toLowerCase() === 'deepseek-v4.1-flash-free') {
+    env.PA_MODEL = 'deepseek-v4.1-flash';
+  }
+  return 'Tu .env fijaba el modelo local o la versión -free: lo he pasado a OpenCode Go con DeepSeek V4.1 Flash, que es el que pediste. Para volver al local algún día: PA_PROVIDER_PRESET=opencode-local en el .env.';
 }
