@@ -280,6 +280,11 @@ export interface ResolveThreadDeps<T extends ThreadLike> {
     set(key: string, threadKey: string): unknown;
   };
   threads: { get(threadKey: string): T | undefined };
+  /**
+   * Respaldo en disco del mapa anterior: sobrevive a un reinicio o a una
+   * autoactualización (reply-threads.ts). Sin él, como antes.
+   */
+  durableThread?: (key: string) => { threadKey: string; label?: string } | undefined;
   /** Respaldo durable: id de un aviso de objetivo ya enviado → su ámbito. */
   goalScopeBySentId: (chatKey: string, sentId: string) => string | null | undefined;
   splitGoalScope: (scope: string) => { chatKey: string; thread: string };
@@ -321,6 +326,22 @@ export async function resolveInboundThread<T extends ThreadLike>(
         );
       }
     }
+    // El hilo que envió ese mensaje ya no está vivo (reinicio, autoactualización o
+    // retirado por inactividad): se reconstruye con su nombre y sigue ahí, en vez de
+    // caer en el principal. Solo hilos de este mismo chat.
+    const saved = mapped
+      ? { threadKey: mapped }
+      : deps.durableThread?.(`${chatKey}:${inbound.replyToMessageId}`);
+    if (saved) {
+      const { chatKey: savedChatKey, thread: savedThread } = deps.splitGoalScope(saved.threadKey);
+      if (savedChatKey === chatKey && saved.threadKey.startsWith(`${chatKey}#`)) {
+        return deps.getOrCreateThread(
+          chatKey,
+          savedThread,
+          savedLabel(savedThread, 'label' in saved ? saved.label : undefined),
+        );
+      }
+    }
   }
 
   if (inbound.threadId) {
@@ -335,6 +356,15 @@ export async function resolveInboundThread<T extends ThreadLike>(
   // traceable. The label shown to the user is a trimmed version of the request.
   const label = sliceSafe(inbound.text.trim(), 40) || 'petición';
   return deps.getOrCreateThread(chatKey, `m${inbound.messageId}`, label);
+}
+
+/** Etiqueta de un hilo reconstruido: la guardada o la que le daría su nombre. */
+function savedLabel(name: string, label: string | undefined): string {
+  if (label?.trim()) return label;
+  if (name === 'main') return 'principal';
+  const forum = /^t(\d+)$/.exec(name);
+  if (forum) return `hilo ${forum[1]}`;
+  return name;
 }
 
 /**
