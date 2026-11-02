@@ -481,10 +481,7 @@ async function runTvAction(
         );
       }
       const raw = await deps.search(key);
-      const textOut =
-        typeof raw === 'string'
-          ? raw
-          : JSON.stringify(raw, null, 0).slice(0, 4000);
+      const textOut = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 0).slice(0, 4000);
       return {
         content: [
           {
@@ -883,9 +880,9 @@ async function runTvAction(
       await enqueueTvMutation(async () => {
         await deps.key(ssapName);
         if (look) {
-            const shot = await captureFrame(deps).catch(() => null);
-            if (shot) frames.push(shot);
-          }
+          const shot = await captureFrame(deps).catch(() => null);
+          if (shot) frames.push(shot);
+        }
       });
       const frame = frames[0] as TvFrame | undefined;
       const content: Array<
