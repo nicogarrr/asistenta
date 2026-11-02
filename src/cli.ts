@@ -6685,6 +6685,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           'Foto',
         );
       }
+      // Resto de un álbum: cada foto entra en el mismo turno (vista e indexada igual).
+      if (inbound.photoFileId && inbound.albumPhotoFileIds?.length) {
+        const album = await downloadAlbumPhotos(inbound.albumPhotoFileIds, (id) =>
+          telegram.downloadPhoto(id),
+        );
+        const notes = [documentNote];
+        for (const [i, photo] of album.photos.entries()) {
+          images = [
+            ...(images ?? []),
+            { type: 'image', mimeType: 'image/jpeg', data: photo.data.toString('base64') },
+          ];
+          notes.push(
+            await indexImage(photo.data, 'image/jpeg', photo.id, inbound.text, `Foto ${i + 2}`),
+          );
+        }
+        if (album.missing)
+          notes.push(
+            `[Álbum: ${album.missing} de sus fotos no se pudieron descargar; no se vieron.]`,
+          );
+        documentNote = notes.filter(Boolean).join('\n');
+      }
       if (inbound.documentFileId) {
         const label = inbound.documentName ?? inbound.documentMimeType ?? 'documento';
         const docMime = inbound.documentMimeType?.toLowerCase() ?? '';
@@ -8543,6 +8564,22 @@ export function voiceNotePrompt(
  */
 export function withReplyQuote(prompt: string, quote: string | undefined, linked: boolean): string {
   return quote && !linked ? `${quote}\n${prompt}` : prompt;
+}
+
+/**
+ * Descarga el resto de fotos de un álbum. Una que falla no tumba las demás: se cuenta,
+ * para decir al modelo cuántas no vio.
+ */
+export async function downloadAlbumPhotos(
+  ids: readonly string[],
+  download: (id: string) => Promise<Buffer | null>,
+): Promise<{ photos: Array<{ id: string; data: Buffer }>; missing: number }> {
+  const photos: Array<{ id: string; data: Buffer }> = [];
+  for (const id of ids) {
+    const data = await download(id).catch(() => null);
+    if (data) photos.push({ id, data });
+  }
+  return { photos, missing: ids.length - photos.length };
 }
 
 /**
