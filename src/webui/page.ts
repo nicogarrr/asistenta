@@ -837,8 +837,27 @@ ${renderFormatScript()}
 
       async function llamar(ruta, opciones) {
         if (!token) throw errorSinToken();
+        // Sin respuesta en 30 s (un proceso viejo que dejó el panel abierto sin Asistenta
+        // detrás, 2 nov) o sin conexión: se dice claro, no «Cargando…» para siempre.
+        function errorNoEnMarcha() {
+          var sinRed = new Error(
+            'Asistenta no está en marcha: reiníciala (bandeja → Reiniciar o pa iniciar).'
+          );
+          sinRed.sinConexion = true;
+          return sinRed;
+        }
         var cabeceras = { Authorization: 'Bearer ' + token };
         if (opciones.cuerpo !== undefined) cabeceras['Content-Type'] = 'application/json';
+        // Solo las lecturas tienen tope: una orden (POST) puede tardar lo que tarde.
+        var corte =
+          opciones.metodo === 'GET' && typeof AbortController === 'function'
+            ? new AbortController()
+            : null;
+        var reloj = corte
+          ? setTimeout(function () {
+              corte.abort();
+            }, 30000)
+          : null;
         var respuesta;
         try {
           respuesta = await fetch(ruta, {
@@ -846,12 +865,12 @@ ${renderFormatScript()}
             headers: cabeceras,
             body: opciones.cuerpo === undefined ? undefined : JSON.stringify(opciones.cuerpo),
             cache: 'no-store',
-            credentials: 'omit'
+            credentials: 'omit',
+            signal: corte ? corte.signal : undefined
           });
         } catch (error) {
-          var sinRed = new Error('No se pudo conectar con el asistente. ¿Está encendido?');
-          sinRed.sinConexion = true;
-          throw sinRed;
+          if (reloj) clearTimeout(reloj);
+          throw errorNoEnMarcha();
         }
         var datos = null;
         var esJson = true;
@@ -860,6 +879,8 @@ ${renderFormatScript()}
         } catch (error) {
           esJson = false;
         }
+        if (reloj) clearTimeout(reloj);
+        if (corte && corte.signal.aborted) throw errorNoEnMarcha();
         if (respuesta.status === 401) {
           pedirToken('Token rechazado: pega el token correcto (PA_WEB_TOKEN).');
           var rechazo = new Error(formato.mensajeDeError(401, datos));
