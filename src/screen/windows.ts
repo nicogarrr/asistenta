@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { childEnv } from '../child-env.js';
+import { log } from '../log.js';
 import { sliceSafe } from '../text.js';
 import type { ScreenBackend } from '../tools/computer.js';
 import {
@@ -13,9 +14,69 @@ import {
   splitAsciiSegments,
   winChordVirtualKeys,
 } from './keys.js';
+import { PsHost, PsHostLost, PsScriptError, recordPsLatency } from './ps-host.js';
 import { jpegGeometry, parseCaptureGeometry, physicalScript } from './windows-geometry.js';
 
 const execFileAsync = promisify(execFile);
+
+type PsResult = { stdout: string; stderr: string };
+
+/** Camino de siempre: un `powershell.exe` por llamada. */
+async function spawnPowerShell(script: string): Promise<PsResult> {
+  try {
+    return await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      {
+        encoding: 'utf8',
+        env: childEnv(),
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: POWERSHELL_TIMEOUT_MS,
+        windowsHide: true,
+      },
+    );
+  } catch (err) {
+    throw powerShellError(err);
+  }
+}
+
+/**
+ * Ejecutor por defecto: un PowerShell persistente (ps-host.ts) con vuelta automática al
+ * camino de siempre. `PA_PS_HOST=0` lo apaga. Tras 3 fallos del host (no arranca, muere,
+ * no contesta) se desactiva hasta reiniciar. La latencia de cada llamada, con el host y
+ * sin él, se anota para compararlas en el log (`powershell latency`).
+ */
+export function defaultRunner(
+  env: NodeJS.ProcessEnv = process.env,
+  host: PsHost | null = env.PA_PS_HOST === '0' ? null : new PsHost(childEnv()),
+  spawnRun: (script: string) => Promise<PsResult> = spawnPowerShell,
+): (script: string) => Promise<PsResult> {
+  let failures = 0;
+  const timed = async (mode: 'host' | 'spawn', run: () => Promise<PsResult>): Promise<PsResult> => {
+    const t0 = performance.now();
+    const result = await run();
+    recordPsLatency(mode, performance.now() - t0);
+    return result;
+  };
+  return async (script) => {
+    if (host && failures < 3) {
+      try {
+        return await timed('host', () => host.run(script));
+      } catch (err) {
+        if (err instanceof PsScriptError) throw powerShellError({ stderr: err.errorText, code: 1 });
+        failures += 1;
+        log.warn('powershell host failed', { failures, err: String(err) });
+        if (failures >= 3) host.close();
+        if (err instanceof PsHostLost) {
+          // El script pudo haber corrido a medias: no se repite a ciegas.
+          throw powerShellError(err.cut ? { killed: true } : { stderr: err.message, code: 1 });
+        }
+        // PsHostUnavailable: el script no se envió, se usa el camino de siempre.
+      }
+    }
+    return timed('spawn', () => spawnRun(script));
+  };
+}
 
 /**
  * Windows screen backend.
@@ -50,25 +111,7 @@ export function mouseButtonFlags(button: string): { down: string; up: string } {
 export class WindowsScreen implements ScreenBackend {
   private readonly runPowerShell: (script: string) => Promise<{ stdout: string; stderr: string }>;
   constructor(runPowerShell?: (script: string) => Promise<{ stdout: string; stderr: string }>) {
-    this.runPowerShell =
-      runPowerShell ??
-      (async (script) => {
-        try {
-          return await execFileAsync(
-            'powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-Command', script],
-            {
-              encoding: 'utf8',
-              env: childEnv(),
-              maxBuffer: 16 * 1024 * 1024,
-              timeout: POWERSHELL_TIMEOUT_MS,
-              windowsHide: true,
-            },
-          );
-        } catch (err) {
-          throw powerShellError(err);
-        }
-      });
+    this.runPowerShell = runPowerShell ?? defaultRunner();
   }
   #tempDir: string | null = null;
   /**
