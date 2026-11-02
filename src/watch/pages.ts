@@ -713,14 +713,29 @@ export function readFailureCause(message: string): string {
   return 'no sé bien por qué';
 }
 
-const fmtDay = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid' });
-const fmtDayTime = new Intl.DateTimeFormat('es-ES', {
-  timeZone: 'Europe/Madrid',
-  day: 'numeric',
-  month: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
+/**
+ * Los formateadores se crean al primer uso: el primer `Intl.DateTimeFormat` del
+ * proceso carga los datos de ICU (~10 ms) y lo pagaba cada `pa …` al importar
+ * este módulo, aunque no se enseñara ninguna vigilancia.
+ */
+let fmtDayCache: Intl.DateTimeFormat | undefined;
+let fmtDayTimeCache: Intl.DateTimeFormat | undefined;
+function fmtDay(): Intl.DateTimeFormat {
+  if (!fmtDayCache) fmtDayCache = new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid' });
+  return fmtDayCache;
+}
+function fmtDayTime(): Intl.DateTimeFormat {
+  if (!fmtDayTimeCache) {
+    fmtDayTimeCache = new Intl.DateTimeFormat('es-ES', {
+      timeZone: 'Europe/Madrid',
+      day: 'numeric',
+      month: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+  return fmtDayTimeCache;
+}
 
 /**
  * Último valor guardado, legible: un precio tal cual; el resumen interno de texto o de
@@ -749,10 +764,10 @@ export function describeWatch(
     lines.push(`Aún no tengo lecturas de precio; último valor: ${watchValueText(w.lastValue)}.`);
   } else {
     lines.push(
-      `Último: ${eur(s.lastCents)} (${fmtDayTime.format(s.lastAt)}${s.lastInStock === null ? '' : s.lastInStock ? ', en stock' : ', consta agotado'})`,
+      `Último: ${eur(s.lastCents)} (${fmtDayTime().format(s.lastAt)}${s.lastInStock === null ? '' : s.lastInStock ? ', en stock' : ', consta agotado'})`,
     );
     lines.push(
-      `Histórico: ${s.readings} lecturas desde ${fmtDay.format(s.firstAt)} · mín ${eur(s.minCents)} · mediana ${eur(s.medianCents)} · máx ${eur(s.maxCents)}`,
+      `Histórico: ${s.readings} lecturas desde ${fmtDay().format(s.firstAt)} · mín ${eur(s.minCents)} · mediana ${eur(s.medianCents)} · máx ${eur(s.maxCents)}`,
     );
     if (s.sparkline) lines.push(s.sparkline);
   }
@@ -760,7 +775,7 @@ export function describeWatch(
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
   if (w.mutedUntil > now) {
     lines.push(
-      `🔕 Silenciada hasta ${fmtDayTime.format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
+      `🔕 Silenciada hasta ${fmtDayTime().format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
     );
   }
   return lines.join('\n');
