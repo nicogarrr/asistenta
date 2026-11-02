@@ -231,7 +231,7 @@ describe('últimos turnos (/uso turnos)', () => {
     });
     const list = usage.recentTurns(5);
     expect(list.length).toBeGreaterThan(0);
-    expect(list[0].ts >= rec.ts).toBe(true);
+    expect((list[0]?.ts ?? '') >= rec.ts).toBe(true);
     const found = list.find((r) => r.sessionId === 'turnos');
     expect(found?.cacheReadTokens).toBe(400);
     expect(found?.context?.history).toBe(300);

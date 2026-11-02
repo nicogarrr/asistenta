@@ -13,5 +13,18 @@
  */
 import './envfile.js';
 
-const { runCli } = await import('./cli.js');
-runCli(process.argv.slice(2));
+// `pa status` y `pa autostart` (la bandeja cada minuto) no necesitan el resto de
+// Asistenta: pa-ligero.ts llama a la misma función sin cargar cli.js.
+const { lightCommand, reportLightFatal } = await import('./pa-ligero.js');
+const light = lightCommand(process.argv.slice(2));
+if (light) {
+  light.then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => reportLightFatal(err),
+  );
+} else {
+  const { runCli } = await import('./cli.js');
+  runCli(process.argv.slice(2));
+}
