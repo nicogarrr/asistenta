@@ -558,18 +558,23 @@ export class TelegramChannel implements ChannelAdapter {
       // Un reenvío largo y tu comentario justo detrás van en un turno, pero el comentario
       // ya no queda bajo la marca «[Mensaje reenviado…]»: antes parecía texto del otro.
       const from = held.inbound.forwardedFrom;
-      const same = from === inbound.forwardedFrom;
+      // Tras tu comentario (ownTail), lo que sigue sin marca es la continuación de tu
+      // comentario; un reenvío nuevo ya no se une.
+      const same = from === inbound.forwardedFrom && !held.ownTail;
       const ownComment = Boolean(from) && !inbound.forwardedFrom;
       if (plain && (same || ownComment)) {
         const more =
           same && from && inbound.text.startsWith(`${from}\n`)
             ? inbound.text.slice(from.length + 1)
             : inbound.text;
-        held.inbound.text = ownComment
-          ? `${held.inbound.text}\n${FORWARDED_END}\n${more}`
-          : `${held.inbound.text}\n${more}`;
-        if (!ownComment && inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
-          this.#holdSplit(key, held.inbound, handlers);
+        held.inbound.text =
+          ownComment && !held.ownTail
+            ? `${held.inbound.text}\n${FORWARDED_END}\n${more}`
+            : `${held.inbound.text}\n${more}`;
+        // Tu comentario largo también lo parte Telegram: antes salía en el acto y su
+        // resto llegaba como otro turno, contestado a medias. Ahora espera igual.
+        if (inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
+          this.#holdSplit(key, held.inbound, handlers, ownComment);
           return;
         }
         await handlers.onMessage(held.inbound);
@@ -596,7 +601,12 @@ export class TelegramChannel implements ChannelAdapter {
   /** Textos largos a la espera de su continuación (chat:tema:usuario). */
   readonly #splitHeld = new Map<
     string,
-    { inbound: Inbound; timer: ReturnType<typeof setTimeout> }
+    {
+      inbound: Inbound;
+      timer: ReturnType<typeof setTimeout>;
+      /** Ya lleva tu comentario tras un reenvío: lo que sigue es su continuación. */
+      ownTail?: boolean;
+    }
   >();
 
   /**
@@ -615,9 +625,9 @@ export class TelegramChannel implements ChannelAdapter {
     return this.#splitHeld.has(`${String(ctx.chat?.id ?? '')}:${thread}:${userId}`);
   }
 
-  #holdSplit(key: string, inbound: Inbound, handlers: ChannelHandlers): void {
+  #holdSplit(key: string, inbound: Inbound, handlers: ChannelHandlers, ownTail = false): void {
     const timer = setTimeout(() => this.#flushSplit(key, handlers), SPLIT_TEXT_WAIT_MS);
-    this.#splitHeld.set(key, { inbound, timer });
+    this.#splitHeld.set(key, { inbound, timer, ownTail });
   }
 
   #flushSplit(key: string, handlers: ChannelHandlers): void {
