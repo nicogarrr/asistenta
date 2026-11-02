@@ -120,7 +120,7 @@ import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
 import { chatReplyText, MODEL_ERROR_QUESTION, modelErrorFollowUp } from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
-import { createProviderHandle } from './core/provider.js';
+import { checkProviderKey, createProviderHandle } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { programadaEs } from './cron/describe-es.js';
@@ -1194,6 +1194,9 @@ async function chatCommand(control?: ControlStartup): Promise<number> {
   // Refuse to run twice: a second instance sharing channel credentials gets logged out.
   assertNotRunning(paths.state, 'agent');
 
+  // Sin clave del modelo, fallar YA: antes de beginResources no hay nada abierto y
+  // la consola queda libre al momento (antes, 15 s de retención fail-closed).
+  await checkProviderKey(config);
   control?.beginResources();
   const store = new Store();
   store.sweepExpired();
