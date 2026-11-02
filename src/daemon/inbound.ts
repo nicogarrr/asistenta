@@ -106,8 +106,24 @@ export function queueMessageTurn(
   thread: QueueableThread,
   inbound: Inbound,
   run: (merged: readonly Inbound[]) => Promise<void>,
+  /**
+   * ¿Puede `next` unirse a la tanda abierta? Si no, la tanda se cierra (va sola,
+   * delante) y `next` abre otra detrás. Sin esto, todo se une (como antes).
+   */
+  canJoin?: (open: readonly Inbound[], next: Inbound) => boolean,
 ): Promise<void> {
   let box = openMessageBatches.get(thread);
+  if (
+    box &&
+    canJoin &&
+    !canJoin(
+      box.entries.map((e) => e.inbound),
+      inbound,
+    )
+  ) {
+    closeMessageBatch(thread);
+    box = undefined;
+  }
   if (!box) {
     const mine: MessageBatch = { entries: [], closed: false };
     box = mine;
@@ -128,6 +144,62 @@ export function queueMessageTurn(
   return new Promise((resolve) => {
     box.entries.push({ inbound, resolve });
   });
+}
+
+/**
+ * ¿Puede este mensaje ir fundido con otros? Solo texto: lo que trae foto, audio, vídeo,
+ * documento, álbum o ubicación se lee en su propio turno (el turno fundido solo lleva
+ * los adjuntos del último, así que los de antes se perdían), y un comando nunca.
+ */
+export function isBatchableInbound(inbound: Inbound): boolean {
+  if (!inbound.text.trim() || inbound.text.trimStart().startsWith('/')) return false;
+  for (const [key, value] of Object.entries(inbound)) {
+    if (!/file|album|image|photo|audio|video|voice|document|location|sticker/i.test(key)) continue;
+    if (Array.isArray(value) ? value.length > 0 : Boolean(value)) return false;
+  }
+  return true;
+}
+
+/**
+ * Regla de unión de la tanda: solo texto, y de la misma persona en el mismo chat. En
+ * un grupo, el mensaje de otro miembro no puede viajar con la autoridad del último.
+ */
+export function canJoinMessageBatch(open: readonly Inbound[], next: Inbound): boolean {
+  if (!isBatchableInbound(next)) return false;
+  return open.every(
+    (o) =>
+      isBatchableInbound(o) &&
+      o.userId === next.userId &&
+      o.channel === next.channel &&
+      o.chatId === next.chatId,
+  );
+}
+
+export const BATCH_HEADER =
+  '[Varios mensajes seguidos del usuario mientras trabajabas, en orden; contesta a todos juntos]';
+
+/**
+ * La tanda → el mensaje que contesta el turno: el último (se le cita a él), con el
+ * texto de todos, en orden y separados, cada uno con su hora. Lo que traía cada uno
+ * va dentro de SU pieza: la marca de reenviado (y lo que sigue, que es de otra
+ * persona, hasta la pieza siguiente) y la cita del mensaje al que respondía si el
+ * hilo no la tiene ya (`linked`). Con uno solo sale tal cual.
+ */
+export function mergeBatchedInbounds(
+  items: readonly Inbound[],
+  opts: { linked: (inbound: Inbound) => boolean; time: (iso: string) => string },
+): Inbound {
+  const last = items[items.length - 1] as Inbound;
+  if (items.length <= 1) return last;
+  const pieces = items.map((item, i) => {
+    const at = item.sentAt ?? item.receivedAt;
+    const when = at ? ` · ${opts.time(at)}` : '';
+    const quote = item.replyQuote && !opts.linked(item) ? `${item.replyQuote}\n` : '';
+    return `[Mensaje ${i + 1} de ${items.length}${when}]\n${quote}${item.text}`;
+  });
+  // Las citas ya van en su pieza; la marca de reenviado, en el texto de la suya.
+  const { replyQuote: _quote, forwardedFrom: _forwarded, ...rest } = last;
+  return { ...rest, text: [BATCH_HEADER, ...pieces].join('\n\n') };
 }
 
 export interface InboundLog {
