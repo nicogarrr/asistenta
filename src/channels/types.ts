@@ -34,6 +34,11 @@ export interface Inbound {
    */
   photoFileId?: string;
   /**
+   * Resto de fotos de un álbum (Telegram manda una por mensaje con el mismo
+   * media_group_id): llegan en el mismo turno que `photoFileId`, también perezosas.
+   */
+  albumPhotoFileIds?: string[];
+  /**
    * Voice note or audio file, also fetched lazily. Telegram voice notes are
    * ogg/opus at 16-48kbps; the mime type matters because it picks the decoder
    * (in-process opus vs. ffmpeg for everything else), and silently mis-decoding

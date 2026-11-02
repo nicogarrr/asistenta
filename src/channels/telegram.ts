@@ -394,7 +394,10 @@ export class TelegramChannel implements ChannelAdapter {
     if (
       isGroup &&
       !isAddressedToBot(text, msg, ctx.me.username, ctx.me.id) &&
-      !this.#continuesHeldSplit(ctx, msg, user.id)
+      !this.#continuesHeldSplit(ctx, msg, user.id) &&
+      !this.#albumHeld.has(
+        `${String(ctx.chat?.id ?? '')}:${String((msg as { media_group_id?: string }).media_group_id)}`,
+      )
     ) {
       // Groups are read-only by default: the bot only acts when mentioned or
       // replied to. Otherwise every group message would burn a computer-use run,
@@ -539,6 +542,13 @@ export class TelegramChannel implements ChannelAdapter {
       this.#holdSplit(key, inbound, handlers);
       return;
     }
+    // Un álbum llega como un mensaje por foto con el mismo media_group_id: antes cada
+    // foto era un turno y «¿cuál te gusta más?» recibía una respuesta suelta por foto.
+    const album = (msg as { media_group_id?: string }).media_group_id;
+    if (album && inbound.photoFileId && !inbound.documentFileId && !inbound.audioFileId) {
+      this.#holdAlbum(`${inbound.chatId}:${album}`, inbound, handlers);
+      return;
+    }
 
     await handlers.onMessage(inbound);
   }
@@ -577,6 +587,43 @@ export class TelegramChannel implements ChannelAdapter {
     this.#splitHeld.delete(key);
     void Promise.resolve(handlers.onMessage(held.inbound)).catch((err: unknown) => {
       handlers.log('error', 'held message failed', { error: String(err) });
+    });
+  }
+
+  /** Álbumes de fotos a la espera de su última foto (chat:media_group_id). */
+  readonly #albumHeld = new Map<
+    string,
+    { inbound: Inbound; timer: ReturnType<typeof setTimeout> }
+  >();
+
+  /**
+   * Junta las fotos de un álbum en el primer mensaje: el resto de fotos, y el texto si
+   * venía en otra foto. Sale como un solo turno cuando deja de llegar ninguna.
+   */
+  #holdAlbum(key: string, inbound: Inbound, handlers: ChannelHandlers): void {
+    const held = this.#albumHeld.get(key);
+    const timer = setTimeout(() => this.#flushAlbum(key, handlers), ALBUM_WAIT_MS);
+    if (!held) {
+      this.#albumHeld.set(key, { inbound, timer });
+      return;
+    }
+    clearTimeout(held.timer);
+    held.timer = timer;
+    const first = held.inbound;
+    const more = first.albumPhotoFileIds ?? [];
+    if (inbound.photoFileId && more.length < ALBUM_MAX_PHOTOS - 1) {
+      first.albumPhotoFileIds = [...more, inbound.photoFileId];
+    }
+    if (inbound.text) first.text = first.text ? `${first.text}\n${inbound.text}` : inbound.text;
+  }
+
+  #flushAlbum(key: string, handlers: ChannelHandlers): void {
+    const held = this.#albumHeld.get(key);
+    if (!held) return;
+    clearTimeout(held.timer);
+    this.#albumHeld.delete(key);
+    void Promise.resolve(handlers.onMessage(held.inbound)).catch((err: unknown) => {
+      handlers.log('error', 'held album failed', { error: String(err) });
     });
   }
 
@@ -1681,6 +1728,7 @@ export class TelegramChannel implements ChannelAdapter {
     // Un texto largo retenido a la espera de su continuación no se pierde al parar.
     const handlers = this.#handlers;
     if (handlers) for (const key of [...this.#splitHeld.keys()]) this.#flushSplit(key, handlers);
+    if (handlers) for (const key of [...this.#albumHeld.keys()]) this.#flushAlbum(key, handlers);
     this.#stopped = true;
     this.#ready = false;
     if (this.#retryTimer) {
@@ -2129,6 +2177,10 @@ export function clipDraftText(text: string): string {
 export const SPLIT_TEXT_MIN_CHARS = 3500;
 /** Lo que se espera a la continuación de un texto partido. */
 const SPLIT_TEXT_WAIT_MS = 1500;
+/** Espera tras la última foto de un álbum (Telegram las manda casi seguidas). */
+const ALBUM_WAIT_MS = 1200;
+/** Un álbum de Telegram tiene como mucho 10 fotos. */
+const ALBUM_MAX_PHOTOS = 10;
 
 /** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
 export const EDITED_MESSAGE_NOTE =
