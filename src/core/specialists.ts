@@ -186,6 +186,7 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   email: 'correo',
   gmail: 'correo',
   correos: 'correo',
+  correoelectronico: 'correo',
   calendar: 'calendario',
   agenda: 'calendario',
   citas: 'calendario',
@@ -208,12 +209,20 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   luces: 'hogar',
 });
 
+/**
+ * Minúsculas y sin tildes; además fuera «especialista (de) …», el artículo delante
+ * («la tele», «mi correo») y los espacios, guiones o puntos («Smart TV», «home-assistant»):
+ * el modelo a veces escribe el nombre así y caía en el hijo genérico sin herramientas.
+ */
 function normalizeName(value: string): string {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/^especialistas?\s+(?:de|del|en)?\s*/, '')
+    .replace(/^(?:el|la|los|las|mi|mis)\s+/, '')
+    .replace(/[\s._-]+/g, '');
 }
 
 /** Especialista por nombre o alias; undefined si no existe (se usa el hijo generico). */
