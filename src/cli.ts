@@ -602,7 +602,7 @@ import { plainVoiceError } from './voice/plain-error.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
-import { SttError, transcribeVoiceNote } from './voice/stt.js';
+import { DEFAULT_STT_MODEL, SttError, transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { createTtsConVozLocal } from './voice/voz-local.js';
@@ -1153,7 +1153,7 @@ async function doctorCommand(): Promise<number> {
 
     // Voice is opt-in at the point of use, so the only useful question is whether the
     // model is already cached. A cold cache means the first voice note pays a download.
-    const modelCached = existsSync(join(paths.models, 'onnx-community', 'whisper-base'));
+    const modelCached = existsSync(join(paths.models, ...DEFAULT_STT_MODEL.split('/')));
     lines.push(
       `voice stt       ${modelCached ? 'modelo descargado' : 'modelo aún sin descargar (lo baja la primera nota de voz, necesita internet)'}`,
     );
