@@ -79,7 +79,11 @@ function intervalEs(m: string, h: string, minute: number | null): string | null 
   }
   const step = range ? range[3] : /^\*\/(\d{1,2})$/.exec(h)?.[1];
   const base = step ? `cada ${step} horas` : 'cada hora';
-  if (!range) return h === '*' || step ? base : null;
+  if (!range) {
+    if (h !== '*' && !step) return null;
+    // «15 */2»: suena a y cuarto; «cada 2 horas» a secas parecía en punto.
+    return minute === 0 ? base : `${base}, a los ${minute} min`;
+  }
   // «0 8-23/2» suena por última vez a las 22: esa es la hora que se dice, no las 23.
   const last =
     (from as number) +
