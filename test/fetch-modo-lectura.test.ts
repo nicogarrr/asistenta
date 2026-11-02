@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractMainContent, extractText } from '../src/tools/fetch.js';
+import { extractMainContent, extractText, READER_MAX_HTML_BYTES } from '../src/tools/fetch.js';
 
 const JUNK = '<nav><a href="/">Inicio</a><a href="/publi">Publicidad</a></nav>';
 const ARTICLE_TEXT =
@@ -30,6 +30,12 @@ describe('modo lectura al leer páginas web', () => {
     expect(await extractMainContent(short)).toBe(short);
     const form = '<!doctype html><html><body><form><input name="q"></form></body></html>';
     expect(await extractMainContent(form)).toBe(form);
+  });
+
+  it('una página gigante no para la lectura: pasa directa al extractor rápido', async () => {
+    const huge = `<article><p>${'x'.repeat(READER_MAX_HTML_BYTES)}</p></article>`;
+    expect(huge.length).toBeGreaterThan(READER_MAX_HTML_BYTES);
+    expect(await extractMainContent(huge)).toBe(huge);
   });
 
   it('entrada rota no lanza: devuelve lo recibido', async () => {

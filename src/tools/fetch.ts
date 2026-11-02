@@ -46,7 +46,13 @@ const FetchParams = Type.Object({
  * artículo claro —páginas cortas, paneles, formularios— se devuelve la página
  * entera y el extractor de siempre trabaja igual.
  */
+/** Encima de este tamaño el modo lectura tarda segundos y casi nunca hay «artículo». */
+export const READER_MAX_HTML_BYTES = 2 * 1024 * 1024;
+
 export async function extractMainContent(html: string): Promise<string> {
+  // Una página gigante (tope de descarga: 10 MB) pararía la lectura varios
+  // segundos en el parser; el extractor de siempre la resuelve en milisegundos.
+  if (html.length > READER_MAX_HTML_BYTES) return html;
   try {
     const [{ parseHTML }, { Readability }] = await Promise.all([
       import('linkedom'),
