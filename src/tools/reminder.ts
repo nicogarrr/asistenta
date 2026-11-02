@@ -6,6 +6,7 @@ import { lazySchema, Type } from '../core/lazy-schema.js';
 import { scheduleEs } from '../cron/describe-es.js';
 import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
+import { festivosQueCuentan } from '../festivos-rutinas.js';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
@@ -86,6 +87,12 @@ const Params = lazySchema(() =>
       Type.String({
         description:
           'create, repeating only: last local day it may fire, YYYY-MM-DD ("cada día durante una semana", "hasta el viernes"). Omit when it has no end.',
+      }),
+    ),
+    skip_holidays: Type.Optional(
+      Type.Boolean({
+        description:
+          'create, repeating only: true when the user said «excepto festivos»: it does not fire on public holidays (national + region) and is not moved to another day.',
       }),
     ),
   }),
@@ -511,6 +518,9 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
 
+      if (args.skip_holidays === true && args.schedule === undefined) {
+        return reply('skip_holidays solo vale con schedule (recordatorios que se repiten).', true);
+      }
       const until = args.until === undefined ? undefined : String(args.until).trim();
       if (until !== undefined) {
         if (args.schedule === undefined) {
@@ -543,9 +553,12 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
           }
         }
         const end = until ? ` hasta ${until}` : '';
+        // «excepto festivos» va en el nombre (como «hasta»): al sonar, RoutineRunner lo lee
+        // y no avisa en festivo (festivos-rutinas.ts).
+        const holidays = args.skip_holidays === true ? ' excepto festivos' : '';
         deps.store.saveRoutine({
           scope,
-          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]${end}`),
+          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]${holidays}${end}`),
           kind: 'schedule',
           prompt: text,
           schedule: args.schedule.trim(),
@@ -557,7 +570,10 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         const next = first
           ? `${fechaCortaEs(first)} (${dentroDeEs(first.getTime() - now(), now())})`
           : check.next;
-        return reply(`Recordatorio programado (${said}${end}): ${text}. Próximo: ${next}.`);
+        const sinFestivos = holidays ? `, excepto ${festivosQueCuentan()}` : '';
+        return reply(
+          `Recordatorio programado (${said}${sinFestivos}${end}): ${text}. Próximo: ${next}.`,
+        );
       }
 
       let when: Date;
