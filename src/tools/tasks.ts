@@ -299,8 +299,9 @@ function moveOverdue(deps: TasksToolDeps, day: string): string {
   if (late.length === 0) return 'No tienes nada atrasado.';
   for (const t of late) board.move(t.id, day);
   const when = day === board.today() ? 'hoy' : `el ${dayLabel(day)}`;
-  const n = late.length === 1 ? '1 tarea' : `${late.length} tareas`;
-  return `Pasadas a ${when} ${n}: ${late
+  const head =
+    late.length === 1 ? `Pasada a ${when} 1 tarea` : `Pasadas a ${when} ${late.length} tareas`;
+  return `${head}: ${late
     .slice(0, 8)
     .map((t) => t.title)
     .join(', ')}${late.length > 8 ? '…' : ''}.`;
