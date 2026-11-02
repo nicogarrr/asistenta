@@ -135,7 +135,7 @@ import {
   routeInboundControl,
   threadForSentIds,
 } from './daemon/inbound.js';
-import { runPanelChat, type TurnOutput } from './daemon/panel-chat.js';
+import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/panel-chat.js';
 import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
 import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
@@ -6823,6 +6823,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       thread.agent.attachContext(learnHint ? `${contextNote}\n\n${learnHint}` : contextNote);
 
+      /** Especialistas que hicieron algo en este turno (Telegram los dice al final). */
+      const specialistsUsed: string[] = [];
       result = await thread.agent.run(prompt, images, {
         onToolCall: (info) => {
           lastSummary = info.summary;
@@ -6834,8 +6836,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
         onToolEnd: (info) => {
           setbacks.toolEnded(info);
-          // Solo el panel lo enseña («🧩 Lo hizo el especialista Tele.»); Telegram no cambia.
-          if (info.specialist) out?.specialist?.(info.specialist);
+          // «🧩 Lo hizo el especialista Tele.»: el panel lo añade él solo; en Telegram, abajo.
+          if (info.specialist) {
+            if (out) out.specialist?.(info.specialist);
+            else specialistsUsed.push(info.specialist);
+          }
         },
       });
 
@@ -6869,6 +6874,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           text: learnt.line ? `${learnt.text}\n\n${learnt.line}`.trim() : learnt.text,
         };
       }
+
+      // Como en el panel: una línea al final con el especialista que hizo la tarea.
+      if (!out && inbound.channel === 'telegram' && result.error === null)
+        result = { ...result, text: withSpecialistNote(result.text, specialistsUsed) };
 
       // Learn from this run's problems: a tool failed and another way then worked.
       // Built from the structured trail only, saved straight into `lecciones`.

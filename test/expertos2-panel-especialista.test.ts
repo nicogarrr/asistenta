@@ -186,8 +186,9 @@ describe('cableado real en cli.ts', () => {
     const source = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const start = source.indexOf('const runTurn = async (');
     const block = source.slice(start, start + 30_000);
+    // Con salida del panel, al panel; sin ella (Telegram), a la línea del final (expertos-3).
     expect(block).toMatch(
-      /onToolEnd: \(info\) => \{[^}]*if \(info\.specialist\) out\?\.specialist\?\.\(info\.specialist\);/s,
+      /onToolEnd: \(info\) => \{[^}]*if \(info\.specialist\) \{\s*if \(out\) out\.specialist\?\.\(info\.specialist\);/s,
     );
   });
 });

@@ -122,6 +122,13 @@ export function specialistNote(names: readonly string[]): string | null {
   return `🧩 Lo hicieron los especialistas ${list}.`;
 }
 
+/** El texto con la línea del especialista al final (Telegram); igual si no trabajó ninguno. */
+export function withSpecialistNote(text: string, names: readonly string[]): string {
+  const note = specialistNote(names);
+  if (!note || text.includes(note)) return text;
+  return `${text}\n\n${note}`.trim();
+}
+
 export interface PanelChatDeps<T extends PanelChatThread> {
   /** Apunta el mensaje para /reintentar (lastTurns), ya dentro de la cola del hilo. */
   remember(thread: T, text: string): void;
