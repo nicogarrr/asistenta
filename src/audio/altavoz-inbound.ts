@@ -30,6 +30,15 @@ export interface AltavozInboundDeps {
 export type AltavozInboundResult = 'skipped' | 'queued' | 'full';
 
 /**
+ * Confirmación corta cuando la nota solo sonó (modo megáfono, Nico 2 nov 2026: con el
+ * altavoz encendido su nota SUENA y nada más; no se transcribe ni se contesta. Para
+ * hablarle al asistente: /altavoz off o escribir).
+ */
+export function altavozConfirmText(mode: 'pc' | 'tele'): string {
+  return mode === 'tele' ? '📺 Sonó en la tele.' : '🔊 Sonó en el PC.';
+}
+
+/**
  * Dónde suena una nota de este mensaje, o null: solo una nota de voz del dueño en su
  * chat privado, con el altavoz encendido, en el PC de escritorio y sin comando.
  */

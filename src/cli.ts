@@ -63,6 +63,7 @@ import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker, ownerDmFollowups, ownerDmKeyFor } from './alerts/followups.js';
 import {
+  altavozConfirmText,
   altavozVoiceReplyEnabled,
   routeInboundToAltavoz,
   routeReplyToAltavoz,
@@ -8507,7 +8508,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const { dedupKey } = started;
 
           // Altavoz: la nota suena sola en el PC/la tele, sin esperar al modelo.
-          routeInboundToAltavoz(inbound, {
+          const altavozRes = routeInboundToAltavoz(inbound, {
             mode: altavoz.get(chatKey_),
             desktop,
             ownerUserId: vigilanteOwnerId,
@@ -8518,6 +8519,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             },
             key: chatKey_,
           });
+          // Modo megáfono (Nico, 2 nov): con el altavoz encendido su nota SOLO suena;
+          // no se transcribe ni se contesta. Para hablarle: /altavoz off o escribir.
+          if (altavozRes === 'queued') {
+            // «queued» implica modo pc/tele (altavozTarget ya filtró off/no dueño).
+            const modoAltavoz = altavoz.get(chatKey_);
+            if (modoAltavoz !== 'off') {
+              await say(inbound, altavozConfirmText(modoAltavoz), { quote: true });
+            }
+            return;
+          }
+          // Cola llena: ya avisó el altavoz; tampoco va al modelo.
+          if (altavozRes === 'full') return;
 
           // Correo, confirmación de /borrar_chat y comandos: antes de cualquier hilo.
           const control = await routeInboundControl(inbound, chatKey_, {
