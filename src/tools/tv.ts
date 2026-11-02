@@ -2,11 +2,12 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { Static } from 'typebox';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
-import { APP_NAMES, needsAppLookup, resolveAppId } from '../tv/apps.js';
+import { APP_NAMES, needsAppLookup, type ResolvedApp, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
 import { describeTvIntent, parseTvCommand, type TvIntent, tvOrderHasTime } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
 import { resolveScene, runScene, summarizeScene, TV_SCENES } from '../tv/scenes.js';
+import { appSearchRecipe, type TvSearchRecipe } from '../tv/search-recipes.js';
 import { formatTvSearchResults } from '../tv/search-results.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
 
@@ -63,7 +64,13 @@ export interface TvToolDeps {
   /** ext opcional: los mocks pueden omitirla (cae a jpg); el adapter real la deriva de la firma. */
   shot: () => Promise<{ image: Buffer; mimeType: string; ext?: string }>;
   foreground: () => Promise<{ appId: string; category: string[] }>;
-  apps: () => Promise<Array<{ id: string; title: string }>>;
+  /**
+   * Apps instaladas. La lista va guardada por tele (src/tv/app-cache.ts):
+   * `fresh` la vuelve a pedir a la tele.
+   */
+  apps: (opts?: { fresh?: boolean }) => Promise<Array<{ id: string; title: string }>>;
+  /** Tira la lista de apps guardada (un lanzamiento falló: puede estar vieja). */
+  forgetApps?: () => Promise<void>;
   /**
    * Estado en vivo sin captura (src/tv/status.ts): energia, app/entrada y
    * volumen. Ausente = instalacion antigua: action=status lo dice.
@@ -75,6 +82,9 @@ export interface TvToolDeps {
   // Deeplink con contenido (Netflix «m=https://www.netflix.com/watch/ID»,
   // YouTube «v=VIDEO_ID»): va por SSAP system.launcher/launch directo.
   launchDeep?: (id: string, contentId: string) => Promise<void>;
+  // Arranque con parámetros (system.launcher/launch {id, params}): las
+  // recetas de búsqueda por app (src/tv/search-recipes.ts), p. ej. YouTube.
+  launchParams?: (id: string, params: Record<string, string>) => Promise<void>;
   // Búsqueda universal de webOS (apps y contenido registrado). Solo lectura.
   search?: (key: string) => Promise<unknown>;
   // Guía pública de Movistar Plus+: qué echan y en qué canal (sin login).
@@ -159,7 +169,7 @@ const Params = lazySchema(() =>
     appId: Type.Optional(
       Type.String({
         description:
-          'Para launch: el id de la app (sacalo de action=apps) o su nombre ("Netflix", "YouTube", "Disney+"): se resuelve al id instalado.',
+          'Para launch: el id de la app (sacalo de action=apps) o su nombre ("Netflix", "YouTube", "Disney+"): se resuelve al id instalado. Para search: busca DENTRO de esa app (YouTube, Netflix: directo, sin teclado).',
       }),
     ),
     contentId: Type.Optional(
@@ -182,7 +192,7 @@ const Params = lazySchema(() =>
     look: Type.Optional(
       Type.Boolean({
         description:
-          'Para key/type: true devuelve además una captura de la tele tras la acción, para verificar dónde quedó el foco sin gastar otro turno. Por defecto true en ráfagas y type, false en una tecla suelta.',
+          'Para key/type/search con appId: true devuelve además una captura de la tele tras la acción, para verificar dónde quedó el foco sin gastar otro turno. Por defecto true en ráfagas y type, false en una tecla suelta.',
       }),
     ),
     message: Type.Optional(Type.String({ description: 'Para toast: el texto a mostrar.' })),
@@ -351,7 +361,7 @@ export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Para
       'Rafagas y type devuelven una captura de la tele (look=true por defecto): mirala para verificar',
       'donde quedo el foco ANTES de seguir o de dar algo por hecho; navegar a ciegas falla.',
       'Para buscar contenido (Netflix, Movistar Plus+, YouTube), EN ESTE ORDEN: 1) action=search',
-      '(invisible, no toca la pantalla); 2) si sabes el titulo exacto, launch con contentId (YouTube:',
+      '(invisible; con appId busca dentro de esa app, YouTube/Netflix sin teclado); 2) si sabes el titulo exacto, launch con contentId (YouTube:',
       'v=VIDEO_ID; el ID lo sacas de una busqueda web); 3) solo si las otras no valen: screenshot,',
       'rafaga hasta el buscador, type, ENTER, verificando con la captura. OJO: apps con teclado propio',
       '(YouTube) pueden NO aceptar type: si el texto no aparece en la captura, no reintentes type,',
@@ -500,6 +510,66 @@ function frameSummary(frame: TvFrame): string {
     : base;
 }
 
+/** Nombre o id → id real; la lista guardada se vuelve a pedir si el nombre no está en ella. */
+async function resolveTvApp(deps: TvToolDeps, asked: string): Promise<ResolvedApp> {
+  if (!needsAppLookup(asked)) return resolveAppId(asked, null);
+  // "Netflix", "youtube" o "RTVE Play" -> id real. La lista va guardada por
+  // tele: solo se vuelve a pedir si el nombre no aparece (app recién instalada).
+  const installed = await deps.apps().catch(() => null);
+  const first = resolveAppId(asked, installed);
+  if (first.how !== 'raw' || !installed) return first;
+  const fresh = await deps.apps({ fresh: true }).catch(() => null);
+  return fresh ? resolveAppId(asked, fresh) : first;
+}
+
+/**
+ * Búsqueda directa dentro de una app (receta de src/tv/search-recipes.ts):
+ * una sola orden a la tele y la captura de después para comprobarlo.
+ * null si esta instalación no sabe hacerlo (sigue la búsqueda universal).
+ */
+async function searchInApp(
+  deps: TvToolDeps,
+  recipe: Exclude<TvSearchRecipe, { kind: 'keyboard' }>,
+  query: string,
+  look: boolean,
+): Promise<AgentToolResult<Record<string, unknown>> | null> {
+  const launchParams = deps.launchParams;
+  const launchDeep = deps.launchDeep;
+  if (recipe.kind === 'params' && !launchParams) return null;
+  if (recipe.kind === 'contentId' && !launchDeep) return null;
+  const frames: TvFrame[] = [];
+  await enqueueTvMutation(async () => {
+    if (recipe.kind === 'params') await launchParams?.(recipe.appId, recipe.params);
+    else await launchDeep?.(recipe.appId, recipe.contentId);
+    if (look) {
+      const shot = await captureFrame(deps).catch(() => null);
+      if (shot) frames.push(shot);
+    }
+  });
+  const frame = frames[0];
+  const content: Array<
+    { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
+  > = [
+    {
+      type: 'text' as const,
+      text:
+        `He abierto ${recipe.app} buscando «${query}» directamente, sin teclado. ` +
+        'Comprueba en la captura que salen resultados; si no, sigue con la vía siguiente SIN PREGUNTAR.',
+    },
+  ];
+  if (frame) content.push({ type: 'text' as const, text: frameSummary(frame) }, frame.imageBlock);
+  return {
+    content,
+    details: {
+      query,
+      appId: recipe.appId,
+      recipe: recipe.kind,
+      verified: false,
+      ...(frame ? { ...frame.state, blank: frame.blank } : {}),
+    },
+  };
+}
+
 async function runTvAction(
   deps: TvToolDeps,
   args: TvArgs,
@@ -521,6 +591,23 @@ async function runTvAction(
       // Búsqueda universal de webOS: solo lectura, nada cambia en la tele.
       const key = (args.text ?? '').trim();
       if (!key) throw new Error('action=search necesita text: lo que se busca en la tele.');
+      // Con appId: la receta de búsqueda de ESA app (YouTube, Netflix,
+      // Movistar Plus+) en vez de la búsqueda universal.
+      let hint = '';
+      const askedApp = (args.appId ?? '').trim();
+      if (askedApp) {
+        const app = await resolveTvApp(deps, askedApp);
+        const recipe = appSearchRecipe(app.id, key);
+        if (recipe && recipe.kind !== 'keyboard') {
+          const direct = await searchInApp(deps, recipe, key, args.look ?? true);
+          if (direct) return direct;
+        }
+        hint =
+          recipe?.kind === 'keyboard'
+            ? recipe.hint
+            : `${app.title ?? APP_NAMES[app.id] ?? askedApp} no tiene receta de búsqueda directa: si esto no vale, usa su buscador con key/type verificando con la captura.`;
+        if (!deps.search) throw new Error(hint);
+      }
       if (!deps.search) {
         throw new Error(
           'Esta instalación no tiene la búsqueda universal de la tele: usa key/type sobre el buscador de la app.',
@@ -531,7 +618,9 @@ async function runTvAction(
         content: [
           {
             type: 'text' as const,
-            text: formatTvSearchResults(key, raw),
+            text: hint
+              ? `${formatTvSearchResults(key, raw)}\n${hint}`
+              : formatTvSearchResults(key, raw),
           },
         ],
         details: { query: key, results: raw as Record<string, unknown> },
@@ -652,8 +741,7 @@ async function runTvAction(
       if (!asked) throw new Error('action=launch necesita appId (miralos con action=apps).');
       // "Netflix", "youtube" o "RTVE Play" -> id real. Solo se pide la lista
       // a la tele cuando hace falta (ni ids reales ni alias conocidos).
-      const installed = needsAppLookup(asked) ? await deps.apps().catch(() => null) : null;
-      const resolved = resolveAppId(asked, installed);
+      const resolved = await resolveTvApp(deps, asked);
       const appId = resolved.id;
       const contentId = (args.contentId ?? '').trim();
       if (contentId) {
@@ -673,7 +761,11 @@ async function runTvAction(
           details: { appId, contentId },
         };
       }
-      await enqueueTvMutation(() => deps.launch(appId));
+      await enqueueTvMutation(() => deps.launch(appId)).catch(async (err) => {
+        // La lista guardada pudo quedarse vieja (app desinstalada o con otro id).
+        await deps.forgetApps?.().catch(() => {});
+        throw err;
+      });
       // A la persona, el nombre de la app; el id técnico (youtube.leanback.v4) va en details.
       const label = resolved.title ?? APP_NAMES[appId] ?? asked;
       return {
