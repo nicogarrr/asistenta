@@ -109,22 +109,22 @@ afterEach(() => {
 });
 
 describe('e2e altavoz', () => {
-  it('/altavoz pc y una nota del dueño en privado suena en el PC y solo confirma «sonó»', async () => {
+  it('/altavoz pc y una nota del dueño en privado suena en el PC y solo confirma «sonando»', async () => {
     const { player, deliver } = setup();
     altavoz(ownerKey, 'pc');
     expect(deliver(voice())).toBe('queued');
     await player.idle();
     expect(played).toEqual(['/tmp/voz-1.mp3']);
-    expect(confirmations).toEqual(['🔊 Sonó en el PC.']);
+    expect(confirmations).toEqual(['🔊 Sonando…']);
     expect(replies).toEqual([]);
   });
 
-  it('/altavoz tele: la confirmación corta dice «Sonó en la tele»', async () => {
+  it('/altavoz tele: la confirmación corta dice «Sonando en la tele»', async () => {
     const { player, deliver } = setup({ tele: true });
     altavoz(ownerKey, 'tele');
     expect(deliver(voice())).toBe('queued');
     await player.idle();
-    expect(confirmations).toEqual(['📺 Sonó en la tele.']);
+    expect(confirmations).toEqual(['📺 Sonando en la tele…']);
   });
 
   it('el modo sobrevive a un reinicio (se lee del fichero)', async () => {

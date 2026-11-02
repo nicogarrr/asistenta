@@ -29,8 +29,8 @@ No probado todavía en la tele real: si ninguna de las dos APIs funciona, el bot
 ## Modo altavoz: `/altavoz`
 - `/altavoz pc` — cada nota de voz que me mandes suena sola en el PC al llegar (sin cambiar el
   volumen del sistema) y nada más: no se transcribe ni se contesta (modo megáfono); la
-  confirmación es solo «🔊 Sonó en el PC.». Para hablarme de verdad, apágalo o escríbeme.
-- `/altavoz tele` — igual, pero en la tele (confirmación «📺 Sonó en la tele.»). La primera vez lo activa y lo deja guardado.
+  confirmación es solo «🔊 Sonando…». Para hablarme de verdad, apágalo o escríbeme.
+- `/altavoz tele` — igual, pero en la tele (confirmación «📺 Sonando en la tele…»). La primera vez lo activa y lo deja guardado.
 - `/altavoz off` — apagado (por defecto). `/altavoz` sin nada te dice el estado.
 
 Solo funciona desde tu chat privado con el bot (el dueño verificado) y con el control del PC
