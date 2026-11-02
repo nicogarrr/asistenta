@@ -79,3 +79,15 @@ export function vaultUsageText(sub?: string): string {
   pa vault init                 crear la caja fuerte cifrada
 `;
 }
+
+/** Pie del fichero de `/memoria exportar`: «(1 entrada)», no «(1 entradas)». */
+export function memoryExportCaption(entries: number): string {
+  return `Memoria de este chat (${entries} ${entries === 1 ? 'entrada' : 'entradas'})`;
+}
+
+/** Respuesta de `/perfil migrar`: «Migrado 1 hecho», no «Migrados 1 hechos». */
+export function profileMigratedText(migrated: number): string {
+  return migrated === 1
+    ? 'Migrado 1 hecho del perfil antiguo.'
+    : `Migrados ${migrated} hechos del perfil antiguo.`;
+}
