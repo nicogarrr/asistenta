@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
-import { type BrowserContext, chromium, type Locator, type Page } from 'playwright';
+import type { BrowserContext, BrowserType, Locator, Page } from 'playwright';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
@@ -899,8 +899,10 @@ export class BrowserService {
   async #launch(
     scope: string,
     dir: string,
-    launchOptions: Parameters<typeof chromium.launchPersistentContext>[1],
+    launchOptions: Parameters<BrowserType['launchPersistentContext']>[1],
   ): Promise<{ context: BrowserContext; channel: BrowserChannel }> {
+    // Playwright tarda ~200 ms en cargarse: solo se carga al abrir el navegador, no al arrancar.
+    const { chromium } = await import('playwright');
     const wanted = this.#options.channel;
     if (wanted !== 'chromium') {
       try {
