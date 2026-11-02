@@ -292,9 +292,9 @@ describe('computer · teclado', () => {
   it('una acción desconocida es un error', async () => {
     const { backend } = fake();
     const tool = createComputerTool(makeConfig(), backend, allowAll);
-    await expect(tool.execute('x', { action: 'scroll' as unknown as 'click' })).rejects.toThrow(
-      /acción desconocida/,
-    );
+    await expect(
+      tool.execute('x', { action: 'teletransportar' as unknown as 'click' }),
+    ).rejects.toThrow(/acción desconocida/);
   });
 });
 

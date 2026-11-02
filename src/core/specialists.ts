@@ -128,7 +128,7 @@ export const SPECIALISTS: Readonly<Record<string, SpecialistSpec>> = Object.free
     // Sin `batch`: sus pasos se comprobarian con la Gate del hilo (con sus permisos ya
     // dados), y un especialista nunca hereda aprobaciones.
     actions: {
-      computer: ['screenshot', 'click', 'move', 'drag', 'type', 'key'],
+      computer: ['screenshot', 'click', 'move', 'drag', 'type', 'key', 'scroll'],
       windows: ['list', 'foreground', 'controls', 'focus'],
     },
     effectful: true,
