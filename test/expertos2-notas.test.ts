@@ -160,7 +160,7 @@ describe('registro: notas', () => {
       expect(resolveSpecialist(a)?.name).toBe('notas');
     const notas = resolveSpecialist('notas') as SpecialistSpec;
     expect(notas.effectful).toBe(true);
-    expect(notas.tools).toEqual(['memory', 'reminder']);
+    expect(notas.tools).toEqual(['memory', 'reminder', 'agenda']);
     expect(resolveSpecialist('agenda')?.name).toBe('calendario');
   });
 
