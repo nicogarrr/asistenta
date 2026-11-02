@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { ImapFlow } from 'imapflow';
 import type { RawCommandMail } from '../channels/email.js';
-import { writeFileReplacing } from '../fs-tmp.js';
+import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 import type { ReadMailAccount } from './idle.js';
 import { extractBodyText } from './mime.js';
 
@@ -61,10 +61,17 @@ export function loadCommandCursor(file: string): CommandCursor | null {
   try {
     if (!existsSync(file)) return null;
     const v = JSON.parse(readFileSync(file, 'utf8')) as Partial<CommandCursor>;
-    return typeof v.validity === 'string' && Number.isInteger(v.next)
-      ? { validity: v.validity, next: v.next as number }
-      : null;
+    if (typeof v.validity === 'string' && Number.isInteger(v.next)) {
+      return { validity: v.validity, next: v.next as number };
+    }
+    // JSON válido pero sin la forma del cursor: se aparta igual que un roto.
+    setAsideCorrupt(file);
+    return null;
   } catch {
+    // Un cursor roto reinicia la lectura al final del buzón (los comandos
+    // recibidos entretanto se saltarían): el fichero queda apartado para
+    // poder recuperar la posición a mano.
+    setAsideCorrupt(file);
     return null;
   }
 }
