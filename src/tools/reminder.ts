@@ -482,9 +482,9 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       }
 
       if (args.action === 'cancel') {
-        const needle = String(args.text ?? '')
-          .trim()
-          .toLowerCase();
+        // Tal como lo dijo: la búsqueda ya ignora mayúsculas y tildes (foldAccents), y la
+        // respuesta repetía «maría» en minúsculas.
+        const needle = String(args.text ?? '').trim();
         if (!needle) return reply('cancel necesita text: una palabra del recordatorio.', true);
         const hits = mine().filter((r) =>
           foldAccents(reminderText(r)).includes(foldAccents(needle)),
