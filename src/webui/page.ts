@@ -433,6 +433,22 @@ export function renderPage(): string {
       .token input { font-size: 16px; }
       .cabecera { align-items: flex-start; }
     }
+    .ctx-hilo { border: 1px solid var(--borde); border-radius: 12px; padding: 10px 12px; background: var(--panel-2); margin: 0 0 10px; }
+    .ctx-hilo h3 { margin: 0 0 6px; font-size: 15px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+    .ctx-hilo h3 .muted { font-size: 13px; font-weight: normal; }
+    .ctx-barra { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: #1a2533; margin: 6px 0 8px; }
+    .ctx-barra span { display: block; height: 100%; min-width: 0; }
+    .ctx-partes { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 3px; }
+    .ctx-partes li { display: grid; grid-template-columns: 12px 1fr auto; gap: 8px; align-items: baseline; font-size: 14px; }
+    .ctx-partes .punto { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .ctx-partes .num { font-variant-numeric: tabular-nums; }
+    .ctx-partes .muted { grid-column: 2 / 4; font-size: 13px; margin-top: -2px; }
+    .ctx-linea { margin: 3px 0; font-size: 14px; }
+    .ctx-umbral { height: 8px; border-radius: 4px; background: #1a2533; overflow: hidden; margin: 2px 0 6px; }
+    .ctx-umbral span { display: block; height: 100%; background: var(--acento); }
+    .ctx-umbral.cerca span { background: #f59e0b; }
+    .ctx-hilo details { font-size: 13px; color: var(--suave); }
+    .ctx-hilo details p { margin: 4px 0 0; word-break: break-word; }
     @media (prefers-reduced-motion: reduce) {
       * { transition: none !important; }
     }
@@ -562,6 +578,16 @@ export function renderPage(): string {
           <button class="mini" type="button" data-refrescar="estado" aria-label="Refrescar Estado">Refrescar</button>
         </header>
         <div id="panel-estado" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
+      <article class="tarjeta" aria-labelledby="titulo-contexto">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-contexto">Contexto</h2>
+          <button class="mini" type="button" data-refrescar="contexto" aria-label="Refrescar Contexto">Refrescar</button>
+        </header>
+        <div id="panel-contexto" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -1415,6 +1441,149 @@ ${renderFormatScript()}
         return true;
       }
 
+      var COLORES_CONTEXTO = {
+        instrucciones: '#a78bfa',
+        herramientas: '#f59e0b',
+        adjuntos: '#34d399',
+        resumen: '#f472b6',
+        conversacion: '#7dd3fc'
+      };
+
+      function numeroEs(n) {
+        return Number(n || 0).toLocaleString('es-ES');
+      }
+
+      function haceTiempo(iso) {
+        var t = Date.parse(iso);
+        if (!isFinite(t)) return '';
+        var min = Math.max(0, Math.round((Date.now() - t) / 60000));
+        if (min < 1) return 'hace un momento';
+        if (min < 60) return 'hace ' + min + ' min';
+        var h = Math.round(min / 60);
+        if (h < 48) return 'hace ' + h + ' h';
+        return 'hace ' + Math.round(h / 24) + ' días';
+      }
+
+      function pintarContexto(contenedor, datos) {
+        contenedor.replaceChildren();
+        var hilos = datos && Array.isArray(datos.hilos) ? datos.hilos : [];
+        if (!hilos.length) {
+          contenedor.appendChild(
+            nodo('p', 'muted', 'No hay conversaciones abiertas ahora. Escribe por Telegram o en el chat del panel y aparecerá aquí.')
+          );
+        }
+        hilos.forEach(function (h) {
+          var bloque = nodo('section', 'ctx-hilo');
+          var titulo = nodo('h3', null, h.titulo || 'conversación');
+          titulo.appendChild(nodo('span', 'muted', (h.estado || '') + (h.modelo ? ' · ' + h.modelo : '')));
+          bloque.appendChild(titulo);
+          var partes = Array.isArray(h.partes) ? h.partes : [];
+          var total = Number(h.total) || 0;
+          var barra = nodo('div', 'ctx-barra');
+          barra.setAttribute('role', 'img');
+          barra.setAttribute(
+            'aria-label',
+            'Reparto del contexto: ' +
+              partes.map(function (p) { return p.nombre + ' ' + numeroEs(p.tokens); }).join(', ')
+          );
+          partes.forEach(function (p) {
+            if (!total || !p.tokens) return;
+            var trozo = nodo('span');
+            trozo.style.width = ((p.tokens / total) * 100).toFixed(2) + '%';
+            trozo.style.background = COLORES_CONTEXTO[p.id] || '#93a1b3';
+            trozo.title = p.nombre + ': ≈ ' + numeroEs(p.tokens) + ' tokens';
+            barra.appendChild(trozo);
+          });
+          bloque.appendChild(barra);
+          var lista = nodo('ul', 'ctx-partes');
+          partes.forEach(function (p) {
+            var li = nodo('li');
+            var punto = nodo('span', 'punto');
+            punto.style.background = COLORES_CONTEXTO[p.id] || '#93a1b3';
+            li.appendChild(punto);
+            li.appendChild(nodo('span', null, p.nombre));
+            li.appendChild(nodo('span', 'num', '≈ ' + numeroEs(p.tokens)));
+            if (p.detalle) li.appendChild(nodo('span', 'muted', p.detalle));
+            lista.appendChild(li);
+          });
+          bloque.appendChild(lista);
+          bloque.appendChild(
+            nodo(
+              'p',
+              'ctx-linea',
+              'Total ≈ ' + numeroEs(total) + ' tokens (aprox.)' +
+                (h.ventana ? ' de ' + numeroEs(h.ventana) + ' de la ventana del modelo · ' + h.porcentaje + ' %' : '')
+            )
+          );
+          if (h.resumenApagado) {
+            bloque.appendChild(nodo('p', 'ctx-linea', 'Resumen automático: apagado (PA_COMPACT_TOKENS=0).'));
+          } else {
+            var umbral = Number(h.umbralResumen) || 0;
+            var historial = Number(h.historial) || 0;
+            bloque.appendChild(
+              nodo(
+                'p',
+                'ctx-linea',
+                'Resumen automático al llegar a ≈ ' + numeroEs(umbral) + ' del historial (ahora ≈ ' +
+                  numeroEs(historial) + '): faltan ≈ ' + numeroEs(h.faltanParaResumen) + '.'
+              )
+            );
+            var progreso = umbral ? Math.min(100, (historial / umbral) * 100) : 0;
+            var medidor = nodo('div', 'ctx-umbral' + (progreso >= 80 ? ' cerca' : ''));
+            medidor.setAttribute('role', 'progressbar');
+            medidor.setAttribute('aria-label', 'Camino hasta el resumen automático');
+            medidor.setAttribute('aria-valuemin', '0');
+            medidor.setAttribute('aria-valuemax', '100');
+            medidor.setAttribute('aria-valuenow', String(Math.round(progreso)));
+            var lleno = nodo('span');
+            lleno.style.width = progreso.toFixed(1) + '%';
+            medidor.appendChild(lleno);
+            bloque.appendChild(medidor);
+          }
+          var resumenes = Number(h.resumenes) || 0;
+          bloque.appendChild(
+            nodo(
+              'p',
+              'ctx-linea muted',
+              h.ultimoResumen
+                ? 'Último resumen: ' + haceTiempo(h.ultimoResumen) +
+                    (resumenes ? ' · ' + resumenes + (resumenes === 1 ? ' resumen' : ' resúmenes') + ' desde que arrancó' : '')
+                : 'Todavía no se ha resumido esta conversación.'
+            )
+          );
+          var nombres = Array.isArray(h.herramientas) ? h.herramientas : [];
+          if (nombres.length) {
+            var detalles = document.createElement('details');
+            var extra = Number(h.herramientasRecortadas) || 0;
+            detalles.appendChild(nodo('summary', null, 'Herramientas cargadas (' + (nombres.length + extra) + ')'));
+            detalles.appendChild(
+              nodo('p', null, nombres.join(', ') + (extra ? ' y ' + extra + ' más' : ''))
+            );
+            bloque.appendChild(detalles);
+          }
+          contenedor.appendChild(bloque);
+        });
+        var otros = datos && Number(datos.otros) > 0 ? Number(datos.otros) : 0;
+        if (otros) {
+          contenedor.appendChild(
+            nodo('p', 'muted', otros === 1 ? 'Y 1 conversación más de otro chat (no se detalla).' : 'Y ' + otros + ' conversaciones más de otros chats (no se detallan).')
+          );
+        }
+        if (datos && datos.nota) contenedor.appendChild(nodo('p', 'muted', datos.nota));
+      }
+
+      async function cargarContexto() {
+        var contenedor = document.getElementById('panel-contexto');
+        pintarCarga(contenedor);
+        try {
+          pintarContexto(contenedor, await pedir('/api/contexto'));
+          finCarga(contenedor, true);
+        } catch (error) {
+          pintarError(contenedor, error, cargarContexto); return false;
+        }
+        return true;
+      }
+
       // Búsqueda y ámbito: si llega tarde la respuesta de una consulta anterior (escribir
       // rápido, cambiar de ámbito), no pinta encima de la última; solo cuenta la más nueva.
       var consultaSesiones = 0;
@@ -1692,6 +1861,7 @@ ${renderFormatScript()}
         repartos: cargarRepartos,
         funciones: cargarFunciones,
         estado: cargarEstado,
+        contexto: cargarContexto,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
         auditoria: cargarAuditoria,
@@ -1710,6 +1880,7 @@ ${renderFormatScript()}
           cargarFunciones(),
           cargarTareas(),
           cargarEstado(),
+          cargarContexto(),
           cargarSesiones(),
           cargarMemoria(),
           cargarAmbitos(),
