@@ -1034,7 +1034,7 @@ export class TelegramChannel implements ChannelAdapter {
     // approvals for the same request): the LAST one, right under the end of the
     // text, so a long message doesn't make the owner scroll up to approve.
     const chunks = outbound.text.trim()
-      ? chunkText(outbound.text, 4000, { marks: outbound.format === 'marks' })
+      ? chunkText(outbound.text, 4000, { marks: outbound.format === 'marks', utf16: true })
       : [];
     for (const [index, chunk] of chunks.entries()) {
       const withButtons = index === chunks.length - 1;
@@ -1345,7 +1345,7 @@ export class TelegramChannel implements ChannelAdapter {
       // Telegram rechaza más de 4096 caracteres: una respuesta final larga se
       // quedaba en el borrador a medias (solo un log). Ahora el borrador recibe el
       // primer trozo y el resto llega en mensajes nuevos.
-      const [first = text, ...rest] = chunkText(text, 4000);
+      const [first = text, ...rest] = chunkText(text, 4000, { utf16: true });
       await this.#throttled(() =>
         withTimeout(
           this.#bot.api.editMessageText(ref.chatId, ref.messageId, first),
@@ -1874,8 +1874,9 @@ export function buildKeyboard(buttons: Array<{ label: string; action: string }>)
  * ciegas cuando no hay ninguno. Un bloque ``` abierto en el corte se cierra en ese mensaje
  * y se reabre en el siguiente, así ningún mensaje queda con el código a medio formatear.
  *
- * Se cuenta en puntos de código, no en unidades UTF-16: cortar a mitad de un emoji deja un
- * surrogate suelto y un carácter de reemplazo en el chat.
+ * Se corta siempre entre puntos de código: cortar a mitad de un emoji deja un surrogate
+ * suelto y un carácter de reemplazo en el chat. Con `utf16` el tamaño se mide como
+ * Telegram (unidades UTF-16, un emoji astral cuenta 2); sin ella, en puntos de código.
  */
 /** Lo mínimo de la Bot API que necesita {@link configureCommandMenu}. */
 export interface CommandMenuApi {
@@ -1912,25 +1913,32 @@ export function isEntityParseError(err: unknown): boolean {
   );
 }
 
-export function chunkText(text: string, size: number, opts: { marks?: boolean } = {}): string[] {
-  if (Array.from(text).length <= size) return [text];
+export function chunkText(
+  text: string,
+  size: number,
+  opts: { marks?: boolean; utf16?: boolean } = {},
+): string[] {
+  // Telegram mide en unidades UTF-16 (un emoji astral cuenta 2): con `utf16` se cuenta
+  // igual, aunque los cortes siguen cayendo entre puntos de código.
+  const len = (s: string): number => (opts.utf16 ? s.length : Array.from(s).length);
+  if (len(text) <= size) return [text];
   const out: string[] = [];
   let rest = text;
   let reopen = false;
   let reopenBold = false;
   while (rest.length > 0) {
     const prefix: string = reopen ? FENCE_OPEN : reopenBold ? BOLD : '';
-    if (Array.from(prefix + rest).length <= size) {
+    if (len(prefix + rest) <= size) {
       out.push(prefix + rest);
       break;
     }
-    const budget = Math.max(1, size - Array.from(prefix).length);
-    let piece = splitAt(rest, budget);
+    const budget = Math.max(1, size - len(prefix));
+    let piece = splitAt(rest, budget, opts.utf16);
     let body: string = prefix + piece.head;
     reopen = countFences(body) % 2 === 1;
-    if (reopen && Array.from(prefix).length + FENCE_CLOSE.length < size) {
+    if (reopen && len(prefix) + FENCE_CLOSE.length < size) {
       // Hace falta cerrar el bloque: vuelve a cortar dejando sitio para el cierre.
-      piece = splitAt(rest, Math.max(1, budget - FENCE_CLOSE.length));
+      piece = splitAt(rest, Math.max(1, budget - FENCE_CLOSE.length), opts.utf16);
       body = prefix + piece.head;
       reopen = countFences(body) % 2 === 1;
       if (reopen) body += FENCE_CLOSE;
@@ -1941,8 +1949,8 @@ export function chunkText(text: string, size: number, opts: { marks?: boolean } 
     // de este trozo y se reabre en el siguiente; si no, cada trozo pierde la suya.
     reopenBold = false;
     if (opts.marks && !reopen && piece.midLine && boldOpen(body)) {
-      if (Array.from(body).length + BOLD.length > size) {
-        piece = splitAt(rest, Math.max(1, budget - BOLD.length));
+      if (len(body) + BOLD.length > size) {
+        piece = splitAt(rest, Math.max(1, budget - BOLD.length), opts.utf16);
         body = prefix + piece.head;
       }
       if (piece.midLine && boldOpen(body) && countFences(body) % 2 === 0) {
@@ -1974,13 +1982,19 @@ function countFences(text: string): number {
 }
 
 /**
- * Corta `text` en un trozo de como mucho `budget` puntos de código y el resto.
+ * Corta `text` en un trozo de como mucho `units` puntos de código (o unidades UTF-16 si
+ * `utf16`) y el resto.
  *
  * Prefiere, por orden, salto de párrafo, salto de línea, fin de frase y espacio, siempre
  * que el trozo conserve al menos media ventana; si no hay ninguno, corta a ciegas.
  */
-function splitAt(text: string, budget: number): { head: string; rest: string; midLine: boolean } {
+function splitAt(
+  text: string,
+  units: number,
+  utf16 = false,
+): { head: string; rest: string; midLine: boolean } {
   const points = Array.from(text);
+  const budget = utf16 ? pointsWithin(points, units) : units;
   const window = points.slice(0, budget + 1).join('');
   const minimum = Math.floor(budget / 2);
   const rules: Array<{ pattern: RegExp; after: boolean }> = [
@@ -2010,6 +2024,18 @@ function splitAt(text: string, budget: number): { head: string; rest: string; mi
   // midLine: el corte no cae en un salto de línea (la línea sigue en el próximo trozo).
   const midLine = cut < points.length && !/^[ \t]*\r?\n/u.test(tail);
   return { head: head || points.slice(0, cut).join(''), rest, midLine };
+}
+
+/** Cuántos puntos de código caben en `units` unidades UTF-16 (al menos 1: siempre se avanza). */
+function pointsWithin(points: string[], units: number): number {
+  let used = 0;
+  let count = 0;
+  for (const point of points) {
+    if (used + point.length > units) break;
+    used += point.length;
+    count += 1;
+  }
+  return Math.max(1, count);
 }
 
 /** Enlace markdown `[texto](url)` como lo convierte telegramHtml (formatters.ts). */
