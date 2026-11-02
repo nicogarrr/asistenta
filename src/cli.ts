@@ -6803,7 +6803,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
-          prompt = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
+          prompt = voiceNotePrompt(heard, inbound.forwardedFrom);
           // El acuse queda con lo entendido: si oyó mal, se ve antes de la respuesta.
           await receipt.update(voiceHeardText(heard.text));
           log.info('voice transcribed', {
@@ -8514,6 +8514,19 @@ function fileErrorReason(raw: string): string | null {
   if (m[1] === 'EBUSY')
     return `«${name}» está en uso por otro programa; ciérralo y prueba otra vez.`;
   return `Windows no me deja abrir «${name}» (permiso denegado o lo tiene otro programa).`;
+}
+
+/**
+ * Lo que llega al modelo de una nota de voz: marcada como transcrita (una palabra mal
+ * oída no es algo que el dueño escribió) y, si es un reenvío, marcada como de otra
+ * persona; sin esa marca, el audio reenviado de un amigo parecía una orden del dueño.
+ */
+export function voiceNotePrompt(
+  heard: { text: string; truncated?: boolean },
+  forwardedFrom?: string,
+): string {
+  const voice = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
+  return forwardedFrom ? `${forwardedFrom}\n${voice}` : voice;
 }
 
 /**
