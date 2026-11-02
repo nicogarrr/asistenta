@@ -330,7 +330,42 @@ function esCondicion(t: string): boolean {
   return false;
 }
 
+/**
+ * El texto de una búsqueda tal y como lo escribió el dueño (en minúsculas):
+ * el parser trabaja sin tildes, y «pon en YouTube Peña» buscaba «pena» (la ñ
+ * cambia la palabra: «año» → «ano»). Si no se encuentra el tramo, la consulta
+ * normalizada de siempre.
+ */
+export function searchTextAsWritten(original: string, query: string): string {
+  const words = query.split(' ').filter(Boolean);
+  if (words.length === 0) return query;
+  let folded = '';
+  for (let i = 0; i < original.length; i++) {
+    const ch = original[i] ?? ' ';
+    const f = ch
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    folded += f.length === 1 && /[a-z0-9.-]/.test(f) ? f : ' ';
+  }
+  const esc = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`(?<![a-z0-9])${esc.join(' +')}(?![a-z0-9])`);
+  const m = re.exec(folded);
+  if (!m) return query;
+  return original
+    .slice(m.index, m.index + m[0].length)
+    .replace(/[^\p{L}\p{N}.-]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 export function parseTvCommand(text: string): TvIntent | null {
+  const intent = parseTvCommandNorm(text);
+  if (intent?.action !== 'search') return intent;
+  return { ...intent, text: searchTextAsWritten(text, intent.text) };
+}
+
+function parseTvCommandNorm(text: string): TvIntent | null {
   if (esCondicion(normalizeOrder(text))) return null;
   // «vol 2.5» ponía 2 (se perdía lo de detrás del punto). En el volumen se redondea
   // (2.5 → 3, 12,5 → 13); en cualquier otra orden un decimal no tiene sentido: al modelo.
