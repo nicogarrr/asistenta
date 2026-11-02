@@ -429,6 +429,17 @@ const TV_READ_ONLY: ReadonlySet<string> = new Set([
  * el usuario y que hacer, en castellano, sin perder el detalle original (que
  * sigue en el mensaje) ni la clase del error (se reescribe el message).
  */
+/** Órdenes de «poner algo» que encienden antes una tele apagada del todo. */
+const WAKES_FOR = new Set<TvIntent['action']>(['launch', 'search']);
+
+/** No se llegó a conectar (no salió nada): es seguro encender y repetir. */
+function isUnreachableError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'TvUnreachableError' || /No se pudo conectar con la TV/.test(err.message))
+  );
+}
+
 export function explainTvError(err: unknown): unknown {
   if (!(err instanceof Error)) return err;
   const msg = err.message;
@@ -991,9 +1002,25 @@ async function runTvAction(
           details: { intent, verified: false },
         };
       }
-      const res = route
-        ? await route.run(() => runTvAction(deps, intent as TvArgs))
-        : await runTvAction(deps, intent as TvArgs);
+      const exec = () =>
+        route
+          ? route.run(() => runTvAction(deps, intent as TvArgs))
+          : runTvAction(deps, intent as TvArgs);
+      let res: AgentToolResult<Record<string, unknown>>;
+      let woke = false;
+      try {
+        res = await exec();
+      } catch (err) {
+        // «pon en YouTube X» con la tele apagada del todo: antes contestaba «No
+        // llego a la tele». Si no llegó nada (inalcanzable), se enciende por red
+        // (Wake-on-LAN, como action=power) y se repite UNA vez.
+        if (!WAKES_FOR.has(intent.action) || !isUnreachableError(err)) throw err;
+        const wake = () => enqueueTvMutation(() => deps.power(true));
+        const outcome = await (route ? route.run(wake) : wake()).catch(() => undefined);
+        if (!outcome || outcome.via !== 'wol' || outcome.verified === false) throw err;
+        res = await exec();
+        woke = true;
+      }
       return {
         ...res,
         content: [
@@ -1001,9 +1028,17 @@ async function runTvAction(
             type: 'text' as const,
             text: `Entendido: ${describeTvIntent(intent)}${route?.label ? ` (tele: ${route.label})` : ''}.`,
           },
+          ...(woke
+            ? [
+                {
+                  type: 'text' as const,
+                  text: 'La tele estaba apagada del todo: la he encendido por red (Wake-on-LAN) antes.',
+                },
+              ]
+            : []),
           ...res.content,
         ],
-        details: { ...res.details, intent },
+        details: { ...res.details, intent, ...(woke ? { woke: 'wol' } : {}) },
       };
     }
     case 'key': {

@@ -18,7 +18,7 @@
  */
 import { APP_ALIASES, normalizeTvText } from './apps.js';
 import { parseTvCommand, type TvIntent, tvOrderHasTime } from './natural.js';
-import { withoutTvPlace } from './target.js';
+import { extractTvTarget, withoutTvPlace } from './target.js';
 
 /** Ventana tras una orden de tele en la que lo siguiente se entiende como de la tele. */
 export const TV_CONTEXT_MS = 3 * 60_000;
@@ -76,6 +76,16 @@ export function tvFastPathIntent(input: TvFastPathInput): TvIntent | null {
     // La tele la elige luego la tool por su nombre; aquí solo se mira si es una orden.
     const intent = parseTvCommand(withoutTvName(text, names));
     if (intent) return intent;
+    // «enciende la del dormitorio»: quitar solo «del dormitorio» deja «enciende
+    // la», que no es una orden; la tool lo entiende como «enciende la tele».
+    const byName = extractTvTarget(
+      text,
+      names.map((name, i) => ({ host: `tv-${i}`, name, clientKey: '', secure: '1' as const })),
+    );
+    if (byName.tv && !byName.ask) {
+      const named = parseTvCommand(byName.text);
+      if (named) return named;
+    }
   }
   const intent = parseTvCommand(text) ?? parseTvCommand(withoutTvPlace(text));
   if (!intent) return null;
