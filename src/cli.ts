@@ -108,6 +108,7 @@ import {
   LiveNote,
   RECEIPT_READ_TEXT,
   receiptKind,
+  receiptStartsFor,
   receiptStartText,
   voiceHeardText,
 } from './channels/telegram-receipts.js';
@@ -6893,7 +6894,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       edit: (id, text) => telegram.editMessageText(inbound.chatId, id, text),
     });
     const kind = receiptKind(inbound);
-    if (kind && statusOn.get(inbound.chatId) !== false) {
+    if (kind && receiptStartsFor(kind) && statusOn.get(inbound.chatId) !== false) {
       await receipt.start(receiptStartText(kind, inbound));
     }
     /** Acuse de foto/documento: ya leído, y se borra con las notas de progreso. */
@@ -7132,7 +7133,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // something the user typed, and so the reply can be spoken back.
           prompt = voiceNotePrompt(heard, inbound.forwardedFrom, text);
           // El acuse queda con lo entendido: si oyó mal, se ve antes de la respuesta.
-          await receipt.update(voiceHeardText(heard.text));
+          // Sin acuse con lo entendido (Nico: que haga la acción sin decirme «transcribiendo»).
+          // Solo si no se oyó nada, para que el silencio no parezca que se ignoró el audio.
+          if (!heard.text.trim()) await receipt.show(voiceHeardText(''));
+          else await receipt.update(voiceHeardText(heard.text));
           log.info('voice transcribed', {
             seconds: heard.durationSeconds,
             chars: heard.text.length,
