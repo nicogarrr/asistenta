@@ -126,8 +126,10 @@ export function buildContextNote(
   // abierto en otro turno y qué cortó el último reinicio. Sin esto, «¿cómo vas?» se
   // contestaba de memoria («sin nada a medias») con la tarea colgada o cortada.
   if (ownerView) {
-    const mine = (request ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
-    const running = openBusyItems().filter((i) => i.kind !== 'turnos' || i.label !== mine);
+    // Todo lo abierto: la nota se arma ANTES de que este turno se abra (busyBegin va dentro
+    // de agent.run), así que nada de la lista es este turno. Antes se quitaban los turnos con
+    // el mismo texto que el mensaje y eso escondía la tarea colgada cuando Nico la repetía.
+    const running = openBusyItems();
     const cut = interruptedTasks();
     const lines: string[] = [];
     if (running.length) lines.push(`Abierto ahora: ${describeBusy(running)}.`);
