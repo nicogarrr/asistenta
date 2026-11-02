@@ -4,7 +4,7 @@ import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { APP_NAMES, needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
-import { describeTvIntent, parseTvCommand, tvOrderHasTime } from '../tv/natural.js';
+import { describeTvIntent, parseTvCommand, type TvIntent, tvOrderHasTime } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
 import { resolveScene, runScene, summarizeScene, TV_SCENES } from '../tv/scenes.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
@@ -51,6 +51,8 @@ export interface TvOrderRoute {
   /** Nombre de la tele nombrada, para la respuesta («Hecho (dormitorio)»). */
   label?: string;
   run: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** Tele de otra marca (Roku...): ejecuta la orden entendida con su driver y da la frase. */
+  intentRunner?: (intent: TvIntent) => Promise<string>;
 }
 
 export interface TvToolDeps {
@@ -673,6 +675,20 @@ async function runTvAction(
         throw new Error(
           `No he entendido "${text.slice(0, 80)}" como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Tambien puedes usar las acciones explicitas.`,
         );
+      }
+      if (route?.intentRunner) {
+        const runner = route.intentRunner;
+        const said = await enqueueTvMutation(() => runner(intent));
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Entendido: ${describeTvIntent(intent)}${route.label ? ` (tele: ${route.label})` : ''}.`,
+            },
+            { type: 'text' as const, text: said },
+          ],
+          details: { intent, verified: false },
+        };
       }
       const res = route
         ? await route.run(() => runTvAction(deps, intent as TvArgs))

@@ -13,10 +13,12 @@ import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { createTvTool, type TvMemoryState, type TvToolDeps } from '../tools/tv.js';
 import { discoverWebOsTvs } from '../tv/discover.js';
+import { runIntentOnDriver } from '../tv/drivers.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.js';
 import { loadKnownTvs, relocateMovedTvs, saveTvClientKey } from '../tv/known-tvs.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
+import { rokuDriver } from '../tv/roku.js';
 import { readTvStatus } from '../tv/status.js';
 import {
   currentTvTarget,
@@ -83,6 +85,11 @@ export function tvToolDeps(store: Store): TvToolDeps {
       log.warn('tv: auto-seleccion de tele fallo; sigo con la activa guardada', {
         err: String(err),
       });
+    }
+    if ((await vaultGet('tv:activeBrand')) === 'roku') {
+      throw new Error(
+        'La tele activa es un Roku: dale la orden en palabras (action=command, p. ej. "baja el volumen"); esta accion es de las LG.',
+      );
     }
     const host = await vaultGet('tv:host');
     const clientKey = await vaultGet('tv:clientKey');
@@ -154,7 +161,18 @@ export function tvToolDeps(store: Store): TvToolDeps {
     const found = extractTvTarget(text, known);
     const direct = <T>(fn: () => Promise<T>) => fn();
     if (found.ask) return { text, ask: found.ask, run: direct };
-    const tv = found.tv;
+    // Un Roku (nombrado, o el activo sin nombrar) va por su driver ECP, nunca por SSAP.
+    const activeTv = known.find((t) => t.host === active);
+    const tv = found.tv ?? (activeTv?.brand === 'roku' ? activeTv : undefined);
+    if (tv?.brand === 'roku') {
+      const roku = tv;
+      return {
+        text: found.text,
+        label: tvTargetLabel(roku),
+        run: direct,
+        intentRunner: (intent) => runIntentOnDriver(rokuDriver(roku.host), intent),
+      };
+    }
     if (!tv || tv.host === active) {
       // La activa: el cableado de siempre (claves sueltas), sin contexto.
       return {

@@ -35,7 +35,8 @@ export interface AutoSelectDeps {
 let lastMiss = 0;
 
 /** Puerto que delata a la tele en su red: SSAP cifrado en LG, REST en Sony. */
-export function tvPort(brand: 'lg' | 'sony'): number {
+export function tvPort(brand: 'lg' | 'sony' | 'roku'): number {
+  if (brand === 'roku') return 8060;
   return brand === 'sony' ? 80 : 3001;
 }
 
@@ -88,7 +89,7 @@ export function matchKnownTv(
 export interface EnsureResult {
   /** Tele activa tras la pasada (la de siempre o la recien cambiada). */
   host?: string;
-  brand?: 'lg' | 'sony';
+  brand?: 'lg' | 'sony' | 'roku';
   /** Se ha cambiado la activa a esta (para avisar al usuario). */
   switchedTo?: KnownTv;
   /** Por que no hay tele usable, en castellano. */
@@ -103,7 +104,8 @@ export interface EnsureResult {
 export async function ensureActiveTv(deps: AutoSelectDeps): Promise<EnsureResult> {
   const now = deps.now ?? Date.now;
   const host = await deps.vaultGet('tv:host');
-  const brand = (await deps.vaultGet('tv:activeBrand')) === 'sony' ? 'sony' : 'lg';
+  const rawBrand = await deps.vaultGet('tv:activeBrand');
+  const brand = rawBrand === 'sony' ? 'sony' : rawBrand === 'roku' ? 'roku' : 'lg';
   if (!host) return { reason: 'no hay ninguna tele emparejada' };
   const tcpOpen = deps.tcpOpen ?? defaultTcpOpen;
 
@@ -166,7 +168,9 @@ export async function ensureActiveTv(deps: AutoSelectDeps): Promise<EnsureResult
   await deps.vaultSetMany({
     'tv:host': newHost,
     'tv:activeBrand': tv.brand ?? 'lg',
-    ...(tv.brand === 'sony' ? {} : { 'tv:clientKey': tv.clientKey, 'tv:secure': tv.secure }),
+    ...(tv.brand === 'sony' || tv.brand === 'roku'
+      ? {}
+      : { 'tv:clientKey': tv.clientKey, 'tv:secure': tv.secure }),
     ...(tv.mac ? { 'tv:mac': tv.mac } : {}),
     // La IP nueva entra al registro para la proxima vez.
     [TV_REGISTRY_KEY]: JSON.stringify(

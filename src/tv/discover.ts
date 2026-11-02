@@ -56,7 +56,14 @@ export function xmlTag(xml: string, tag: string): string | undefined {
   return value ? value : undefined;
 }
 
-export type TvBrand = 'lg' | 'sony';
+export type TvBrand = 'lg' | 'sony' | 'roku';
+
+/** Es un Roku (o una tele con Roku dentro): su SERVER o su fabricante lo dicen. */
+export function isRoku(info: { server?: string; manufacturer?: string; st?: string }): boolean {
+  if (/^roku:ecp$/i.test(info.st ?? '')) return true;
+  if (/\broku\//i.test(info.server ?? '')) return true;
+  return /^roku/i.test(info.manufacturer ?? '');
+}
 
 /** Es una Sony Bravia: el fabricante o el modelo lo dicen (ScalarWebAPI la delata en SSDP). */
 export function isSonyBravia(info: {
@@ -206,6 +213,7 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
         'ssdp:all',
         'urn:dial-multiscreen-org:service:dial:1',
         'urn:schemas-sony-com:service:ScalarWebAPI:1',
+        'roku:ecp',
       ]) {
         try {
           socket.send(msearch(st), SSDP_PORT, SSDP_ADDR, () => {});
@@ -257,7 +265,9 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
       ? 'sony'
       : isLgWebOsTv(info)
         ? 'lg'
-        : (undefined as never);
+        : isRoku(info)
+          ? 'roku'
+          : (undefined as never);
     if (!brand) continue;
     const uuid = tv.uuid ?? uuidFromUsn(tv.usn);
     out.push({
