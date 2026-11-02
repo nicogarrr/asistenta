@@ -4053,6 +4053,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const routine =
       store.getRoutine(thread.key, name) ?? store.getRoutine(`${thread.chatKey}#main`, name);
     if (!routine) {
+      // «/routine Pedir cita» o «/routine Informe»: el nombre dicho normal (mayúsculas,
+      // tildes, espacios en vez de guiones) es el de una rutina que ya existe.
+      const loose = routineNameAnswer(
+        store
+          .listRoutines()
+          .filter((r) => r.scope === thread.key || r.scope === `${thread.chatKey}#main`)
+          .map((r) => r.name),
+      );
+      const whole = loose(args);
+      const first = whole ? null : loose(name);
+      const again =
+        whole ?? (first ? [first, ...args.trim().split(/\s+/).slice(1)].join(' ') : null);
+      if (again && again !== args.trim()) return cmdRoutine(thread, inbound, again);
       // Not a stored name, so it may be how a person asks for a new one:
       // "/routine cada mañana a las 8 resumen del día". The Spanish schedule in
       // the words becomes a real cron routine instead of "no such routine".
