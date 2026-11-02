@@ -124,7 +124,7 @@ export interface MediaToolDeps {
    */
   /**
    * Plays an already-playable MP3 on the TV. Takes ownership of the file (deletes it
-   * when done). Absent when the TV target is off (PA_AUDIO_TELE) or no TV is paired.
+   * when done). Absent when the TV target is off (flag audio:tele) or no TV is paired.
    */
   castToTv?: (file: string) => Promise<{
     ok: boolean;
@@ -378,7 +378,7 @@ async function playReceived(
 ) {
   if (target === 'tele' && !deps.castToTv) {
     return ok(
-      'Reproducir en la tele está apagado o no hay tele emparejada. Se activa con PA_AUDIO_TELE=1 (y la tele emparejada con pa tv). Puedo sonarlo en el PC si quieres.',
+      'Reproducir en la tele está apagado o no hay tele emparejada. Se activa con «/altavoz tele» (y la tele emparejada con pa tv). Puedo sonarlo en el PC si quieres.',
       { played: false, reason: 'tele off', target },
     );
   }

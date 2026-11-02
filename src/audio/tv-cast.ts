@@ -11,7 +11,8 @@ import { pickLanAddress, type ServedFile, serveFileToHost } from './lan-server.j
  * multimedia de webOS (`media.viewer/open`). Si esa API no existe en el modelo, se
  * prueba `system.launcher/open` con la misma URL (lo abre el navegador de la tele,
  * que reproduce MP3). Ninguna de las dos está verificada en la tele real de Nico:
- * por eso todo esto está apagado por defecto (PA_AUDIO_TELE=1 lo enciende).
+ * por eso todo esto está apagado por defecto: lo enciende «/altavoz tele» (guarda
+ * el flag audio:tele, sin .env ni reinicio) o PA_AUDIO_TELE=1 (legado).
  */
 
 export type SsapRequest = (
@@ -108,6 +109,20 @@ function appIdOf(res: unknown): string | undefined {
 
 export function audioTeleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return /^(1|on|si|sí|true)$/i.test((env.PA_AUDIO_TELE ?? '').trim());
+}
+
+/** Clave kv (Store) donde «/altavoz tele» guarda que el audio por tele está activado. */
+export const AUDIO_TELE_KV_KEY = 'audio:tele';
+
+/**
+ * ¿Audio por tele encendido? El flag que guarda «/altavoz tele» (kv, se lee en cada
+ * llamada: activar/apagar es en caliente, sin reiniciar) o PA_AUDIO_TELE=1 (legado).
+ */
+export function audioTeleOn(
+  flag: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (flag ?? '').trim() === '1' || audioTeleEnabled(env);
 }
 
 /**

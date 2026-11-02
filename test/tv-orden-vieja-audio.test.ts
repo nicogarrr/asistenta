@@ -37,6 +37,8 @@ describe('audio a la tele desde un mensaje viejo', () => {
 
   it('el daemon envuelve el cast de la tool de audio', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(cli).toMatch(/staleGuardedCaster\(\s*tvCasterFromVault\(/);
+    // staleGuardedCaster envuelve el caster real (en medio puede ir el flag
+    // caliente audio:tele de /altavoz tele).
+    expect(cli).toMatch(/staleGuardedCaster\(\s*\(file\) =>[\s\S]{0,500}tvCasterFromVault\(/);
   });
 });
