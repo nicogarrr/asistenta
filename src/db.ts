@@ -110,7 +110,10 @@ export interface RoutineTrigger {
   scope: string;
   /** Name of the routine (in the same scope) fired when the event matches. */
   routine: string;
-  /** Event source: 'archivo' (new download), 'precio' (price alert), 'mensaje' (inbound text). */
+  /**
+   * Event source: 'archivo' (new download), 'precio' (price alert), 'mensaje' (inbound
+   * text), 'correo' (new mail: sender/subject, see triggers.ts parseMailMatch).
+   */
   event: string;
   /** Case-insensitive needle: message text, file name or price-alert text. */
   match: string;

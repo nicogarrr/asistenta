@@ -15,6 +15,10 @@
  * - 'precio': texto de un aviso de precio. Global igual. Hoy no lo emite nadie: el
  *   vigilante de precios automático se quitó (31-oct-2026); se conserva para no romper
  *   disparadores ya guardados.
+ * - 'correo': un correo nuevo en la bandeja de entrada (IMAP IDLE, solo lectura).
+ *   Global igual. Casa por remitente y/o asunto, nunca por el cuerpo: «de:renfe»,
+ *   «asunto:billete», las dos a la vez, o texto suelto que esté en cualquiera de las
+ *   dos. La rutina recibe De y Asunto marcados como contenido de terceros.
  *
  * Seguridad heredada: el prompt disparado es el de la rutina guardada
  * (procedurePrompt o buildMacroPrompt con sus args fijos validados); las
@@ -27,8 +31,13 @@ import type { Routine, RoutineTrigger, Store } from './db.js';
 import { log } from './log.js';
 import { buildMacroPrompt, isMacroName, procedurePrompt } from './routines.js';
 
-export type TriggerEventType = 'archivo' | 'precio' | 'mensaje';
-export const TRIGGER_EVENTS: readonly TriggerEventType[] = ['archivo', 'precio', 'mensaje'];
+export type TriggerEventType = 'archivo' | 'precio' | 'mensaje' | 'correo';
+export const TRIGGER_EVENTS: readonly TriggerEventType[] = [
+  'archivo',
+  'precio',
+  'mensaje',
+  'correo',
+];
 
 export interface TriggerEvent {
   type: TriggerEventType;
@@ -39,6 +48,51 @@ export interface TriggerEvent {
   scope: string;
   /** Haystack: message text, file name or price-alert text. */
   text: string;
+  /** 'correo': remitente y asunto, por separado (el cuerpo nunca entra). */
+  mail?: { from: string; subject: string };
+  /**
+   * Nota que acompaña al prompt de la rutina (va DETRÁS, marcada por quien la
+   * construye como contenido de terceros). Nunca sustituye al prompt guardado.
+   */
+  note?: string;
+}
+
+/** Lo que pide un disparador de correo: remitente, asunto y/o texto suelto. */
+export interface MailMatch {
+  from: string[];
+  subject: string[];
+  any: string[];
+}
+
+/**
+ * «de:renfe asunto:"billete de tren" urgente» → remitente contiene «renfe», asunto
+ * contiene «billete de tren» y «urgente» está en el remitente o en el asunto.
+ * También valen from:/subject:. Determinista: nada de modelo.
+ */
+export function parseMailMatch(match: string): MailMatch {
+  const out: MailMatch = { from: [], subject: [], any: [] };
+  const re = /(?:(de|from|asunto|subject):)?(?:"([^"]*)"|(\S+))/gi;
+  for (const m of match.matchAll(re)) {
+    const value = (m[2] ?? m[3] ?? '').trim().toLocaleLowerCase('es');
+    if (!value) continue;
+    const key = (m[1] ?? '').toLowerCase();
+    if (key === 'de' || key === 'from') out.from.push(value);
+    else if (key === 'asunto' || key === 'subject') out.subject.push(value);
+    else out.any.push(value);
+  }
+  return out;
+}
+
+export function mailMatches(match: string, mail: { from: string; subject: string }): boolean {
+  const want = parseMailMatch(match);
+  if (!want.from.length && !want.subject.length && !want.any.length) return false;
+  const from = mail.from.toLocaleLowerCase('es');
+  const subject = mail.subject.toLocaleLowerCase('es');
+  return (
+    want.from.every((v) => from.includes(v)) &&
+    want.subject.every((v) => subject.includes(v)) &&
+    want.any.every((v) => from.includes(v) || subject.includes(v))
+  );
 }
 
 /** Scope rule: a global event (scope '') matches every trigger; a chat event only its chat. */
@@ -50,6 +104,7 @@ export function triggerScopeMatches(triggerScope: string, eventScope: string): b
 export function matchesTrigger(t: RoutineTrigger, e: TriggerEvent): boolean {
   if (!t.enabled || t.event !== e.type) return false;
   if (!triggerScopeMatches(t.scope, e.scope)) return false;
+  if (e.type === 'correo') return e.mail ? mailMatches(t.match, e.mail) : false;
   return e.text.toLocaleLowerCase('es').includes(t.match.toLocaleLowerCase('es'));
 }
 
@@ -139,7 +194,10 @@ export class TriggerEngine {
       // with retries on the next event.
       this.#store.markTriggerFired(t.id, new Date(nowMs).toISOString());
       try {
-        await this.#run(built.prompt, { scope: t.scope, routine, trigger: t });
+        const prompt = event.note?.trim()
+          ? `${built.prompt}\n\n${event.note.trim()}`
+          : built.prompt;
+        await this.#run(prompt, { scope: t.scope, routine, trigger: t });
         fired++;
       } catch (err) {
         skipped++;
@@ -171,7 +229,8 @@ export function parseTriggerAdd(
 ): { ok: true; value: ParsedTriggerAdd } | { ok: false; error: string } {
   const USAGE =
     'Dime qué lo dispara y qué rutina hago, separados por una barra. Por ejemplo: ' +
-    '«archivo .pdf | macro/archiva fichero=documentos» o «mensaje factura | macro/archiva».';
+    '«archivo .pdf | macro/archiva fichero=documentos», «mensaje factura | macro/archiva» ' +
+    'o «correo de:renfe asunto:billete | guarda-billete».';
   const [left, ...rightParts] = rest.split('|');
   const right = rightParts.join('|').trim();
   const leftTrim = (left ?? '').trim();
