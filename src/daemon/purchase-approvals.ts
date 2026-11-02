@@ -44,10 +44,11 @@ export function createPurchaseApprovals(): PurchaseApprovals {
   return {
     async ask(threadKey, action, summary, askHuman, signal) {
       const key = `${threadKey}:${action}:${summary}`;
+      // Turno ya cortado (/stop, timeout): denegada, ni se pregunta ni vale un «sí» que
+      // se diera antes en este turno (no se abre la pantalla de pago después de /stop).
+      if (signal?.aborted) return false;
       const remembered = answers.get(key);
       if (remembered !== undefined) return remembered;
-      // Turno ya cortado: nadie espera la respuesta, así que ni se pregunta (denegada).
-      if (signal?.aborted) return false;
       const pending = inFlight.get(key);
       if (pending) {
         // La misma pregunta ya está en el chat: no se repite y esta nunca se aprueba sola.
