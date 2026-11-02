@@ -508,8 +508,12 @@ export class PersonalAgent {
   readonly #config: Config;
   readonly #stream: boolean;
   readonly #sessionId: string;
-  /** True while the run is parked waiting for a human approval. */
-  #awaitingApproval = false;
+  /**
+   * How many human approvals the run is parked on right now. A counter, not a flag:
+   * two specialists can ask at once, and the first answer must not clear the mark
+   * while the second question is still open.
+   */
+  #approvalsWaiting = 0;
   /** Cierra la marca de «aprobación esperando» que lee la autoactualización. */
   #approvalBusyEnd: (() => void) | undefined;
   /** Set when something outside the run (e.g. /stop) aborts it. */
@@ -597,12 +601,17 @@ export class PersonalAgent {
 
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
   setAwaitingApproval(waiting: boolean): void {
-    if (waiting && !this.#awaitingApproval) this.#approvalBusyEnd = busyBegin('aprobaciones');
-    if (!waiting) {
+    if (waiting) {
+      if (this.#approvalsWaiting === 0) this.#approvalBusyEnd = busyBegin('aprobaciones');
+      this.#approvalsWaiting += 1;
+      return;
+    }
+    if (this.#approvalsWaiting === 0) return;
+    this.#approvalsWaiting -= 1;
+    if (this.#approvalsWaiting === 0) {
       this.#approvalBusyEnd?.();
       this.#approvalBusyEnd = undefined;
     }
-    this.#awaitingApproval = waiting;
   }
 
   static async create(
@@ -1376,7 +1385,7 @@ export class PersonalAgent {
       const idleMs = Date.now() - lastActivity;
       // A running tool or a pending human approval is not a stall: the silence is
       // expected. Only a quiet run with nothing in flight gets aborted.
-      if (idleMs > idleCeilingMs && activeTools === 0 && !this.#awaitingApproval) {
+      if (idleMs > idleCeilingMs && activeTools === 0 && this.#approvalsWaiting === 0) {
         log.warn('no agent activity for too long, aborting the stall', { idleMs, idleCeilingMs });
         this.#agent.abort();
       }
