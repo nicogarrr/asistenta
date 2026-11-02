@@ -23,6 +23,7 @@
 import { batchQuestion } from './mail/cleanup.js';
 import { unsubQuestion } from './mail/unsubscribe.js';
 import type { ToolCall } from './permissions.js';
+import { sharedElementLabel } from './screen/ui-map.js';
 import { sliceSafe } from './text.js';
 
 export interface ApprovalText {
@@ -452,6 +453,7 @@ function withinBudget(raw: string, shown: string, tool: string): ApprovalText {
 
 const KNOWN_ACTION_KEYS = new Set([
   'action',
+  'element',
   'x',
   'y',
   'toX',
@@ -473,7 +475,7 @@ function describeComputerAction(
   let base: string;
   switch (action) {
     case 'type':
-      base = `escribir "${redact(String(args.text ?? ''))}"`;
+      base = `escribir "${redact(String(args.text ?? ''))}"${elementText(args)}`;
       break;
     case 'key':
       base = `pulsar ${String(args.key ?? '?')}`;
@@ -484,7 +486,10 @@ function describeComputerAction(
           ? ` ${args.button === 'right' ? 'derecho' : args.button}`
           : '';
       const clicks = typeof args.clicks === 'number' && args.clicks !== 1 ? ` x${args.clicks}` : '';
-      base = `click${button}${clicks} en (${String(args.x)}, ${String(args.y)})${roiText(args.roi)}`;
+      base =
+        args.element !== undefined
+          ? `click${button}${clicks}${elementText(args)}`
+          : `click${button}${clicks} en (${String(args.x)}, ${String(args.y)})${roiText(args.roi)}`;
       break;
     }
     case 'drag':
@@ -506,6 +511,14 @@ function describeComputerAction(
   if (extras.length === 0) return base;
   const extraText = extras.map((k) => `${k}: ${redact(JSON.stringify(args[k]) ?? '?')}`).join(', ');
   return `${base} {${extraText}}`;
+}
+
+/** « en el elemento 7 (Botón «Guardar»)» del mapa de la ventana; vacío sin element. */
+function elementText(args: Record<string, unknown>): string {
+  if (args.element === undefined) return '';
+  const n = typeof args.element === 'number' ? String(args.element) : JSON.stringify(args.element);
+  const label = sharedElementLabel(args.element);
+  return ` en el elemento ${n} del mapa${label ? ` (${label})` : ''}`;
 }
 
 function roiText(roi: unknown): string {

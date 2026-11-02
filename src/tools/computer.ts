@@ -6,6 +6,15 @@ import { log } from '../log.js';
 import type { Decision, ToolCall } from '../permissions.js';
 import { expand, type Region, scaleRegion } from '../screen/regions.js';
 import {
+  DEFAULT_MAP_LIMIT,
+  describeElement,
+  type ElementLookup,
+  formatMap,
+  shareMap,
+  type UiElement,
+  type UiMap,
+} from '../screen/ui-map.js';
+import {
   type BatchVerdict,
   captureRoi,
   compareFrames,
@@ -107,7 +116,18 @@ export interface ScreenBackend {
   type(text: string): Promise<void>;
   key(key: string): Promise<void>;
   screenSize(): Promise<{ width: number; height: number }>;
+  /** Mapa numerado de la ventana activa (solo Windows). */
+  uiMap?(mapId: string, limit: number): Promise<UiMap>;
+  /** Vuelve a mirar el elemento `n` del mapa justo antes de usarlo. */
+  elementLookup?(mapId: string, n: number, op: 'point' | 'focus'): Promise<ElementLookup>;
 }
+
+/**
+ * Sin el mapa vivo en el PowerShell persistente (camino de reserva), los rectángulos
+ * guardados solo se usan si el mapa es reciente: una ventana que se movió después
+ * haría clicar donde ya no hay nada.
+ */
+export const MAP_STALE_MS = 60_000;
 
 /**
  * A coordinate as a number, or NaN when the value is not one. `Number()` alone
@@ -233,6 +253,21 @@ const ComputerParams = lazySchema(() =>
     ),
     button: Type.Optional(Type.String()),
     clicks: Type.Optional(Type.Number()),
+    map: Type.Optional(
+      Type.Boolean({
+        description:
+          'For screenshot: also return a numbered map of the buttons, fields, menus and tabs ' +
+          'of the active window, read from Windows itself. Then use element instead of x/y.',
+      }),
+    ),
+    element: Type.Optional(
+      Type.Number({
+        description:
+          'For click and type: the number of an element in the last map (screenshot with ' +
+          'map: true). Click lands on its exact centre, even if the window moved; type gives ' +
+          'it the keyboard focus first. Do not pass x/y with it.',
+      }),
+    ),
     roi: Type.Optional(RegionParams()),
     send: Type.Optional(
       Type.Boolean({
@@ -539,6 +574,56 @@ export function createComputerTool(
   let viewNative: { width: number; height: number } | null = null;
   /** The post-action frame `verify` captured last, reused by `look` instead of a new capture. */
   let lastAfter: Screenshot | null = null;
+  /** El último mapa de la ventana activa: los números que el modelo usa con `element`. */
+  let lastMap: UiMap | null = null;
+  let mapSeq = 0;
+
+  /**
+   * El elemento `n` del último mapa, donde está AHORA. Con el PowerShell persistente se
+   * vuelve a preguntar a Windows (si la ventana se movió, vale el sitio nuevo; si el
+   * elemento ya no está, se dice en vez de clicar a ciegas). Sin él, el rectángulo del
+   * mapa, solo si es reciente.
+   */
+  const resolveElement = async (
+    record: Record<string, unknown>,
+    op: 'point' | 'focus',
+  ): Promise<{ el: UiElement; x: number; y: number }> => {
+    const n = strictNumber(record.element);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error('element tiene que ser el número de un elemento del último mapa (1, 2, 3…)');
+    }
+    if (record.x !== undefined || record.y !== undefined || record.roi !== undefined) {
+      throw new Error('usa element o x/y, no los dos a la vez');
+    }
+    if (!lastMap) throw new Error('no hay mapa: haz antes screenshot con map: true');
+    const el = lastMap.elements[n - 1];
+    if (!el) {
+      throw new Error(
+        `el último mapa tiene ${lastMap.elements.length} elementos; no existe el ${n}`,
+      );
+    }
+    const found: ElementLookup = backend.elementLookup
+      ? await backend.elementLookup(lastMap.id, n, op)
+      : { state: 'nomap' };
+    if (found.state === 'gone') {
+      throw new Error(
+        `el elemento ${n} (${describeElement(el)}) ya no está en pantalla: haz otra captura con map: true`,
+      );
+    }
+    if (found.state === 'ok') return { el, x: found.x, y: found.y };
+    if (op === 'focus') {
+      throw new Error(
+        `no puedo dar el foco al elemento ${n} (${describeElement(el)}) sin el mapa vivo: ` +
+          `haz click con element: ${n} y después type sin element`,
+      );
+    }
+    if (Date.now() - lastMap.takenAt > MAP_STALE_MS) {
+      throw new Error(
+        `el mapa tiene más de ${Math.round(MAP_STALE_MS / 1000)} s: haz otra captura con map: true`,
+      );
+    }
+    return { el, x: el.x, y: el.y };
+  };
 
   /**
    * `look: true`: the screen after the action, as the same image a `screenshot`
@@ -669,6 +754,10 @@ export function createComputerTool(
     switch (record.action) {
       case 'screenshot': {
         const roi = parseRegionField(record.roi, 'roi');
+        const wantsMap = record.map === true;
+        if (roi && wantsMap) {
+          throw new Error('map solo vale con la captura completa, sin roi');
+        }
         if (roi) {
           const cropped = await captureRoi(backend, roi);
           if (cropped.image.length === 0) {
@@ -737,6 +826,41 @@ export function createComputerTool(
         view = { width: shot.width, height: shot.height };
         viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
+        let mapText = '';
+        let mapDetails: Record<string, unknown> = {};
+        if (wantsMap) {
+          if (!backend.uiMap) {
+            mapText = 'El mapa de ventanas solo existe en Windows; usa la captura.';
+          } else {
+            const shown = { width: shot.width, height: shot.height };
+            const real = { width: shot.nativeWidth, height: shot.nativeHeight };
+            const toView = (x: number, y: number) => ({
+              x: Math.round((x * shown.width) / real.width),
+              y: Math.round((y * shown.height) / real.height),
+            });
+            try {
+              mapSeq += 1;
+              const map = await backend.uiMap(
+                `m${Date.now().toString(36)}-${mapSeq}`,
+                DEFAULT_MAP_LIMIT,
+              );
+              lastMap = map;
+              shareMap(map);
+              mapText = formatMap(map, toView);
+              mapDetails = {
+                mapElements: map.elements.length,
+                mapTotal: map.total,
+                mapPartial: map.partial,
+              };
+            } catch (err) {
+              // Sin mapa la captura sigue valiendo: se dice y se sigue con coordenadas.
+              lastMap = null;
+              shareMap(null);
+              mapText = `No he podido leer el mapa de la ventana (${errorText(err)}); usa la captura.`;
+              mapDetails = { mapError: errorText(err) };
+            }
+          }
+        }
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
         const sent =
           record.send === true
@@ -758,6 +882,7 @@ export function createComputerTool(
                     : ' No he podido enviarla al chat.'),
             },
             { type: 'image', mimeType: shot.mimeType, data: shot.image.toString('base64') },
+            ...(mapText ? [{ type: 'text' as const, text: mapText }] : []),
           ],
           details: {
             width: shot.width,
@@ -766,6 +891,7 @@ export function createComputerTool(
             nativeHeight: shot.nativeHeight,
             sent,
             ...scaling,
+            ...mapDetails,
           },
           at: null,
         };
@@ -777,6 +903,50 @@ export function createComputerTool(
         const roi = parseRegionField(record.roi, 'roi');
         const button = parseButton(record.button);
         const clicks = parseClicks(record.clicks);
+        if (record.element !== undefined) {
+          const target = await resolveElement(record, 'point');
+          if (
+            target.x < 0 ||
+            target.y < 0 ||
+            target.x >= native.width ||
+            target.y >= native.height
+          ) {
+            throw new Error(
+              `el elemento ${record.element} (${describeElement(target.el)}) está fuera de la pantalla principal`,
+            );
+          }
+          const at = view
+            ? {
+                x: Math.round((target.x * view.width) / native.width),
+                y: Math.round((target.y * view.height) / native.height),
+              }
+            : { x: target.x, y: target.y };
+          const check = await act(() => backend.click(target.x, target.y, { button, clicks }), at);
+          log.info('click element', {
+            n: target.el.n,
+            x: target.x,
+            y: target.y,
+            changed: check?.changed ?? null,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Clic en el elemento ${target.el.n} (${describeElement(target.el)}) en ${target.x},${target.y}${
+                  check ? `\n${check.verdict}` : ''
+                }`,
+              },
+            ],
+            details: {
+              x: target.x,
+              y: target.y,
+              element: target.el.n,
+              verified: verifiedOf(check),
+              localRatio: check?.localRatio ?? null,
+            },
+            at,
+          };
+        }
         if (roi) {
           const p = coordsInRoi(record, roi, view ?? native, native);
           // Verification looks at the point in screenshot space, same as the
@@ -884,16 +1054,18 @@ export function createComputerTool(
         // emoji as 2, so «Escritos N» disagreed with the «Parcial: … N de M» that
         // the Windows backend reports, and the model resumed from the wrong place.
         const chars = Array.from(text).length;
+        // Con element, el foco del teclado va antes a ese campo (sin clicar nada).
+        const into = record.element !== undefined ? await resolveElement(record, 'focus') : null;
         const check = await act(() => backend.type(text));
         log.info('typed', { chars, changed: check?.changed ?? null });
         return {
           content: [
             {
               type: 'text',
-              text: `Escritos ${chars} caracteres${check ? `\n${check.verdict}` : ''}`,
+              text: `Escritos ${chars} caracteres${into ? ` en el elemento ${into.el.n} (${describeElement(into.el)})` : ''}${check ? `\n${check.verdict}` : ''}`,
             },
           ],
-          details: { chars, verified: verifiedOf(check) },
+          details: { chars, ...(into ? { element: into.el.n } : {}), verified: verifiedOf(check) },
           at: null,
         };
       }
@@ -1138,6 +1310,9 @@ export function createComputerTool(
       'to clicks after a roi screenshot.',
       'For key, use chords like "enter", "ctrl+s", "alt+F4", "shift+tab" — not symbols.',
       'Always screenshot first; never guess coordinates.',
+      'On Windows, screenshot with map: true also lists the buttons, fields, menus and tabs of',
+      'the active window, numbered. Then click or type with element: N instead of x/y: it',
+      'lands on the exact control. Prefer it whenever the target is in the map.',
       'Every click, drag, type and keypress returns a VERIFICACION line saying whether',
       'the screen really changed (once for a whole batch). If it says it did not, do not',
       'repeat the action: take a fresh screenshot and locate the element again, because the',
