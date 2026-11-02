@@ -316,6 +316,23 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     if (!hasTime || hours.split(',').length !== n) return null;
   }
 
+  // «el martes a las 10», «el próximo viernes a las 9»: un día suelto, no una rutina (antes
+  // sonaba todos los días). Se pregunta.
+  if (
+    !WEEKLY.test(normalised) &&
+    new RegExp(`^(?:el |este |el proximo |proximo |el siguiente )(?:${DAY})\\b`).test(normalised)
+  )
+    return null;
+  // «dos veces a la semana a las 9»: sin decir qué días, antes sonaba todos los días.
+  const perWeek = /\b(dos|tres|cuatro|cinco|seis|\d) veces (?:a|por|cada) (?:la )?semana\b/.exec(
+    normalised,
+  );
+  if (perWeek) {
+    const said = perWeek[1] ?? '';
+    const n = /^\d$/.test(said) ? Number(said) : TIMES_WORD_VALUE[said];
+    const days = daysOfWeek(normalised);
+    if (days === null || expandDays(days).length !== n) return null;
+  }
   // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
   // them simply. Before, they became «every day»; now the caller asks.
   if (/\bcada (?:\d{1,3}|[a-z]+) (?:dias|semanas|meses)\b/.test(normalised)) return null;
@@ -517,7 +534,7 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     };
   }
 
-  if (/cada semana|semanalmente/.test(normalised) && hasTime) {
+  if (WEEKLY.test(normalised) && hasTime) {
     return { schedule: `${minute} ${hours} * * 1`, prompt: text.trim() };
   }
 
@@ -571,6 +588,10 @@ const DAY = 'lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
 const LABORABLES =
   /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|habil(?:es)?|de diario)|los laborables|de lunes a viernes)\b/;
 
+/** «cada semana», «semanalmente», «todas las semanas», «una vez a la semana». */
+const WEEKLY =
+  /\b(?:cada semana|semanalmente|todas las semanas|(?:una|1) vez (?:a|por|cada) (?:la )?semana)\b/;
+
 /** The cron day-of-week field for the days said, or null when no day is said. */
 function daysOfWeek(normalised: string): string | null {
   if (LABORABLES.test(normalised)) return '1-5';
@@ -590,8 +611,11 @@ function daysOfWeek(normalised: string): string | null {
     return days.join(',');
   }
   // «los lunes», «cada martes», «los lunes y miércoles», «los lunes, martes y jueves».
+  // «cada semana el martes»: con «semana» dicho, «el martes» también es el día de la rutina
+  // (antes sonaba el lunes).
+  const lead = WEEKLY.test(normalised) ? '(?:los|cada|el)' : '(?:los|cada)';
   const list = new RegExp(
-    `\\b(?:los|cada) (${DAY})((?:\\s*,\\s*(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
+    `\\b${lead} (${DAY})((?:\\s*,\\s*(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
   ).exec(normalised);
   if (!list) return null;
   const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
