@@ -57,7 +57,17 @@ export function receiptStartText(kind: ReceiptKind, inbound: ReceiptInput = {}):
   const docs = 1 + (inbound.albumDocuments?.length ?? 0);
   if (kind === 'photo' && !inbound.documentFileId && photos > 1)
     return `🖼️ Mirando las ${photos} fotos…`;
-  if (kind === 'document' && docs > 1) return `📄 Leyendo ${docs} documentos…`;
+  // Varias imágenes enviadas «como archivo» llegan como álbum de documentos image/*:
+  // antes el acuse nombraba solo la primera («Mirando «IMG_1.jpg»…») o decía documentos.
+  if (inbound.documentFileId && docs > 1) {
+    const mimes = [
+      inbound.documentMimeType,
+      ...(inbound.albumDocuments ?? []).map((d) => (d as { mimeType?: string }).mimeType),
+    ];
+    return mimes.every((m) => m?.toLowerCase().startsWith('image/'))
+      ? `🖼️ Mirando las ${docs} imágenes…`
+      : `📄 Leyendo ${docs} documentos…`;
+  }
   switch (kind) {
     case 'voice':
       return '🎙️ Transcribiendo la nota de voz…';
