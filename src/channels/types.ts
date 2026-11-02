@@ -63,6 +63,11 @@ export interface Inbound {
   receivedAt: string;
   /** Cuándo se envió el mensaje según el canal (Telegram: msg.date). Ausente = en vivo. */
   sentAt?: string;
+  /**
+   * Marca «[Mensaje reenviado de …]» si el mensaje es un reenvío. El texto ya la lleva;
+   * aquí está para lo que se construye dentro del turno, como la transcripción de un audio.
+   */
+  forwardedFrom?: string;
 }
 
 /**

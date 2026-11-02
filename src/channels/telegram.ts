@@ -438,6 +438,7 @@ export class TelegramChannel implements ChannelAdapter {
     // parecía una petición del dueño y un «/…» reenviado se tomaba por comando suyo.
     const forwarded = forwardedLabel(msg);
     if (forwarded && inbound.text) inbound.text = `${forwarded}\n${inbound.text}`;
+    if (forwarded) inbound.forwardedFrom = forwarded;
 
     if (incomingAudio) {
       inbound.audioFileId = incomingAudio.file_id;
