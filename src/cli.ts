@@ -6839,6 +6839,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await tell(inbound, 'No he visto texto ni imagen en ese mensaje.', { quote: true });
         return;
       }
+      // Respuesta a un mensaje que esta conversación no tiene (de antes de un reinicio, de
+      // otra persona, un reenvío viejo): sin la cita, «¿qué significa esto?» no sabía a qué.
+      prompt = withReplyQuote(
+        prompt,
+        inbound.replyQuote,
+        messageThread.get(`${chatKey(inbound)}:${inbound.replyToMessageId}`) === thread.key,
+      );
 
       // Memory and routines are injected as a system message, so they read as
       // standing context rather than as something the user just said.
@@ -8527,6 +8534,15 @@ export function voiceNotePrompt(
 ): string {
   const voice = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
   return forwardedFrom ? `${forwardedFrom}\n${voice}` : voice;
+}
+
+/**
+ * Añade la cita del mensaje respondido delante del texto, salvo que ese mensaje ya esté en
+ * la conversación (`linked`). Va marcada como cita: los comandos y las respuestas «sí»
+ * se siguen leyendo solo del texto del dueño, que no cambia.
+ */
+export function withReplyQuote(prompt: string, quote: string | undefined, linked: boolean): string {
+  return quote && !linked ? `${quote}\n${prompt}` : prompt;
 }
 
 /**

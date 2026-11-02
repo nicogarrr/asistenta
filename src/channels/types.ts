@@ -57,6 +57,11 @@ export interface Inbound {
   /** Set by the adapter after its own auth check. */
   authorised: boolean;
   replyToMessageId?: string;
+  /**
+   * Texto del mensaje al que responde, marcado como cita («[Respondiendo a un mensaje de
+   * Ana: «…»]»). Solo llega al modelo si ese mensaje no está ya en la conversación.
+   */
+  replyQuote?: string;
   /** Chat metadata the adapter can supply: is this a group? */
   isGroup?: boolean;
   messageId: string;
