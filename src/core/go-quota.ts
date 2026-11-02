@@ -4,7 +4,7 @@
  * inspector /uso, y solo viaja la clave ya configurada: la respuesta son
  * porcentajes, nunca prompts ni secretos.
  */
-import { endpointKind, keyNamesFor } from '../llm-health.js';
+import { endpointKind, providerKeyFor } from '../llm-health.js';
 
 export interface GoQuotaWindow {
   status: string;
@@ -73,13 +73,9 @@ export async function fetchGoQuota(
   const getKey =
     deps.getKey ??
     (async () => {
-      const { vaultKey, envNames } = keyNamesFor('opencode');
-      if (vaultKey) {
-        const { vaultGet } = await import('../vault.js');
-        const fromVault = await vaultGet(vaultKey).catch(() => undefined);
-        if (fromVault) return fromVault;
-      }
-      return envNames.map((n) => process.env[n]?.trim()).find((v) => v);
+      // Mismo orden que el chat (env primero en Go): ver providerKeyFor.
+      const { vaultGet } = await import('../vault.js');
+      return providerKeyFor('opencode', (k) => vaultGet(k).catch(() => undefined), process.env);
     });
   const key = await getKey().catch(() => undefined);
   if (!key) return null;

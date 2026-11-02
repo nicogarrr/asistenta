@@ -184,7 +184,7 @@ import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
-import { endpointKind, keyNamesFor, llmHealthCommand, providerKeySource } from './llm-health.js';
+import { endpointKind, llmHealthCommand, providerKeyFor, providerKeySource } from './llm-health.js';
 import { log, logFile, redact } from './log.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
@@ -5428,10 +5428,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // o plan de pago consume cuota. El aviso nunca para nada: el dueño decide (/stop).
   const judgeTurnVerdict = async (prompt: string): Promise<boolean | null> => {
     const kind = endpointKind(config.baseUrl);
-    const { vaultKey, envNames } = keyNamesFor(kind);
-    const key =
-      (vaultKey ? await vaultGet(vaultKey).catch(() => undefined) : undefined) ??
-      envNames.map((n) => process.env[n]?.trim()).find((v) => v);
+    // Mismo orden que el chat (en Go, la env primero): ver providerKeyFor.
+    const key = await providerKeyFor(kind, (k) => vaultGet(k).catch(() => undefined), process.env);
     if (!key) return null;
     try {
       const res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {

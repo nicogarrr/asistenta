@@ -223,20 +223,37 @@ export function keyNamesFor(kind: 'opencode' | 'openrouter' | 'google' | 'custom
   return { envNames: ['PA_API_KEY'] };
 }
 
+/**
+ * La clave de un tipo de endpoint, en el MISMO orden que resolveApiKey
+ * (core/provider.ts): para OpenCode Go la env OPENCODE_GO_API_KEY manda sobre el
+ * almacén (#1875); para el resto, el almacén primero. El doctor, la prueba de
+ * modelos, la cuota de Go y el vigilante usan esta, para no dar por buena una
+ * clave que el chat no usa.
+ */
+export async function providerKeyFor(
+  kind: 'opencode' | 'openrouter' | 'google' | 'custom',
+  getKey: (key: string) => Promise<string | undefined | null>,
+  env: Record<string, string | undefined>,
+): Promise<string | undefined> {
+  const { vaultKey, envNames } = keyNamesFor(kind);
+  const fromEnv = (): string | undefined =>
+    envNames.map((n) => env[n]?.trim()).find((v): v is string => Boolean(v));
+  if (kind === 'opencode') {
+    const first = fromEnv();
+    if (first) return first;
+  }
+  if (vaultKey) {
+    const fromVault = await getKey(vaultKey);
+    if (fromVault) return fromVault;
+  }
+  return fromEnv();
+}
+
 async function resolveKeyFor(
   kind: 'opencode' | 'openrouter' | 'google' | 'custom',
   deps: Required<HealthDeps>,
 ): Promise<string | undefined> {
-  const { vaultKey, envNames } = keyNamesFor(kind);
-  if (vaultKey) {
-    const fromVault = await deps.getKey(vaultKey);
-    if (fromVault) return fromVault;
-  }
-  for (const name of envNames) {
-    const v = deps.env[name]?.trim();
-    if (v) return v;
-  }
-  return undefined;
+  return providerKeyFor(kind, deps.getKey, deps.env);
 }
 
 /**
@@ -250,10 +267,14 @@ export async function providerKeySource(
 ): Promise<{ source: 'vault' | 'env' | 'unset'; hint: string }> {
   const getKey = deps.getKey ?? ((k: string) => vaultGet(k));
   const env = deps.env ?? process.env;
-  const { vaultKey, envNames } = keyNamesFor(endpointKind(baseUrl));
+  const kind = endpointKind(baseUrl);
+  const { vaultKey, envNames } = keyNamesFor(kind);
+  const inEnv = envNames.some((n) => env[n]?.trim());
+  // Mismo orden que el proveedor: en OpenCode Go manda la env (#1875).
+  if (kind === 'opencode' && inEnv) return { source: 'env', hint: '' };
   if (vaultKey && (await getKey(vaultKey).catch(() => undefined)))
     return { source: 'vault', hint: '' };
-  if (envNames.some((n) => env[n]?.trim())) return { source: 'env', hint: '' };
+  if (inEnv) return { source: 'env', hint: '' };
   // Nunca `pa vault set <clave> <valor>`: la clave quedaría en el historial de la consola.
   const hint =
     vaultKey === 'provider:apiKey'
