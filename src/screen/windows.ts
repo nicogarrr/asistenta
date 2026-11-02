@@ -15,6 +15,14 @@ import {
   winChordVirtualKeys,
 } from './keys.js';
 import { PsHost, PsHostLost, PsScriptError, recordPsLatency } from './ps-host.js';
+import {
+  type ElementLookup,
+  elementScript,
+  mapScript,
+  parseElement,
+  parseMap,
+  type UiMap,
+} from './ui-map.js';
 import { jpegGeometry, parseCaptureGeometry, physicalScript } from './windows-geometry.js';
 
 const execFileAsync = promisify(execFile);
@@ -338,6 +346,21 @@ Add-Type -AssemblyName System.Windows.Forms
   #temp(): string {
     this.#tempDir ??= mkdtempSync(join(tmpdir(), 'pa-shot-'));
     return this.#tempDir;
+  }
+
+  /**
+   * Mapa numerado de la ventana activa (UI Automation), por el mismo PowerShell y en el
+   * mismo contexto DPI físico que capturas y ratón: sus coordenadas son las del clic.
+   */
+  async uiMap(mapId: string, limit: number): Promise<UiMap> {
+    const { stdout } = await this.#physicalPs(mapScript(mapId, limit));
+    return parseMap(stdout, mapId);
+  }
+
+  /** Dónde está AHORA el elemento `n` del mapa (y, con `focus`, le da el foco). */
+  async elementLookup(mapId: string, n: number, op: 'point' | 'focus'): Promise<ElementLookup> {
+    const { stdout } = await this.#physicalPs(elementScript(mapId, n, op));
+    return parseElement(stdout);
   }
 
   async #physicalPs(script: string): Promise<{ stdout: string; stderr: string }> {
