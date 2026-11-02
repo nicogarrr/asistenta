@@ -7,7 +7,6 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { ImapFlow } from 'imapflow';
 import type { RawCommandMail } from '../channels/email.js';
 import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 import type { ReadMailAccount } from './idle.js';
@@ -85,6 +84,7 @@ export async function pollGmailCommandMail(
   account: ReadMailAccount,
   cursorFile: string,
 ): Promise<RawCommandMail[]> {
+  const { ImapFlow } = await import('imapflow');
   const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,

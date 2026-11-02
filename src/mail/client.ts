@@ -14,8 +14,7 @@
  * and that command can carry the login.
  */
 
-import { ImapFlow } from 'imapflow';
-import { createTransport } from 'nodemailer';
+import type { ImapFlow } from 'imapflow';
 import { log } from '../log.js';
 import { foldAccents } from '../text.js';
 import { vaultGet } from '../vault.js';
@@ -133,6 +132,7 @@ async function withImap<T>(
   fn: (client: ImapFlow) => Promise<T>,
   deadlineMs?: number,
 ): Promise<T> {
+  const { ImapFlow } = await import('imapflow');
   const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
@@ -256,6 +256,8 @@ export async function sendMail(account: MailAccount, req: SendRequest): Promise<
   if (!to.length) return { ok: false, error: 'falta el destinatario' };
   if (!req.subject.trim() || !req.text.trim()) return { ok: false, error: 'falta asunto o cuerpo' };
 
+  // nodemailer solo se carga al enviar de verdad (no en cada arranque de `pa`).
+  const { createTransport } = await import('nodemailer');
   const transport = createTransport({
     host: account.smtpHost,
     port: account.smtpPort,

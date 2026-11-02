@@ -2,7 +2,6 @@
  * Leer cabeceras del buzón para clasificar, sin bajar cuerpos: remitente, asunto, fecha
  * y las cabeceras de listas/baja/autenticación. Solo lectura (mailbox en readOnly).
  */
-import { ImapFlow } from 'imapflow';
 import { uidValidityOf } from './move.js';
 import type { MailAccount } from './types.js';
 
@@ -47,7 +46,9 @@ export function parseHeaders(raw: Buffer | string | undefined): Record<string, s
   return out;
 }
 
-export function imapFor(account: MailAccount): ImapLike {
+export async function imapFor(account: MailAccount): Promise<ImapLike> {
+  // imapflow (y sus ~150 módulos) solo se carga cuando de verdad se escanea el correo.
+  const { ImapFlow } = await import('imapflow');
   return new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,

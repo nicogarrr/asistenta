@@ -1,6 +1,6 @@
 /** Epoch-bound, read-only Gmail reader. Header claims are metadata, never authority. */
 import { createHash } from 'node:crypto';
-import { type FetchMessageObject, ImapFlow } from 'imapflow';
+import type { FetchMessageObject, ImapFlow } from 'imapflow';
 import { toMessage } from './client.js';
 import type { ReadMailAccount } from './idle.js';
 import type { MailMessage } from './types.js';
@@ -51,6 +51,7 @@ async function withReader<T>(
   account: ReadMailAccount,
   fn: (client: ImapFlow) => Promise<T>,
 ): Promise<T> {
+  const { ImapFlow } = await import('imapflow');
   const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
