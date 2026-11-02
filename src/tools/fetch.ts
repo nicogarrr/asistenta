@@ -39,6 +39,30 @@ const FetchParams = Type.Object({
   ),
 });
 
+/**
+ * Extrae el contenido principal de una página (modo lectura) con
+ * @mozilla/readability sobre linkedom. Ambos se cargan solo al llegar aquí
+ * (~un centenar de ms la primera vez): el arranque no los paga. Si no hay un
+ * artículo claro —páginas cortas, paneles, formularios— se devuelve la página
+ * entera y el extractor de siempre trabaja igual.
+ */
+export async function extractMainContent(html: string): Promise<string> {
+  try {
+    const [{ parseHTML }, { Readability }] = await Promise.all([
+      import('linkedom'),
+      import('@mozilla/readability'),
+    ]);
+    const { document } = parseHTML(html);
+    const article = new Readability(document as unknown as Document).parse();
+    if (article?.content && (article.textContent ?? '').trim().length >= 200) {
+      return article.content;
+    }
+  } catch {
+    // Sin parser o sin artículo: se sigue con la página completa.
+  }
+  return html;
+}
+
 /** Tags that carry meaning for a reader and nothing for a language model. */
 const DROP_TAGS = ['script', 'style', 'noscript', 'svg', 'canvas', 'template', 'iframe'];
 
@@ -444,7 +468,7 @@ export async function fetchPage(
       opts.format === 'html'
         ? body
         : isHtml
-          ? await extractText(body, opts.format ?? 'markdown')
+          ? await extractText(await extractMainContent(body), opts.format ?? 'markdown')
           : body;
     const truncated = capped || text.length > limit;
     const content =
