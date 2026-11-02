@@ -123,6 +123,10 @@ export function createEffectfulChildGate(
   approve: SpecialistApprove,
 ): Gate {
   const own = new Set(specialist.tools);
+  // Preguntas a las que Nico ya dijo que no en esta delegación (esta gate es de una
+  // sola delegación). Repetir la misma no vuelve a preguntar: se deniega. Un «sí» no se
+  // recuerda, y si preguntar falla tampoco (la próxima vez se pregunta).
+  const refused = new Set<string>();
   return new Gate({
     allow: THREAD_ALLOW_TOOLS.filter(
       (name) => own.has(name) && specialist.actions?.[name] === undefined,
@@ -142,11 +146,17 @@ export function createEffectfulChildGate(
       if (!specialistAllowsCall(specialist, call.tool, call.args)) return false;
       const approval = formatApproval(call, reason);
       if (!approval.complete) return false;
+      const question = `Especialista ${specialist.title}: ${approval.question}`;
+      if (refused.has(question)) return false;
+      let answer: unknown;
       try {
-        return (await approve(`Especialista ${specialist.title}: ${approval.question}`)) === true;
+        answer = await approve(question);
       } catch {
         return false;
       }
+      if (answer === true) return true;
+      refused.add(question);
+      return false;
     },
   });
 }
