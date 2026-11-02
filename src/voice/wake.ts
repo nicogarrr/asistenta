@@ -693,18 +693,55 @@ class SampleRing {
     this.#buf = new Float32Array(capacity);
   }
 
+  /**
+   * Copia por bloques (como mucho dos `set`), no muestra a muestra con `%`: el micro
+   * llega unas 16.000 veces por segundo mientras la palabra de activación escucha,
+   * todo el día. Mismo contenido y mismo orden que la copia una a una.
+   */
   push(samples: Float32Array): void {
-    for (let i = 0; i < samples.length; i++) {
-      this.#buf[this.#head] = samples[i] ?? 0;
-      this.#head = (this.#head + 1) % this.#buf.length;
+    const cap = this.#buf.length;
+    // Un trozo más largo que la ventana: solo cuentan sus últimas `cap` muestras.
+    const src = samples.length > cap ? samples.subarray(samples.length - cap) : samples;
+    const first = Math.min(src.length, cap - this.#head);
+    this.#buf.set(src.subarray(0, first), this.#head);
+    if (first < src.length) this.#buf.set(src.subarray(first), 0);
+    this.#head = (this.#head + src.length) % cap;
+    this.#filled = Math.min(this.#filled + samples.length, cap);
+  }
+
+  /**
+   * Etapa 1: RMS de la ventana sin copiarla, en el mismo orden (de la más antigua a la más
+   * nueva) que sumar sobre `snapshot()`, así que da exactamente el mismo número. La
+   * ventana solo se copia cuando pasa la puerta de energía y va a whisper.
+   */
+  rms(): number {
+    if (this.#filled === 0) return 0;
+    let sum = 0;
+    for (const part of this.#parts()) {
+      for (let i = 0; i < part.length; i++) {
+        const sample = part[i] ?? 0;
+        sum += sample * sample;
+      }
     }
-    this.#filled = Math.min(this.#filled + samples.length, this.#buf.length);
+    return Math.sqrt(sum / this.#filled);
+  }
+
+  /** La ventana en orden (de la más antigua a la más nueva) como uno o dos tramos, sin copiar. */
+  #parts(): Float32Array[] {
+    const cap = this.#buf.length;
+    const start = (this.#head - this.#filled + cap) % cap;
+    const end = start + this.#filled;
+    if (end <= cap) return [this.#buf.subarray(start, end)];
+    return [this.#buf.subarray(start), this.#buf.subarray(0, end - cap)];
   }
 
   snapshot(): Float32Array {
     const out = new Float32Array(this.#filled);
-    const start = (this.#head - this.#filled + this.#buf.length) % this.#buf.length;
-    for (let i = 0; i < this.#filled; i++) out[i] = this.#buf[(start + i) % this.#buf.length] ?? 0;
+    let at = 0;
+    for (const part of this.#parts()) {
+      out.set(part, at);
+      at += part.length;
+    }
     return out;
   }
 
@@ -712,17 +749,10 @@ class SampleRing {
     this.#head = 0;
     this.#filled = 0;
   }
-}
 
-/** Stage 1: RMS of a window. Cheap enough to run on every check, unlike the model. */
-function windowRms(samples: Float32Array): number {
-  if (samples.length === 0) return 0;
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) {
-    const sample = samples[i] ?? 0;
-    sum += sample * sample;
+  get size(): number {
+    return this.#filled;
   }
-  return Math.sqrt(sum / samples.length);
 }
 
 export class WakeWordListener {
@@ -1030,9 +1060,9 @@ export class WakeWordListener {
         this.#suppressed++;
         return;
       }
+      if (this.#ring.size === 0) return;
+      if (this.#ring.rms() < ENERGY_GATE_RMS) return;
       const window = this.#ring.snapshot();
-      if (window.length === 0) return;
-      if (windowRms(window) < ENERGY_GATE_RMS) return;
 
       let text: string;
       try {
