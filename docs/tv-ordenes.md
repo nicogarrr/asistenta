@@ -65,6 +65,7 @@ Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir 
 - Si la tele rechaza la conexión al momento (recién despertada), se reintenta una vez; antes de conectar no se ha enviado nada, así que no se duplica ninguna orden. Un rechazo tras conectar nunca se repite.
 - Los errores explican qué significan en castellano («No llego a la tele…», «Hay que volver a emparejar: pa tv setup <ip>», «La orden salió pero la tele no contestó… no la repito») y conservan el detalle técnico.
 - Las teclas (tvKey) esperan 5 s como máximo a que abra el socket de botones y dan 800 ms de margen tras enviar. Si tu tele es lenta: `PA_TV_KEY_TIMEOUT_MS` (1000–30000) y `PA_TV_KEY_GRACE_MS` (50–5000).
+- Rapidez: Asistenta deja abierta la conexión con la LG (y el socket de botones) entre órdenes y la cierra tras 60 s sin uso, así que cinco flechas seguidas tardan medio segundo y no siete. Entre teclas deja la pausa de las ráfagas (`PA_TV_KEY_GAP_MS`, 150 ms). Knob: `PA_TV_SESSION_IDLE_MS` (0 = abrir y cerrar en cada orden, como antes; 5000–600000). Si Glasshouse no contesta, durante 2 min abrir apps, avisos y encendido van directos por SSAP sin esperarlo.
 
 ## Más rutinas
 - «modo noche» / «modo nocturno (con YouTube)»: volumen a 8 (o el que digas) y aviso. No enciende una tele apagada.
