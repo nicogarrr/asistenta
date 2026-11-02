@@ -125,19 +125,37 @@ $abrir.add_Click({
     $r = Invoke-Pa $Ordenes.Panel
     if ($r.Code -ne 0) { Show-Aviso $r.Text }
 })
+# Tras Encender/Reiniciar, el arranque real tarda bastante más que unos pocos
+# segundos (modelo, Telegram, correo…). Sin esta espera activa el punto se
+# quedaba rojo un buen rato aunque el botón SÍ hubiera funcionado, y parecía
+# que «Reiniciar» y «Reanudar» no hacían nada (Nico, 2-nov-2026).
+function Wait-Encendida([int] $Segundos = 90) {
+    $fin = (Get-Date).AddSeconds($Segundos)
+    while ((Get-Date) -lt $fin) {
+        Update-Estado
+        if ($script:enMarcha) { return $true }
+        Start-Sleep -Seconds 4
+    }
+    return $false
+}
 $pausa = $menu.Items.Add('Pausar / Reanudar')
 $pausa.add_Click({
     if ($script:enMarcha) { [void](Invoke-Pa $Ordenes.Pausar); Show-Aviso 'Asistenta en pausa.' }
-    else { Start-Asistenta; Show-Aviso 'Encendiendo Asistenta…' }
-    Start-Sleep -Seconds 3
+    else {
+        Start-Asistenta
+        Show-Aviso 'Encendiendo Asistenta… puede tardar un minuto.'
+        if (Wait-Encendida) { Show-Aviso 'Asistenta en marcha.' }
+        else { Show-Aviso 'Asistenta sigue arrancando; el punto se pondrá verde solo.' }
+    }
     Update-Estado
 })
 $reiniciar = $menu.Items.Add('Reiniciar')
 $reiniciar.add_Click({
     [void](Invoke-Pa $Ordenes.Pausar)
     Start-Asistenta
-    Show-Aviso 'Reiniciando Asistenta…'
-    Start-Sleep -Seconds 5
+    Show-Aviso 'Reiniciando Asistenta… puede tardar un minuto.'
+    if (Wait-Encendida) { Show-Aviso 'Asistenta en marcha.' }
+    else { Show-Aviso 'Asistenta sigue arrancando; el punto se pondrá verde solo.' }
     Update-Estado
 })
 $estado = $menu.Items.Add('Ver estado')
