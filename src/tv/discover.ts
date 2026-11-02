@@ -12,6 +12,8 @@
  * paquete que manda Windows al abrir "Red". No toca la tele.
  */
 
+import { assertTvHost } from './lgtv.js';
+
 const SSDP_ADDR = '239.255.255.250';
 const SSDP_PORT = 1900;
 /** Espera total recogiendo respuestas; las teles de casa contestan en <1s. */
@@ -113,6 +115,35 @@ export interface DiscoverDeps {
   now?: () => number;
 }
 
+/** Solo aparatos de la red local: una respuesta desde una IP publica se ignora. */
+export function isLanAddress(ip: string): boolean {
+  try {
+    assertTvHost(ip);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * El XML solo se pide al propio aparato que contesto (http y su misma IP):
+ * un LOCATION que apunta a otra maquina o a internet no se sigue.
+ */
+export function sameDeviceLocation(location: string, ip: string): boolean {
+  try {
+    const url = new URL(location);
+    return url.protocol === 'http:' && url.hostname === ip && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** UUID del USN («uuid:xxxx::urn:...»), en minusculas. */
+export function uuidFromUsn(usn: string | undefined): string | undefined {
+  const m = /uuid:([0-9a-z-]{8,64})/i.exec(usn ?? '');
+  return m?.[1]?.toLowerCase();
+}
+
 function msearch(st: string): Buffer {
   return Buffer.from(
     `M-SEARCH * HTTP/1.1\r\nHOST: ${SSDP_ADDR}:${SSDP_PORT}\r\nMAN: "ssdp:discover"\r\nMX: 2\r\nST: ${st}\r\n\r\n`,
@@ -156,7 +187,7 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
   await new Promise<void>((resolve) => {
     socket.on('message', (msg, rinfo) => {
       const parsed = parseSsdpResponse(msg.toString('utf8'));
-      if (!parsed || !rinfo.address) return;
+      if (!parsed || !rinfo.address || !isLanAddress(rinfo.address)) return;
       const prev = byIp.get(rinfo.address);
       // Cualquier respuesta SSDP guarda al aparato; la marca se decide con su XML.
       byIp.set(rinfo.address, {
@@ -167,7 +198,8 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
         ...((parsed.usn ?? prev?.usn) ? { usn: parsed.usn ?? prev?.usn ?? '' } : {}),
         glasshouse: prev?.glasshouse ?? false,
       });
-      if (parsed.location) locations.set(rinfo.address, parsed.location);
+      if (parsed.location && sameDeviceLocation(parsed.location, rinfo.address))
+        locations.set(rinfo.address, parsed.location);
     });
     const sendBoth = () => {
       for (const st of [
@@ -227,6 +259,7 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
         ? 'lg'
         : (undefined as never);
     if (!brand) continue;
+    const uuid = tv.uuid ?? uuidFromUsn(tv.usn);
     out.push({
       ip,
       brand,
@@ -234,7 +267,7 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
       ...(model ? { model } : {}),
       ...(tv.server ? { server: tv.server } : {}),
       ...(tv.usn ? { usn: tv.usn } : {}),
-      ...(tv.uuid ? { uuid: tv.uuid } : {}),
+      ...(uuid ? { uuid } : {}),
       glasshouse: tv.glasshouse,
     });
   }
