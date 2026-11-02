@@ -12,8 +12,21 @@ import { filterCallAudit, readCallAudit, summarizeCallAudit } from './query.js';
 const USAGE =
   'uso: pa auditoria [--tool <nombre>] [--verdict allow|deny] [--since 24h|7d|<ISO>] [--last N] [--json]\n';
 
-/** `24h`, `7d`, `30m` relativos a `now`; cualquier otra cosa se pasa tal cual (ISO). */
+/**
+ * `24h`, `7d`, `30m` relativos a `now`; un día suelto (`2026-11-01`) empieza a la
+ * medianoche local (no a la de UTC, que en Madrid se come la primera hora); cualquier
+ * otra cosa se pasa tal cual (ISO).
+ */
 export function parseSince(value: string, now = Date.now()): string {
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (day) {
+    const [y, mo, d] = [Number(day[1]), Number(day[2]), Number(day[3])];
+    const at = new Date(y, mo - 1, d);
+    if (at.getFullYear() === y && at.getMonth() === mo - 1 && at.getDate() === d) {
+      return at.toISOString();
+    }
+    return value;
+  }
   const m = /^(\d+)\s*([mhd])$/i.exec(value.trim());
   if (!m) return value;
   const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2]?.toLowerCase() as 'm' | 'h' | 'd'];
