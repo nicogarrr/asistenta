@@ -21,6 +21,9 @@ export interface ReceiptInput {
   documentFileId?: string;
   documentName?: string;
   documentMimeType?: string;
+  /** Resto de un álbum: el acuse cuenta todos los ficheros, no solo el primero. */
+  albumPhotoFileIds?: readonly string[];
+  albumDocuments?: readonly unknown[];
 }
 
 /** Largo máximo de lo transcrito que se enseña en el acuse. */
@@ -49,6 +52,12 @@ function shortName(name: string | undefined): string {
 /** El texto inicial del acuse. */
 export function receiptStartText(kind: ReceiptKind, inbound: ReceiptInput = {}): string {
   const name = shortName(inbound.documentName);
+  // Un álbum: «Mirando las 3 fotos…» en vez de «la foto», que parecía ignorar las demás.
+  const photos = 1 + (inbound.albumPhotoFileIds?.length ?? 0);
+  const docs = 1 + (inbound.albumDocuments?.length ?? 0);
+  if (kind === 'photo' && !inbound.documentFileId && photos > 1)
+    return `🖼️ Mirando las ${photos} fotos…`;
+  if (kind === 'document' && docs > 1) return `📄 Leyendo ${docs} documentos…`;
   switch (kind) {
     case 'voice':
       return '🎙️ Transcribiendo la nota de voz…';
