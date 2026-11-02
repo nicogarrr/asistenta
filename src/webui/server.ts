@@ -38,6 +38,11 @@ export interface WebUiDeps {
    * (solo números y nombres, ver contexto.ts). Si falta o devuelve null, 503.
    */
   contexto?(): unknown | Promise<unknown>;
+  /**
+   * Tarjeta «Mapa de memoria»: recuerdos del ámbito (como /api/memory) y sus enlaces,
+   * con tope (ver mapa-memoria.ts). Si falta o devuelve null, 503.
+   */
+  mapaMemoria?(scope?: string): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(
     text: string,
@@ -111,6 +116,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'repartos' }
   | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'contexto' }
+  | { method: 'GET'; kind: 'mapaMemoria' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
@@ -203,6 +209,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'funciones' };
     case '/api/contexto':
       return { method: 'GET', kind: 'contexto' };
+    case '/api/mapa-memoria':
+      return { method: 'GET', kind: 'mapaMemoria' };
     case '/api/status':
       return { method: 'GET', kind: 'status' };
     case '/api/sessions':
@@ -286,6 +294,11 @@ async function respondApi(
         payload = deps.contexto ? await deps.contexto() : null;
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Contexto aún no disponible');
+        break;
+      case 'mapaMemoria':
+        payload = deps.mapaMemoria ? await deps.mapaMemoria(queryParam(url, 'scope')) : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Mapa de memoria aún no disponible');
         break;
       case 'status':
         payload = await deps.status();

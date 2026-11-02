@@ -621,6 +621,7 @@ import {
 import { WebRouter } from './web/router.js';
 import { panelContextoDeHilos } from './webui/contexto.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
+import { mapaMemoria } from './webui/mapa-memoria.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
 import { panelRepartos } from './webui/repartos.js';
 import { parseAllowedHosts, startWebUi } from './webui/server.js';
@@ -1965,6 +1966,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           memory: (scope?: string) =>
             panelMemoryEntries(memory, scope, vigilanteOwnerId ?? undefined),
           memoryScopes: () => memory.scopes(),
+          // Tarjeta Mapa de memoria: los mismos recuerdos que Memoria, como grafo (solo lectura).
+          mapaMemoria: (scope?: string) =>
+            mapaMemoria(panelMemoryEntries(memory, scope, vigilanteOwnerId ?? undefined)),
           // El mismo ámbito que panelMemoryEntries lee sin `scope` (#555).
           memoryDefaultScope: () =>
             vigilanteOwnerId === undefined || vigilanteOwnerId === null
