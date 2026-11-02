@@ -163,6 +163,7 @@ import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
 import { ASK_QUEUED, ASK_QUEUED_BUSY, handleFeatureAsk } from './evolve/ask.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
+import { createProximoFestivo } from './festivos-rutinas.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
@@ -4882,6 +4883,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       telegram
         .send({ channel: 'telegram', account: telegram.account, chatId, text })
         .then(() => true),
+    festivo: createProximoFestivo(),
     agenda: async () => {
       const agenda = await buildAgenda({
         calendar: async () =>

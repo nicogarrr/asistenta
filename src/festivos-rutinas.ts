@@ -1,11 +1,14 @@
+import { localDay } from './datecontext.js';
 import { log } from './log.js';
 import { foldAccents } from './text.js';
 import {
   COMUNIDADES,
   comunidadFromEnv,
   FESTIVOS_API,
+  fechaLarga,
   festivosLocalesFromEnv,
   parseNager,
+  puenteDe,
 } from './tools/festivos.js';
 
 /**
@@ -76,18 +79,14 @@ export interface HolidayCheckDeps {
 
 const CACHE_MS = 12 * 3_600_000;
 
-/**
- * `isHoliday("2026-12-08")`. Sin respuesta del servicio se usa lo último bueno y, si no
- * hay nada, los nacionales que se saben sin red: mejor saltar Navidad sin internet que
- * sonar, y un día normal nunca se toma por festivo.
- */
-export function createHolidayCheck(deps: HolidayCheckDeps = {}): (day: string) => Promise<boolean> {
+/** Festivos de un año, fecha → nombre, con caché y la misma reserva sin red. */
+function yearLoader(deps: HolidayCheckDeps): (year: number) => Promise<Map<string, string>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
-  const cache = new Map<number, { at: number; days: Set<string> }>();
+  const cache = new Map<number, { at: number; days: Map<string, string> }>();
   let warnedComunidad = false;
 
-  const yearDays = async (year: number): Promise<Set<string>> => {
+  return async (year: number): Promise<Map<string, string>> => {
     const env = deps.env ?? process.env;
     const hit = cache.get(year);
     if (hit && now().getTime() - hit.at < CACHE_MS) return hit.days;
@@ -96,29 +95,79 @@ export function createHolidayCheck(deps: HolidayCheckDeps = {}): (day: string) =
       warnedComunidad = true;
       log.warn('festivos: no reconozco PA_FESTIVOS_COMUNIDAD, solo cuento los nacionales');
     }
-    const locales = festivosLocalesFromEnv(env).map((l) =>
+    const locales: Array<[string, string]> = festivosLocalesFromEnv(env).map((l) => [
       l.when.length === 5 ? `${year}-${l.when}` : l.when,
-    );
+      l.name,
+    ]);
     try {
       const res = await fetchFn(`${FESTIVOS_API}/${year}/ES`, {
         headers: { accept: 'application/json' },
         signal: AbortSignal.timeout(deps.timeoutMs ?? 10_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const listed = parseNager((await res.json()) as unknown, comunidad).map((f) => f.date);
+      const listed = parseNager((await res.json()) as unknown, comunidad);
       if (listed.length === 0) throw new Error('respuesta vacía');
-      const days = new Set([...listed, ...locales]);
+      const days = new Map<string, string>(locales);
+      for (const f of listed) days.set(f.date, f.name);
       cache.set(year, { at: now().getTime(), days });
       return days;
     } catch (err) {
-      log.warn('festivos: no pude consultarlos al sonar una rutina', { err: String(err) });
+      log.warn('festivos: no pude consultarlos', { err: String(err) });
       if (hit) return hit.days;
-      return new Set([...nacionalesSinRed(year), ...locales]);
+      const days = new Map<string, string>(locales);
+      for (const d of nacionalesSinRed(year)) days.set(d, 'festivo nacional');
+      return days;
     }
   };
+}
 
+/**
+ * `isHoliday("2026-12-08")`. Sin respuesta del servicio se usa lo último bueno y, si no
+ * hay nada, los nacionales que se saben sin red: mejor saltar Navidad sin internet que
+ * sonar, y un día normal nunca se toma por festivo.
+ */
+export function createHolidayCheck(deps: HolidayCheckDeps = {}): (day: string) => Promise<boolean> {
+  const load = yearLoader(deps);
   return async (day: string): Promise<boolean> => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
-    return (await yearDays(Number(day.slice(0, 4)))).has(day);
+    return (await load(Number(day.slice(0, 4)))).has(day);
+  };
+}
+
+const DAY_MS = 86_400_000;
+const shift = (day: string, n: number): string => {
+  // Fecha de calendario a mediodía UTC (no es «hoy»): se lee con los campos UTC.
+  const d = new Date(Date.parse(`${day}T12:00:00Z`) + n * DAY_MS);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+};
+const weekend = (day: string): boolean => {
+  const wd = new Date(`${day}T12:00:00Z`).getUTCDay();
+  return wd === 0 || wd === 6;
+};
+
+/**
+ * Para el briefing: el primer festivo entre semana de los próximos 7 días, en una línea
+ * («Festivo el martes 8 de diciembre (Inmaculada Concepción): puente si coges el lunes…»),
+ * o null si no hay.
+ */
+export function createProximoFestivo(
+  deps: HolidayCheckDeps = {},
+): (from: Date) => Promise<string | null> {
+  const load = yearLoader(deps);
+  return async (from: Date): Promise<string | null> => {
+    const today = localDay(from);
+    const last = shift(today, 7);
+    const days = new Map(await load(Number(today.slice(0, 4))));
+    if (last.slice(0, 4) !== today.slice(0, 4))
+      for (const [d, n] of await load(Number(last.slice(0, 4)))) days.set(d, n);
+    const isOff = (d: string): boolean => days.has(d) || weekend(d);
+    for (let k = 1; k <= 7; k++) {
+      const day = shift(today, k);
+      const name = days.get(day);
+      if (!name || weekend(day)) continue;
+      const puente = puenteDe(day, isOff);
+      return `Festivo el ${fechaLarga(day)} (${name})${puente ? `: ${puente}` : ''}.`;
+    }
+    return null;
   };
 }
