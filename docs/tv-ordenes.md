@@ -45,6 +45,15 @@ Con la tele apagada del todo no hay nada escuchando: «enciende la tele» manda 
 - En la tele: activar «Encender con Wi-Fi» / «Mobile TV On» (Ajustes > General > Dispositivos).
 - `pa tv wake` envía el paquete a mano.
 
+## Varias teles en la misma wifi
+
+- `pa tv buscar` (o `pa tv descubrir`) lista las teles de la red (LG y Sony) por SSDP; solo lectura, nada sale en pantalla. Solo cuenta aparatos con IP local, y el XML de cada uno se pide a su propia IP.
+- `pa tv setup` sin IP busca las LG: si hay una sola sin emparejar la empareja; si hay varias, dice qué `pa tv setup <ip>` usar.
+- `pa tv teles` lista las emparejadas (una tele emparejada antes del registro sale sola, sin reescribir nada); `pa tv usar <ip|nombre>` cambia la activa; `pa tv nombre <ip> salón` le pone nombre (sin tildes ni mayúsculas al buscarla).
+- Si el router le cambia la IP a una tele (DHCP), `pa tv buscar` la reconoce por su MAC o su UUID UPnP y actualiza la IP guardada.
+- `pa tv wake <ip|nombre>` enciende por red esa tele; sin nada, la activa.
+- Windows: el descubrimiento usa multicast UDP 1900. Si `pa tv buscar` no ve nada con la tele encendida, permite Node.js en «Redes privadas» en el Firewall de Windows (el aviso sale la primera vez) y comprueba que la wifi del PC es de tipo «Privada».
+
 ## Modo cine (`action=scene scene=cine`)
 Encender si hace falta → quitar silencio → volumen 20 (o `level`) → abrir la app pedida (`appId`) → aviso en pantalla. Cada paso informa de su resultado; sin Glasshouse, volumen y silencio se omiten; si no se puede encender, la rutina para.
 

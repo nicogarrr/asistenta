@@ -12,6 +12,8 @@
  * paquete que manda Windows al abrir "Red". No toca la tele.
  */
 
+import { assertTvHost } from './lgtv.js';
+
 const SSDP_ADDR = '239.255.255.250';
 const SSDP_PORT = 1900;
 /** Espera total recogiendo respuestas; las teles de casa contestan en <1s. */
@@ -91,6 +93,8 @@ export interface DiscoveredTv {
   server?: string;
   st?: string;
   usn?: string;
+  /** UUID UPnP sacado del USN: sigue siendo el mismo aunque el router le cambie la IP. */
+  uuid?: string;
   /** true si responde la API de Glasshouse (:8080): tele rooteada, control total. */
   glasshouse: boolean;
 }
@@ -109,6 +113,35 @@ export interface DiscoverDeps {
   /** false en tests o cuando no interesa el sondeo :8080. */
   probeGlasshouse?: boolean;
   now?: () => number;
+}
+
+/** Solo aparatos de la red local: una respuesta desde una IP publica se ignora. */
+export function isLanAddress(ip: string): boolean {
+  try {
+    assertTvHost(ip);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * El XML solo se pide al propio aparato que contesto (http y su misma IP):
+ * un LOCATION que apunta a otra maquina o a internet no se sigue.
+ */
+export function sameDeviceLocation(location: string, ip: string): boolean {
+  try {
+    const url = new URL(location);
+    return url.protocol === 'http:' && url.hostname === ip && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+/** UUID del USN («uuid:xxxx::urn:...»), en minusculas. */
+export function uuidFromUsn(usn: string | undefined): string | undefined {
+  const m = /uuid:([0-9a-z-]{8,64})/i.exec(usn ?? '');
+  return m?.[1]?.toLowerCase();
 }
 
 function msearch(st: string): Buffer {
@@ -154,18 +187,22 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
   await new Promise<void>((resolve) => {
     socket.on('message', (msg, rinfo) => {
       const parsed = parseSsdpResponse(msg.toString('utf8'));
-      if (!parsed || !rinfo.address) return;
+      if (!parsed || !rinfo.address || !isLanAddress(rinfo.address)) return;
       const prev = byIp.get(rinfo.address);
       // Cualquier respuesta SSDP guarda al aparato; la marca se decide con su XML.
+      const server = parsed.server ?? prev?.server;
+      const st = parsed.st ?? prev?.st;
+      const usn = parsed.usn ?? prev?.usn;
       byIp.set(rinfo.address, {
         ip: rinfo.address,
         brand: prev?.brand ?? 'lg',
-        ...((parsed.server ?? prev?.server) ? { server: (parsed.server ?? prev?.server)! } : {}),
-        ...((parsed.st ?? prev?.st) ? { st: (parsed.st ?? prev?.st)! } : {}),
-        ...((parsed.usn ?? prev?.usn) ? { usn: (parsed.usn ?? prev?.usn)! } : {}),
+        ...(server ? { server } : {}),
+        ...(st ? { st } : {}),
+        ...(usn ? { usn } : {}),
         glasshouse: prev?.glasshouse ?? false,
       });
-      if (parsed.location) locations.set(rinfo.address, parsed.location);
+      if (parsed.location && sameDeviceLocation(parsed.location, rinfo.address))
+        locations.set(rinfo.address, parsed.location);
     });
     const sendBoth = () => {
       for (const st of [
@@ -225,12 +262,14 @@ export async function discoverWebOsTvs(deps: DiscoverDeps = {}): Promise<Discove
         ? 'lg'
         : (undefined as never);
     if (!brand) continue;
+    const uuid = uuidFromUsn(tv.usn);
     out.push({
       ip,
       brand,
       ...(name ? { name } : {}),
       ...(model ? { model } : {}),
       ...(tv.server ? { server: tv.server } : {}),
+      ...(uuid ? { uuid } : {}),
       glasshouse: tv.glasshouse,
     });
   }
