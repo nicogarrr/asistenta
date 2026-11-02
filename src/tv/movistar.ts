@@ -101,10 +101,14 @@ export function parseXmltvGuide(xml: string): {
   return { programmes, channels };
 }
 
-async function fetchText(url: string, fetchImpl?: typeof fetch): Promise<string> {
+async function fetchText(
+  url: string,
+  fetchImpl?: typeof fetch,
+  que = 'la guía de Movistar',
+): Promise<string> {
   const f = fetchImpl ?? fetch;
   const res = await f(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`HTTP ${res.status} al pedir la guía de Movistar`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} al pedir ${que}`);
   return res.text();
 }
 
@@ -162,8 +166,16 @@ export async function movistarFind(
 export async function movistarChannels(
   fetchImpl?: typeof fetch,
 ): Promise<Array<{ nombre: string; uid: number; cod: string }>> {
-  const raw = await fetchText(CHANNELS_URL, fetchImpl);
-  const data = JSON.parse(raw) as Array<{ Nombre?: string; Uid?: number; CodCadenaTv?: string }>;
+  const raw = await fetchText(CHANNELS_URL, fetchImpl, 'la lista de canales de Movistar');
+  let data: Array<{ Nombre?: string; Uid?: number; CodCadenaTv?: string }>;
+  try {
+    data = JSON.parse(raw) as Array<{ Nombre?: string; Uid?: number; CodCadenaTv?: string }>;
+  } catch {
+    throw new Error('La lista de canales de Movistar no vino en JSON; hay que revisarla.');
+  }
+  if (!Array.isArray(data)) {
+    throw new Error('La lista de canales de Movistar vino con otro formato; hay que revisarla.');
+  }
   return data
     .filter((c) => c.Nombre && c.Uid)
     .map((c) => ({

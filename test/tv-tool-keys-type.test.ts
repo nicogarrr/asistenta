@@ -234,6 +234,8 @@ describe('tool tv: guide (qué echan en Movistar Plus+)', () => {
     expect(text(r)).toMatch(/M\+ LALIGA TV/);
     expect(text(r)).toMatch(/AHORA/);
     expect(text(r)).toMatch(/busca el canal por su nombre/);
+    expect(text(r)).toContain('appId=com.telefonica.app.nux');
+    expect(text(r)).toContain('SIN PREGUNTAR');
   });
 
   it('sin resultados lo dice claro', async () => {

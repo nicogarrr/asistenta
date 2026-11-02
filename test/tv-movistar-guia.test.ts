@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  movistarChannels,
   movistarFind,
   normalizeTvText,
   parseXmltvDate,
@@ -95,5 +96,34 @@ describe('movistarFind', () => {
     const { programmes } = parseXmltvGuide('<tv></tv>');
     expect(programmes).toEqual([]);
     expect(typeof emptyFetch).toBe('function');
+  });
+});
+
+describe('movistarChannels (lista de canales del CDN)', () => {
+  it('JSON inválido o con otro formato → error en castellano, no SyntaxError', async () => {
+    const html = (() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('<html>error del CDN</html>'),
+      } as Response)) as unknown as typeof fetch;
+    await expect(movistarChannels(html)).rejects.toThrow(/no vino en JSON/);
+    const objeto = (() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('{"canales": []}'),
+      } as Response)) as unknown as typeof fetch;
+    await expect(movistarChannels(objeto)).rejects.toThrow(/otro formato/);
+  });
+
+  it('HTTP caído nombra la lista de canales, no la guía', async () => {
+    const caido = (() =>
+      Promise.resolve({
+        ok: false,
+        status: 503,
+        text: () => Promise.resolve(''),
+      } as Response)) as unknown as typeof fetch;
+    await expect(movistarChannels(caido)).rejects.toThrow(/lista de canales/);
   });
 });
