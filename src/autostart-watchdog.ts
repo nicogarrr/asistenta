@@ -113,7 +113,16 @@ export const schtasksArgs = {
   query: () => ['/Query', '/TN', WATCHDOG_TASK_NAME, '/FO', 'LIST'],
 };
 
-/** PowerShell que arranca la tarea del daemon por su nombre (esté en la carpeta que esté). */
+/** Minutos que debe llevar «En ejecución» la tarea sin daemon para pararla antes de arrancarla. */
+export const STALE_RUNNING_TASK_MIN = 3;
+
+/**
+ * PowerShell que arranca la tarea del daemon por su nombre (esté en la carpeta que esté).
+ * Solo se llama con el daemon parado. Si la tarea sigue «En ejecución» desde hace más de
+ * STALE_RUNNING_TASK_MIN minutos, es un lanzador colgado sin node (2 nov): con IgnoreNew,
+ * Start-ScheduledTask no hacía nada y el vigilante decía «la arranqué» cada 5 minutos sin
+ * arrancar nada. Se para antes. Una tarea que acaba de lanzarse (node aún arrancando) no se toca.
+ */
 export function startDaemonTaskArgs(): string[] {
   return [
     '-NoProfile',
@@ -121,7 +130,9 @@ export function startDaemonTaskArgs(): string[] {
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
-    `Get-ScheduledTask -TaskName '${DAEMON_TASK_NAME}' -ErrorAction Stop | Start-ScheduledTask`,
+    `$t = Get-ScheduledTask -TaskName '${DAEMON_TASK_NAME}' -ErrorAction Stop; ` +
+      `if ($t.State -eq 'Running' -and ($t | Get-ScheduledTaskInfo).LastRunTime -lt (Get-Date).AddMinutes(-${STALE_RUNNING_TASK_MIN})) ` +
+      `{ $t | Stop-ScheduledTask; Start-Sleep -Seconds 2 }; $t | Start-ScheduledTask`,
   ];
 }
 
