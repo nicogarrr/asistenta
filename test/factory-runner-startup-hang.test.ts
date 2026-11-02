@@ -40,7 +40,9 @@ function install(id: string, body: string): void {
   );
 }
 
-describe('factory runner: a tool stuck while loading', () => {
+// Cada caso espera de verdad a que el reloj de pared del sandbox (4 s) corte un
+// proceso hijo: van a la vez (ids distintos, sin estado compartido), no en fila.
+describe.concurrent('factory runner: a tool stuck while loading', () => {
   it('a top-level await that never settles ends as timeout', async () => {
     install(
       'tla-hang',
