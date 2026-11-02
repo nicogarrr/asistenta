@@ -53,6 +53,14 @@ function Set-AllTasks {
   foreach($name in $changed){if($previous[$name]){Register-ScheduledTask -TaskName $name -TaskPath $identity.Path -Xml $previous[$name] -Force | Out-Null}else{Unregister-ScheduledTask -TaskName $name -TaskPath $identity.Path -Confirm:$false}}
   throw
  }
+ # Una sola Asistenta: la misma tarea registrada en otra carpeta del Programador (una
+ # instalación vieja) arrancaría un segundo daemon con el mismo bot. Se quita (el proceso
+ # que siga vivo lo cierra pa autostart install, instancias.ts).
+ foreach($name in @('personal-agent-daemon','browserd-sidecar')){
+  Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue | Where-Object {$_.TaskPath -and $_.TaskPath -ne $identity.Path} | ForEach-Object {
+   Unregister-ScheduledTask -InputObject $_ -Confirm:$false -ErrorAction SilentlyContinue
+  }
+ }
 }
 if($LibraryOnly){return}
 try{
