@@ -25,7 +25,7 @@ const HOME_APPS = new Set(['com.webos.app.home', 'com.webos.app.launcher']);
  */
 
 /** Un frame de la tele casi vacio ronda los 9 kB; uno con contenido, 120-160 kB. */
-const SUSPECT_BLANK_BYTES = 24_000;
+export const SUSPECT_BLANK_BYTES = 24_000;
 
 /** «a la mitad» sin Glasshouse va por teclas: tope para no tener la cola ocupada medio minuto. */
 export const MAX_HALF_KEY_PRESSES = 25;
