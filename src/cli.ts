@@ -145,6 +145,8 @@ import { createGoalTickExecute } from './daemon/goal-tick.js';
 import {
   beginInbound,
   cachedFullReply,
+  canJoinMessageBatch,
+  mergeBatchedInbounds,
   queueMessageTurn,
   queueThreadTurn,
   resolveInboundThread,
@@ -164,7 +166,7 @@ import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
 import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
 import { parseVerdict, TurnWatchdog, turnWatchdogScan } from './daemon/turn-watchdog.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
-import { applyConfiguredTimeZone, localDay, localTimeZone } from './datecontext.js';
+import { applyConfiguredTimeZone, localDay, localTimeZone, wallHourMinute } from './datecontext.js';
 import { Store } from './db.js';
 import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
 import { ASK_QUEUED, ASK_QUEUED_BUSY, handleFeatureAsk } from './evolve/ask.js';
@@ -8339,24 +8341,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // machine mutex inside the tools is what keeps them from colliding.
           // Batching: varios mensajes seguidos mientras corre otro turno se funden
           // en UN turno (una llamada al modelo), no en un turno por mensaje.
-          void queueMessageTurn(thread, inbound, async (merged) => {
-            const lastInbound = merged[merged.length - 1] ?? inbound;
-            const text = merged.length === 1 ? inbound.text : merged.map((m) => m.text).join('\n');
-            const images = merged.flatMap((m) => m.images ?? []);
-            lastTurns.remember(thread.key, {
-              text,
-              images: images.length > 0 ? images : lastInbound.images,
-              agent: thread.agent,
-              mark: thread.agent.messages.length,
-              compactions: thread.agent.compactions,
-            });
-            await runTurn(
-              thread,
-              { ...lastInbound, text, images: images.length > 0 ? images : lastInbound.images },
-              text,
-              {},
-            );
-          });
+          // Solo se funde texto de la misma persona; cada mensaje va separado, con su
+          // hora, su cita y su marca de reenviado (mergeBatchedInbounds).
+          void queueMessageTurn(
+            thread,
+            inbound,
+            async (merged) => {
+              const turnInbound = mergeBatchedInbounds(merged.length ? merged : [inbound], {
+                linked: (m) =>
+                  m.replyToMessageId !== undefined &&
+                  messageThread.get(`${chatKey(m)}:${m.replyToMessageId}`) === thread.key,
+                time: (iso) => wallHourMinute(new Date(iso)),
+              });
+              lastTurns.remember(thread.key, {
+                text: turnInbound.text,
+                images: turnInbound.images,
+                agent: thread.agent,
+                mark: thread.agent.messages.length,
+                compactions: thread.agent.compactions,
+              });
+              await runTurn(thread, turnInbound, turnInbound.text, {});
+            },
+            canJoinMessageBatch,
+          );
         },
         (message) => say(inbound, message, { quote: true }),
         (error) => log.error('inbound message failed', { error: startupFailureMessage(error) }),
