@@ -43,6 +43,7 @@
 import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { localTimeZone } from '../datecontext.js';
 import type { MailMessage } from '../mail/types.js';
+import { sliceSafe } from '../text.js';
 import { zonedAddDays, zonedDayKey, zonedParts, zonedTime } from './ics.js';
 
 /** A commitment found in a mail, ready to be proposed to the user. */
@@ -752,7 +753,7 @@ function cleanSubject(subject: string): string {
     if (stripped === out) break;
     out = stripped;
   }
-  return out.replace(/\s+/g, ' ').trim().slice(0, 90);
+  return sliceSafe(out.replace(/\s+/g, ' ').trim(), 90);
 }
 
 interface Evidence {
@@ -803,7 +804,7 @@ function summarize(message: MailMessage, kind: CommitmentKind): string {
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .find((line) => line.length > 0);
-  let title = cleanSubject(message.subject ?? '') || (firstLine ?? '').slice(0, 80);
+  let title = cleanSubject(message.subject ?? '') || sliceSafe(firstLine ?? '', 80);
   if (!title.trim()) title = 'Compromiso sin asunto';
   if (kind === 'travel') {
     const route = ROUTE_RE.exec(body);
@@ -813,7 +814,7 @@ function summarize(message: MailMessage, kind: CommitmentKind): string {
     const amount = /(\d+[.,]\d{2})\s?\u20ac/.exec(body);
     if (amount?.[1]) title = `${title} (${amount[1]} \u20ac)`;
   }
-  return title.replace(/\s+/g, ' ').trim().slice(0, 90);
+  return sliceSafe(title.replace(/\s+/g, ' ').trim(), 90);
 }
 
 /**

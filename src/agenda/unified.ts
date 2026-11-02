@@ -34,6 +34,7 @@ import type { Followup } from '../alerts/followups.js';
 import { localTimeZone } from '../datecontext.js';
 import { log } from '../log.js';
 import type { MailMessage } from '../mail/types.js';
+import { sliceSafe } from '../text.js';
 import { classifyKind, extractCommitments } from './extract.js';
 import type { AgendaEvent } from './ics.js';
 import { zonedAddDays, zonedDayKey, zonedDayStart, zonedParts } from './ics.js';
@@ -445,7 +446,7 @@ function timeLabel(at: number, timeZone: string): string {
 
 /** One bullet. No bold, no heading, no punctuation the user did not write. */
 function bullet(item: AgendaItem, timeZone: string): string {
-  const title = item.title.replace(/\s+/g, ' ').trim().slice(0, 90) || '(sin título)';
+  const title = sliceSafe(item.title.replace(/\s+/g, ' ').trim(), 90) || '(sin título)';
   let prefix = '';
   if (item.allDay) prefix = 'todo el día  ';
   else if (item.timed === false) prefix = 'sin hora  ';
@@ -511,7 +512,7 @@ export function formatAgenda(agenda: UnifiedAgenda, opts: FormatOptions = {}): s
     for (const item of agenda.pending) {
       const when = item.at === null ? '' : `${dayLabel(item.at, timeZone)} `;
       lines.push(
-        `- ${when}${item.title.replace(/\s+/g, ' ').trim().slice(0, 90) || '(sin título)'}`,
+        `- ${when}${sliceSafe(item.title.replace(/\s+/g, ' ').trim(), 90) || '(sin título)'}`,
       );
     }
   }
