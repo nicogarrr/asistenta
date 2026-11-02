@@ -599,6 +599,7 @@ import {
   PageWatchStore,
   parseVigilaArgs,
   watchFromAnswer,
+  watchNamed,
   watchNotFound,
   watchValueText,
 } from './watch/pages.js';
@@ -4548,9 +4549,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return void (await say(inbound, PRICE_SWEEP_REMOVED_TEXT, { quote: true }));
     }
     const id = args.trim();
-    const w = id
-      ? pageWatches.list(inbound.chatId).find((x) => x.id === id || x.id.startsWith(id))
-      : undefined;
+    // «/precio ps5» o el código (entero o un trozo que no se confunde con otra).
+    const w = id ? watchNamed(pageWatches.list(inbound.chatId), id) : null;
     if (!w) {
       return void (await say(inbound, watchNotFound(pageWatches.list(inbound.chatId)), {
         quote: true,
@@ -4758,7 +4758,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       );
       return;
     }
-    const ok = id ? pageWatches.remove(inbound.chatId, id) : false;
+    const target = id ? watchNamed(list, id) : null;
+    const ok = target ? pageWatches.remove(inbound.chatId, target.id) : false;
     await say(inbound, ok ? 'Hecho, ya no la vigilo.' : watchNotFound(list), {
       quote: true,
     });
