@@ -1167,6 +1167,17 @@ async function doctorCommand(): Promise<number> {
     `browser         ${existsSync(chromiumDir) ? 'chromium instalado' : 'FALTA (ejecuta: npx playwright install chromium)'}`,
   );
   lines.push(`cron            ${loadConfig().cron.length} tarea(s) programada(s) en PA_CRON`);
+  if (process.platform === 'win32') {
+    // Docker/OpenCode local encendido yendo por la nube: RAM gastada para nada (docker-local.ts).
+    const { localLlmContainerRunning, unusedLocalLlmDoctorLine } = await import(
+      './docker-local.js'
+    );
+    const docker = unusedLocalLlmDoctorLine(
+      loadConfig().providerPreset ?? 'opencode',
+      await localLlmContainerRunning(),
+    );
+    if (docker) lines.push(docker);
+  }
   lines.push(
     `verify actions  ${loadConfig().verifyActions ? 'activado (2 capturas extra por cada acción de teclado o ratón)' : 'desactivado'}`,
   );

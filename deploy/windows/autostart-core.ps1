@@ -50,9 +50,24 @@ function Invoke-BoundedProgram {
         return @{Code=$p.ExitCode;Output=$out.GetAwaiter().GetResult()}
     }finally{$p.Dispose()}
 }
+# Preset efectivo del modelo con las mismas reglas que Asistenta y el instalador
+# (resolve-preset.mjs usa presetFromEnv de scripts/instalar.mjs). Solo «opencode-local» usa el
+# contenedor de Docker; con la nube no se toca Docker. Si no se puede saber, como antes.
+function Get-ProviderPreset {
+    param([string]$RepoDir,[string]$NodeExe)
+    $v=''
+    try{
+        $script=Join-Path $PSScriptRoot 'resolve-preset.mjs'
+        $r=Invoke-BoundedProgram $NodeExe ('"'+$script+'"') 10 $RepoDir
+        if($r.Code -eq 0){$v=([string]$r.Output).Trim().ToLowerInvariant()}
+    }catch{$v=''}
+    if(-not $v){return 'opencode-local'}
+    return $v
+}
 function Start-OptionalOpenCode {
-    param([bool]$Enabled)
+    param([bool]$Enabled,[string]$Preset='opencode-local')
     if(-not $Enabled){return 'disabled'}
+    if($Preset -ne 'opencode-local'){return 'not-configured'}
     $docker=Get-Command docker.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if(-not $docker){return 'docker-missing'}
     try {

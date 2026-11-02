@@ -59,6 +59,19 @@ function Invoke-BoundedProgram {
  throw 'Unexpected mutation'
 }
 Assert ((Start-OptionalOpenCode $false) -eq 'disabled' -and $script:programs.Count -eq 0) 'explicit opt-out no docker'
+# Nube (2 nov): sin PA_PROVIDER_PRESET=opencode-local no se abre Docker ni se arranca el contenedor.
+foreach($p in @('opencode','openrouter','')){Assert ((Start-OptionalOpenCode $true $p) -eq 'not-configured' -and $script:programs.Count -eq 0) "cloud preset '$p' never touches docker"}
+Assert ((Start-OptionalOpenCode $false 'opencode-local') -eq 'disabled' -and $script:programs.Count -eq 0) 'explicit opt-out still wins'
+$script:presetOut=@{Code=0;Output="opencode-local`n"}
+$saved=${function:Invoke-BoundedProgram}
+function Invoke-BoundedProgram {param($Exe,$Arguments,$Seconds,$Directory)$script:presetCall=@($Exe,$Arguments,$Directory);return $script:presetOut}
+Assert ((Get-ProviderPreset 'C:\app' 'C:\node.exe') -eq 'opencode-local') 'resolver output trimmed'
+Assert ($script:presetCall[0] -eq 'C:\node.exe' -and $script:presetCall[1] -like '*resolve-preset.mjs"' -and $script:presetCall[2] -eq 'C:\app') 'resolver runs in the app folder'
+$script:presetOut=@{Code=0;Output=' OpenCode '}
+Assert ((Get-ProviderPreset 'C:\app' 'C:\node.exe') -eq 'opencode') 'cloud preset, any case'
+$script:presetOut=@{Code=1;Output=''}
+Assert ((Get-ProviderPreset 'C:\app' 'C:\node.exe') -eq 'opencode-local') 'unknown preset keeps the old behaviour'
+${function:Invoke-BoundedProgram}=$saved
 Assert ((Start-OptionalOpenCode $true) -eq 'container-missing') 'missing optional LLM degrades'
 Assert (($script:programs -join '|') -notmatch '(^|\|)(start|run|rm|pull) ') 'missing container never created'
 $script:programs=@()
