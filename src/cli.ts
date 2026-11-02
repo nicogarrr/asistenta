@@ -9043,11 +9043,15 @@ function isEntrypoint(): boolean {
   return selfUrl === entryUrl || selfUrl.toLowerCase() === entryUrl.toLowerCase();
 }
 
-if (isEntrypoint()) {
+/**
+ * Ejecuta el CLI con estos argumentos. La llaman `node dist/cli.js` (abajo) y la
+ * entrada mínima dist/pa.js (src/pa.ts), que antes activa la caché de compilación.
+ */
+export function runCli(argv: string[]): void {
   // Set exitCode and let Node drain on its own. Calling process.exit() here trips a
   // libuv assertion on Windows ("!(handle->flags & UV_HANDLE_CLOSING)") because the
   // provider stream may still be tearing down its socket at that instant.
-  main(process.argv.slice(2))
+  main(argv)
     .then((code) => {
       process.exitCode = code;
     })
@@ -9058,3 +9062,5 @@ if (isEntrypoint()) {
       process.exitCode = 1;
     });
 }
+
+if (isEntrypoint()) runCli(process.argv.slice(2));

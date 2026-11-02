@@ -9,7 +9,7 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "pa": "./dist/cli.js"
+    "pa": "./dist/pa.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/copy-page-scripts.mjs",
@@ -21,7 +21,7 @@
     "test:watch": "vitest",
     "qa:daemon": "bash scripts/qa-daemon/smoke.sh",
     "test:e2e": "vitest run test/e2e-scenarios.test.ts test/e2e-agent-loop.test.ts test/e2e-memory-scopes.test.ts",
-    "start": "node dist/cli.js",
+    "start": "node dist/pa.js",
     "dev": "node --experimental-strip-types src/cli.ts"
   },
   "dependencies": {

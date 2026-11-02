@@ -6,21 +6,23 @@ const bat = readFileSync(new URL('../levantar.bat', import.meta.url), 'utf8');
 
 describe('levantar.bat', () => {
   it('arranca con pa iniciar (comprobación verde/rojo y luego el daemon), no con serve a pelo', () => {
-    expect(bat).toMatch(/dist\\cli\.js iniciar\r?\n/);
+    expect(bat).toMatch(/%PA_JS% iniciar\r?\n/);
     expect(bat).not.toMatch(/dist\\cli\.js serve/);
   });
 
   it('pone la consola en UTF-8 antes de pintar la lista', () => {
     const chcp = bat.indexOf('chcp 65001');
     expect(chcp).toBeGreaterThan(0);
-    expect(chcp).toBeLessThan(bat.indexOf('dist\\cli.js iniciar'));
+    expect(chcp).toBeLessThan(bat.indexOf('%PA_JS% iniciar'));
   });
 
   it('sigue comprobando Node 24 y dist antes, y deja la ventana abierta si falla', () => {
     expect(bat).toContain('call scripts\\node24.cmd');
-    expect(bat.indexOf('node24.cmd')).toBeLessThan(bat.indexOf('dist\\cli.js iniciar'));
+    expect(bat.indexOf('node24.cmd')).toBeLessThan(bat.indexOf('%PA_JS% iniciar'));
     expect(bat).toContain('if not exist dist\\cli.js');
-    expect(bat.slice(bat.indexOf('cli.js iniciar'))).toMatch(/if errorlevel 1 \(\r?\n[\s\S]*pause/);
+    expect(bat.slice(bat.indexOf('%PA_JS% iniciar'))).toMatch(
+      /if errorlevel 1 \(\r?\n[\s\S]*pause/,
+    );
   });
 
   it('es ASCII (cmd.exe lee el .bat antes del chcp) y mantiene los CRLF', () => {

@@ -24,18 +24,6 @@ import { envFileText } from './env-text.js';
 
 export { envFileText };
 
-// Caché de compilación de V8 (Node 22.8+): arrancar compila ~300 módulos y
-// esto guarda el bytecode entre arranques. Medido A/B en `pa --help`:
-// ~700 ms → ~650 ms (-8 % en cada arranque tras el primero). Este módulo es
-// SIEMPRE el primer import de la entrada (ver la cabecera), así que la caché
-// queda activa antes de compilar el resto. Es seguro repetir la llamada y no
-// pisa NODE_COMPILE_CACHE si el usuario ya la tiene puesta.
-try {
-  enableCompileCache();
-} catch {
-  // Un Node viejo o sin permiso de escritura no frena el arranque.
-}
-
 /** Aviso en castellano llano; el detalle técnico se queda en el código de error. */
 export function envReadWarning(err: unknown): string {
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
@@ -83,4 +71,23 @@ export function dotEnvFiles(
   return here === resolve(install) ? [here] : [here, install];
 }
 
+/**
+ * Caché de compilación de V8 (Node ≥ 22.1): guarda el bytecode entre arranques.
+ * Con la entrada mínima dist/pa.js (ver src/pa.ts) cubre todo Asistenta: `pa
+ * status` ~25 % más rápido desde el segundo arranque. Va en la carpeta temporal
+ * del usuario (la de Node, o NODE_COMPILE_CACHE si está puesta), NUNCA en la
+ * carpeta de estado: `pa status`, `pa setup` o `pa diagnose` no escriben estado.
+ * Nunca frena el arranque: un Node sin la función, una carpeta sin permiso o
+ * NODE_DISABLE_COMPILE_CACHE solo dejan la caché apagada.
+ */
+export function startCompileCache(enable: (() => unknown) | undefined = enableCompileCache): void {
+  if (typeof enable !== 'function') return;
+  try {
+    enable();
+  } catch {
+    // Sin caché: arranca igual, solo que sin el atajo.
+  }
+}
+
 for (const file of dotEnvFiles()) loadDotEnv(file);
+startCompileCache();

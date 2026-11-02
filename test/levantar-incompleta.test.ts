@@ -10,7 +10,7 @@ describe('levantar.bat con la instalación a medias', () => {
   it('comprueba que npm terminó (node_modules\\.package-lock.json) antes de arrancar', () => {
     const check = bat.indexOf('if not exist node_modules\\.package-lock.json');
     expect(check).toBeGreaterThan(bat.indexOf('if not exist dist\\cli.js'));
-    expect(check).toBeLessThan(bat.indexOf('dist\\cli.js iniciar'));
+    expect(check).toBeLessThan(bat.indexOf('%PA_JS% iniciar'));
   });
 
   it('dice qué hacer en castellano y deja la ventana abierta', () => {

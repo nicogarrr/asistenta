@@ -20,7 +20,10 @@ try {
     # Resolve before launching: never inherit a shell alias or terminal wrapper.
     $repo = (Resolve-Path -LiteralPath $RepoDir).Path
     $node = (Resolve-Path -LiteralPath $NodeExe).Path
-    $cli = Join-Path $repo 'dist\cli.js'
+    # dist\pa.js: minimal entry with the compile cache (starts ~25 % faster). Without it
+    # (old build), dist\cli.js is the same program.
+    $cli = Join-Path $repo 'dist\pa.js'
+    if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { $cli = Join-Path $repo 'dist\cli.js' }
     if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { throw 'Falta dist\cli.js; ejecuta npm run build.' }
     if (-not [IO.Path]::IsPathRooted($StateDir)) { throw 'StateDir debe ser una ruta absoluta.' }
     $env:PA_STATE_DIR = $StateDir
