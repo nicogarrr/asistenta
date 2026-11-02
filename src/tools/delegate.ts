@@ -96,6 +96,15 @@ export function deniedActionsNotice(specialistTitle: string): string {
 }
 
 /**
+ * Falló (error, tiempo agotado, /stop) después de que se aprobaran acciones del
+ * especialista: esas acciones pudieron hacerse aunque la tarea acabe en error.
+ */
+export function approvedBeforeErrorNotice(specialistTitle: string, granted: number): string {
+  const what = granted === 1 ? 'se aprobó 1 acción' : `se aprobaron ${granted} acciones`;
+  return `Ojo: antes del fallo ${what} del especialista ${specialistTitle}, que pudo hacerse igualmente. No digas que no se hizo nada: compruébalo o díselo así al usuario.`;
+}
+
+/**
  * Crea la tool `delegate` sobre un pool ya configurado. `depthOf` devuelve la
  * profundidad del agente actual (el padre); el pool calcula la del hijo.
  */
@@ -162,11 +171,13 @@ export function createDelegateTool(
       const error = empty ? emptyResultNotice(specialist?.title) : result.error;
       // Pidió permiso y no se le dio ninguno: no es un «Lo hizo» (ni para el modelo).
       const denied = error === undefined && specialist !== undefined && asked > 0 && granted === 0;
-      const body =
-        error ??
-        (denied && specialist
+      const body = error
+        ? specialist && granted > 0
+          ? `${error}\n\n${approvedBeforeErrorNotice(specialist.title, granted)}`
+          : error
+        : denied && specialist
           ? `${result.text}\n\n${deniedActionsNotice(specialist.title)}`
-          : result.text);
+          : result.text;
       // Un nombre que no existe no debe pasar desapercibido: el modelo lo lee aquí
       // (y no solo en details) para no volver a pedirlo ni creer que lo hizo el bueno.
       const text =
