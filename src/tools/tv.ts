@@ -349,8 +349,13 @@ export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Para
       'action=type escribe texto en el campo enfocado (buscadores); key con names es una rafaga de teclas.',
       'Rafagas y type devuelven una captura de la tele (look=true por defecto): mirala para verificar',
       'donde quedo el foco ANTES de seguir o de dar algo por hecho; navegar a ciegas falla.',
-      'Para buscar contenido (Netflix, Movistar Plus+, YouTube): screenshot para ver el mapa, rafaga',
-      'hasta el buscador, type con el titulo, ENTER, y confirma los resultados en la captura devuelta.',
+      'Para buscar contenido (Netflix, Movistar Plus+, YouTube), EN ESTE ORDEN: 1) action=search',
+      '(invisible, no toca la pantalla); 2) si sabes el titulo exacto, launch con contentId (YouTube:',
+      'v=VIDEO_ID; el ID lo sacas de una busqueda web); 3) solo si las otras no valen: screenshot,',
+      'rafaga hasta el buscador, type, ENTER, verificando con la captura. OJO: apps con teclado propio',
+      '(YouTube) pueden NO aceptar type: si el texto no aparece en la captura, no reintentes type,',
+      'cambia de via. Y si una via falla, prueba la siguiente SIN PREGUNTAR: nunca devuelvas la tarea',
+      'al usuario ("buscalo tu", "prefieres A o B?") pudiendo probar otra via tu mismo.',
       'action=launch con contentId abre el contenido exacto de una vez (Netflix/YouTube, ver contentId).',
       'action=search busca texto en la búsqueda universal de la tele (apps y contenido registrado),',
       'sin tocar nada; lo que devuelve depende de lo que cada app registre en webOS.',
@@ -1027,8 +1032,9 @@ async function runTvAction(
         });
       } catch (err) {
         throw new Error(
-          `No se pudo escribir en la tele: ¿hay un campo de texto enfocado? ` +
-            `Abre el buscador (o el campo) con action=key y reintenta. ` +
+          `No se pudo escribir en la tele. Si el buscador no esta enfocado, abrelo con action=key ` +
+            `y reintenta UNA vez. Si la app tiene teclado propio (YouTube), puede no aceptar texto: ` +
+            `no insistas, usa action=search o launch con contentId. ` +
             `Detalle: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
