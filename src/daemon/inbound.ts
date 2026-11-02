@@ -37,12 +37,8 @@ export interface QueueableThread {
   generation: number;
 }
 
-/**
- * Encola `work` detrás de lo que ya corre en el hilo. Hilos distintos corren a la
- * vez; dentro de un hilo, en orden. Si /stop sube la generación antes de que le
- * toque, el trabajo no corre (devuelve undefined). Un fallo no rompe la cola.
- */
-export function queueThreadTurn<T>(
+/** Cadena de trabajos del hilo, sin cerrar tanda de mensajes (uso interno). */
+function chainThreadWork<T>(
   thread: QueueableThread,
   work: () => Promise<T>,
 ): Promise<T | undefined> {
@@ -53,6 +49,85 @@ export function queueThreadTurn<T>(
   });
   thread.tail = next.catch(() => {});
   return next;
+}
+
+/**
+ * Encola `work` detrás de lo que ya corre en el hilo. Hilos distintos corren a la
+ * vez; dentro de un hilo, en orden. Si /stop sube la generación antes de que le
+ * toque, el trabajo no corre (devuelve undefined). Un fallo no rompe la cola.
+ *
+ * Encolar trabajo cierra la tanda de mensajes abierta (ver queueMessageTurn): lo
+ * que el usuario escriba después queda detrás de este trabajo, nunca se cuela
+ * delante por ir fundido en una tanda anterior.
+ */
+export function queueThreadTurn<T>(
+  thread: QueueableThread,
+  work: () => Promise<T>,
+): Promise<T | undefined> {
+  closeMessageBatch(thread);
+  return chainThreadWork(thread, work);
+}
+
+interface PendingMessageTurn {
+  inbound: Inbound;
+  resolve: () => void;
+}
+
+interface MessageBatch {
+  entries: PendingMessageTurn[];
+  /** Un trabajo encolado detrás la cerró: ya no admite más mensajes. */
+  closed: boolean;
+}
+
+/** Tanda de mensajes abierta por hilo (a lo sumo una). */
+const openMessageBatches = new WeakMap<QueueableThread, MessageBatch>();
+
+function closeMessageBatch(thread: QueueableThread): void {
+  const box = openMessageBatches.get(thread);
+  if (box) {
+    box.closed = true;
+    openMessageBatches.delete(thread);
+  }
+}
+
+/**
+ * Turno de mensaje de chat con batching (idea «eventos en ráfaga» del diseño
+ * super-agente): si llegan varios mensajes mientras el hilo corre otra cosa, el
+ * siguiente turno los funde TODOS en una sola llamada al modelo en vez de gastar
+ * un turno por mensaje. `run` recibe los inbounds en orden; con uno solo el
+ * comportamiento es exactamente el de antes, sin espera añadida.
+ *
+ * El orden contra comandos y otros trabajos es estricto: encolar trabajo con
+ * queueThreadTurn cierra la tanda abierta, así que un mensaje nunca adelanta a
+ * un comando que llegó antes. Lo que llega mientras corre la tanda fundida abre
+ * tanda nueva detrás. Con /stop (generación nueva) la tanda no corre.
+ */
+export function queueMessageTurn(
+  thread: QueueableThread,
+  inbound: Inbound,
+  run: (merged: readonly Inbound[]) => Promise<void>,
+): Promise<void> {
+  let box = openMessageBatches.get(thread);
+  if (!box) {
+    const mine: MessageBatch = { entries: [], closed: false };
+    box = mine;
+    openMessageBatches.set(thread, mine);
+    void chainThreadWork(thread, async () => {
+      mine.closed = true;
+      if (openMessageBatches.get(thread) === mine) openMessageBatches.delete(thread);
+      if (mine.entries.length > 0) await run(mine.entries.map((e) => e.inbound));
+    }).then(
+      () => {
+        for (const e of mine.entries) e.resolve();
+      },
+      () => {
+        for (const e of mine.entries) e.resolve();
+      },
+    );
+  }
+  return new Promise((resolve) => {
+    box.entries.push({ inbound, resolve });
+  });
 }
 
 export interface InboundLog {
