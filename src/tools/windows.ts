@@ -4,6 +4,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { childEnv } from '../child-env.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
+import { lastSharedView } from '../screen/ui-map.js';
 import { psErrorSummary } from './ps-error.js';
 
 const execFileAsync = promisify(execFile);
@@ -340,8 +341,38 @@ try {
         ' Si es Chrome, Edge, VS Code, WhatsApp desktop o cualquier app Electron/Chromium, ' +
         'usa el tool browser: su DOM tiene mucha mas informacion que este arbol. Tambien puede ' +
         'pasar si la ventana corre como administrador y este proceso no.'
-      : `${visible} controles visibles. Las coordenadas son el CENTRO de cada control, en pixeles reales de pantalla (no las de la captura): para clicar, computer screenshot con map: true y click con element.`;
+      : `${visible} controles visibles.`;
   return { window, visible, controls, note };
+}
+
+/**
+ * Las filas de `controls` con el centro en el espacio de la última captura de `computer`.
+ *
+ * Antes salían en píxeles reales y el modelo los pasaba a `computer.click`, que entiende
+ * píxeles de la captura (1280 px) y los volvía a escalar: en 1920×1080 un botón en
+ * 600,400 se clicaba en 900,600. Sin captura previa, píxeles reales, y se dice.
+ */
+export function controlRows(controls: readonly ControlInfo[]): { rows: string[]; note: string } {
+  const v = lastSharedView();
+  const toView = (x: number, y: number) =>
+    v
+      ? {
+          x: Math.round((x * v.width) / v.nativeWidth),
+          y: Math.round((y * v.height) / v.nativeHeight),
+        }
+      : { x, y };
+  const rows = controls.map((c) => {
+    const p = toView(c.x, c.y);
+    return (
+      `${c.type} "${c.name}" centro ${p.x},${p.y} (${c.width}x${c.height})` +
+      `${c.automationId ? ` id=${c.automationId}` : ''}${c.focused ? ' [FOCO]' : ''}` +
+      `${c.enabled ? '' : ' [deshabilitado]'}`
+    );
+  });
+  const note = v
+    ? `Centros en píxeles de tu última captura (${v.width}x${v.height}), los mismos que usa computer click.`
+    : 'Centros en píxeles reales de pantalla: haz antes una captura con computer para clicar con ellos.';
+  return { rows, note };
 }
 
 const Params = lazySchema(() =>
@@ -368,10 +399,9 @@ export function createWindowsTool(): AgentTool<ReturnType<typeof Params>> {
       '',
       'action=list: every visible window with its title, process and pid.',
       'action=foreground: the window you are looking at right now.',
-      'action=controls: the controls of a window, each with its centre in REAL screen',
-      'pixels and its type. To click one, do not copy these numbers into computer x/y',
-      '(those are pixels of the downscaled screenshot): take computer screenshot with',
-      'map: true and click with element: N.',
+      'action=controls: the controls of a window, each with its centre in the pixels of',
+      'your last computer screenshot (the ones computer click uses) and its type. Even',
+      'better: computer screenshot with map: true and click with element: N.',
       'action=focus: bring a window to the front by title.',
       '',
       'Pass match with a piece of the window title to pick which window.',
@@ -441,17 +471,14 @@ export function createWindowsTool(): AgentTool<ReturnType<typeof Params>> {
               details: { found: false },
             };
           }
-          const rows = result.controls.map(
-            (c) =>
-              `${c.type} "${c.name}" centro ${c.x},${c.y} (${c.width}x${c.height})` +
-              `${c.automationId ? ` id=${c.automationId}` : ''}${c.focused ? ' [FOCO]' : ''}` +
-              `${c.enabled ? '' : ' [deshabilitado]'}`,
-          );
+          const { rows, note } = controlRows(result.controls);
           return {
             content: [
               {
                 type: 'text',
-                text: [`Ventana: "${result.window}"`, result.note, '', ...rows].join('\n'),
+                text: [`Ventana: "${result.window}"`, `${result.note} ${note}`, '', ...rows].join(
+                  '\n',
+                ),
               },
             ],
             details: {
