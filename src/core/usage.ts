@@ -24,6 +24,14 @@ import { type ModelCaps, resolveModelCaps } from './models.js';
 
 export type UsageKind = 'turn' | 'summary' | 'extraction';
 
+/** Composición estimada del contexto de un turno (heurística, no del proveedor). */
+export interface ContextEstimate {
+  system: number;
+  memory: number;
+  history: number;
+  tools: number;
+}
+
 export interface UsageInput {
   sessionId: string;
   model: string;
@@ -38,6 +46,8 @@ export interface UsageInput {
    * Sin indicar: solo se aplican si `model` es PA_MODEL (o va vacío).
    */
   priceOverrides?: boolean;
+  /** Composición estimada del contexto; opcional (los registros viejos no la tienen). */
+  context?: ContextEstimate;
 }
 
 /** Una linea del JSONL. `day` es la fecha local que decide el fichero. */
@@ -54,6 +64,7 @@ export interface UsageRecord {
   costEur: number;
   /** Precision interna en microeuros, para no perder llamadas de < 1 centimo. */
   costMicros: number;
+  context?: ContextEstimate;
 }
 
 /** Agregado que devuelven usageToday() y usageForSession(). */
@@ -174,6 +185,7 @@ export function recordUsage(input: UsageInput): UsageRecord {
     kind,
     costEur: roundCents(rawEur),
     costMicros: Math.round(rawEur * 1_000_000),
+    ...(sanitizeContext(input?.context) ? { context: sanitizeContext(input?.context) } : {}),
   };
 
   try {
@@ -183,6 +195,18 @@ export function recordUsage(input: UsageInput): UsageRecord {
     // Best-effort: disco lleno, permisos o ruta ocupada no tumban el turno.
   }
   return record;
+}
+
+/** Contexto solo si las cuatro partes son enteros >= 0; si no, se descarta la parte. */
+function sanitizeContext(value: unknown): ContextEstimate | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const system = nonNegativeInt(raw.system);
+  const memory = nonNegativeInt(raw.memory);
+  const history = nonNegativeInt(raw.history);
+  const tools = nonNegativeInt(raw.tools);
+  if (system + memory + history + tools === 0) return undefined;
+  return { system, memory, history, tools };
 }
 
 /** Convierte una linea en un registro util; cualquier forma invalida se descarta. */
@@ -225,6 +249,7 @@ function parseRecord(value: unknown): UsageRecord | null {
     kind,
     costEur: roundCents(costMicros / 1_000_000),
     costMicros,
+    ...(sanitizeContext(raw.context) ? { context: sanitizeContext(raw.context) } : {}),
   };
 }
 
@@ -328,6 +353,8 @@ export interface UsageReport {
   byModel: { model: string; totals: UsageReportTotals }[];
   total: UsageReportTotals;
   today: UsageReportTotals;
+  /** Media por turno de la composición estimada (solo turnos que la registraron). */
+  contextAvg?: ContextEstimate & { turns: number };
 }
 
 /** Tope del periodo de un informe: un mes de ficheros diarios. */
@@ -374,10 +401,30 @@ export function usageReport(days = 7, now: Date = new Date()): UsageReport {
         a.model.localeCompare(b.model),
     );
   const days_ = perDay.map((d) => ({ day: d.day, totals: reportTotals(d.records) }));
+  const withCtx = all.filter((r) => r.context);
+  const contextAvg =
+    withCtx.length > 0
+      ? {
+          system: Math.round(
+            withCtx.reduce((n, r) => n + (r.context?.system ?? 0), 0) / withCtx.length,
+          ),
+          memory: Math.round(
+            withCtx.reduce((n, r) => n + (r.context?.memory ?? 0), 0) / withCtx.length,
+          ),
+          history: Math.round(
+            withCtx.reduce((n, r) => n + (r.context?.history ?? 0), 0) / withCtx.length,
+          ),
+          tools: Math.round(
+            withCtx.reduce((n, r) => n + (r.context?.tools ?? 0), 0) / withCtx.length,
+          ),
+          turns: withCtx.length,
+        }
+      : undefined;
   return {
     days: days_,
     byModel,
     total: reportTotals(all),
     today: days_[0]?.totals ?? reportTotals([]),
+    ...(contextAvg ? { contextAvg } : {}),
   };
 }
