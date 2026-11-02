@@ -5930,10 +5930,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!intent && text.length <= 80) {
       // «pon Netflix en el salón»: los nombres de las teles solo se leen si hace falta.
       const { loadKnownTvs } = await import('./tv/known-tvs.js');
-      const tvNames = (await loadKnownTvs().catch(() => []))
-        .map((t) => t.name ?? '')
-        .filter(Boolean);
-      if (tvNames.length) intent = tvFastPathIntent({ ...base, tvNames });
+      const known = await loadKnownTvs().catch(() => []);
+      const tvNames = known.map((t) => t.name ?? '').filter(Boolean);
+      // «pon en YouTube X»: con una tele configurada va directo a la tele.
+      const hasTv = known.length > 0 || !!(await vaultGet('tv:host').catch(() => undefined));
+      intent = tvFastPathIntent({ ...base, tvNames, hasTv });
     }
     if (!intent || staleTvOrderNotice(inbound.sentAt, inbound.receivedAt)) return false;
     log.info('tv: orden al momento sin modelo', { action: intent.action });
