@@ -731,6 +731,7 @@ import {
   secretStatePaths,
 } from './daemon/gate.js';
 import { inspectionThreadKey } from './daemon/inspection-thread.js';
+import { otherThreadsForTurn } from './daemon/other-threads.js';
 import { formatSessionHits } from './daemon/session-hits.js';
 import { trimForSpeech } from './daemon/speech-text.js';
 import { summarizeTranscript } from './daemon/transcript-summary.js';
@@ -7069,7 +7070,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         isOwnerDm(inboundFor(thread), vigilanteOwnerId),
         projectContexts,
       );
-      thread.agent.attachContext(learnHint ? `${contextNote}\n\n${learnHint}` : contextNote);
+      // Primer turno de un hilo: qué otras conversaciones de este chat siguen vivas, en
+      // pocas líneas (va en la nota del turno, nunca en el system prompt).
+      const othersNote = otherThreadsForTurn(
+        {
+          key: thread.key,
+          chatKey: thread.chatKey,
+          transcriptLength: thread.agent.messages.length,
+        },
+        threads.values(),
+        Date.now(),
+      );
+      thread.agent.attachContext(
+        [contextNote, othersNote, learnHint].filter((part) => Boolean(part)).join('\n\n'),
+      );
 
       /** Especialistas que hicieron algo en este turno (Telegram los dice al final). */
       const specialistsUsed: string[] = [];
