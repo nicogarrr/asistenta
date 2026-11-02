@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
+import { localDay } from '../datecontext.js';
 import type { DocMemory } from '../memory/docs.js';
 import { memoryScopesFor } from '../memory.js';
 
@@ -111,7 +112,7 @@ export function createDocsTool(
                 text: hits
                   .map(
                     (h) =>
-                      `- ${h.title} (${kindLabel(h.mimeType)}, ${h.at.slice(0, 10)}${h.truncated ? ', indexado parcial' : ''}): …${h.snippet}…`,
+                      `- ${h.title} (${kindLabel(h.mimeType)}, ${localDay(new Date(h.at))}${h.truncated ? ', indexado parcial' : ''}): …${h.snippet}…`,
                   )
                   .join('\n'),
               },

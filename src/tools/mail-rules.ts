@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
+import { localDay } from '../datecontext.js';
 import { log } from '../log.js';
 import {
   defaultBatchFile,
@@ -277,7 +278,8 @@ export function createMailRulesTool(deps: MailRulesDeps): AgentTool<ReturnType<t
             ? `Bajas:\n${log
                 .slice(-30)
                 .map(
-                  (r) => `• ${r.remitente} (${r.metodo}, ${r.hora.slice(0, 10)}): ${r.resultado}`,
+                  (r) =>
+                    `• ${r.remitente} (${r.metodo}, ${localDay(new Date(r.hora))}): ${r.resultado}`,
                 )
                 .join('\n')}`
             : 'No te he dado de baja de nada todavía.';
