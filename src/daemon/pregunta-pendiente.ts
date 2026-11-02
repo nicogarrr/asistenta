@@ -29,6 +29,26 @@ export function learnNameAnswer(text: string): string | null {
   return name;
 }
 
+/**
+ * La respuesta a «¿Qué rutina repito?»: el nombre guardado que coincide al decirlo
+ * normal («Pedir cita», «Factura del gás».) aunque se guardó como «pedir-cita». Antes
+ * solo valía el nombre exacto con guiones y la respuesta se perdía.
+ */
+export function routineNameAnswer(names: readonly string[]): (text: string) => string | null {
+  const key = (value: string): string =>
+    foldAccents(value)
+      .replace(/[«»"'“”‘’.!?¡¿]/g, '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .join('-');
+  return (text) => {
+    const said = key(text);
+    if (!said) return null;
+    return names.find((n) => key(n) === said) ?? null;
+  };
+}
+
 export interface RespuestaComando {
   name: string;
   args: string;
