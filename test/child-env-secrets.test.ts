@@ -103,6 +103,7 @@ describe('procesos hijos sin credenciales del daemon', () => {
       'src/tools/windows.ts',
       'src/screen/ocr.ts',
       'src/screen/windows.ts',
+      'src/screen/ps-host.ts',
       'src/screen/media.ts',
       'src/tools/service.ts',
       'src/windows-control-native.ts',

@@ -42,11 +42,11 @@ function fakeChild(behaviour: Behaviour) {
 }
 
 const ok: Behaviour = (script, id, reply) => {
-  if (script.includes('PA_HOST_READY')) reply(`PA_HOST_READY\n\nPA_DONE ${id} 0\n`);
+  if (script.includes('HOSTREADY')) reply(`HOSTREADY\n\nHOSTDONE ${id} 0\n`);
   else if (script.includes('boom')) {
     const msg = Buffer.from('Excepción: boom').toString('base64');
-    reply(`\nPA_ERR ${id} ${msg}\n\nPA_DONE ${id} 1\n`);
-  } else reply(`eco:${script}\n\nPA_DONE ${id} 0\n`);
+    reply(`\nHOSTERR ${id} ${msg}\n\nHOSTDONE ${id} 1\n`);
+  } else reply(`eco:${script}\n\nHOSTDONE ${id} 0\n`);
 };
 
 describe('PsHost + defaultRunner', () => {
@@ -54,15 +54,12 @@ describe('PsHost + defaultRunner', () => {
 
   it('ejecuta scripts en serie por un único proceso', async () => {
     let spawned = 0;
-    const host = new PsHost(
-      {},
-      {
-        spawnHost: () => {
-          spawned += 1;
-          return fakeChild(ok).proc;
-        },
+    const host = new PsHost({
+      spawnHost: () => {
+        spawned += 1;
+        return fakeChild(ok).proc;
       },
-    );
+    });
     const [a, b] = await Promise.all([host.run('uno'), host.run('dos')]);
     expect(a.stdout).toContain('eco:uno');
     expect(b.stdout).toContain('eco:dos');
@@ -71,21 +68,18 @@ describe('PsHost + defaultRunner', () => {
   });
 
   it('un error del script llega como PsScriptError sin matar el host', async () => {
-    const host = new PsHost({}, { spawnHost: () => fakeChild(ok).proc });
+    const host = new PsHost({ spawnHost: () => fakeChild(ok).proc });
     await expect(host.run('boom')).rejects.toBeInstanceOf(PsScriptError);
     expect((await host.run('sigue')).stdout).toContain('eco:sigue');
     host.close();
   });
 
   it('si no arranca, usa el camino de siempre', async () => {
-    const host = new PsHost(
-      {},
-      {
-        spawnHost: () => {
-          throw new Error('ENOENT');
-        },
+    const host = new PsHost({
+      spawnHost: () => {
+        throw new Error('ENOENT');
       },
-    );
+    });
     await expect(host.run('x')).rejects.toBeInstanceOf(PsHostUnavailable);
     const run = defaultRunner({}, host, async (s) => ({ stdout: `spawn:${s}`, stderr: '' }));
     expect((await run('x')).stdout).toBe('spawn:x');
@@ -94,16 +88,13 @@ describe('PsHost + defaultRunner', () => {
 
   it('si el host muere con el script enviado, falla y NO repite', async () => {
     const calls: string[] = [];
-    const host = new PsHost(
-      {},
-      {
-        spawnHost: () =>
-          fakeChild((s, id, reply, kill) => {
-            if (s.includes('muere')) kill();
-            else ok(s, id, reply, kill);
-          }).proc,
-      },
-    );
+    const host = new PsHost({
+      spawnHost: () =>
+        fakeChild((s, id, reply, kill) => {
+          if (s.includes('muere')) kill();
+          else ok(s, id, reply, kill);
+        }).proc,
+    });
     const run = defaultRunner({}, host, async (s) => {
       calls.push(s);
       return { stdout: '', stderr: '' };
@@ -113,27 +104,21 @@ describe('PsHost + defaultRunner', () => {
   });
 
   it('un corte por tiempo se reconoce como corte y no repite', async () => {
-    const host = new PsHost(
-      {},
-      {
-        timeoutMs: 40,
-        spawnHost: () =>
-          fakeChild((s, id, reply, kill) => {
-            if (s.includes('cuelga')) return;
-            ok(s, id, reply, kill);
-          }).proc,
-      },
-    );
+    const host = new PsHost({
+      timeoutMs: 40,
+      spawnHost: () =>
+        fakeChild((s, id, reply, kill) => {
+          if (s.includes('cuelga')) return;
+          ok(s, id, reply, kill);
+        }).proc,
+    });
     await expect(host.run('cuelga')).rejects.toBeInstanceOf(PsHostLost);
     const calls: string[] = [];
-    const host2 = new PsHost(
-      {},
-      {
-        timeoutMs: 40,
-        spawnHost: () =>
-          fakeChild((s, id, r, k) => (s.includes('cuelga') ? undefined : ok(s, id, r, k))).proc,
-      },
-    );
+    const host2 = new PsHost({
+      timeoutMs: 40,
+      spawnHost: () =>
+        fakeChild((s, id, r, k) => (s.includes('cuelga') ? undefined : ok(s, id, r, k))).proc,
+    });
     const run = defaultRunner({}, host2, async (s) => {
       calls.push(s);
       return { stdout: '', stderr: '' };
@@ -144,7 +129,7 @@ describe('PsHost + defaultRunner', () => {
   });
 
   it('un error de script no activa el camino de siempre', async () => {
-    const host = new PsHost({}, { spawnHost: () => fakeChild(ok).proc });
+    const host = new PsHost({ spawnHost: () => fakeChild(ok).proc });
     const calls: string[] = [];
     const run = defaultRunner({}, host, async (s) => {
       calls.push(s);
@@ -165,20 +150,17 @@ describe('PsHost + defaultRunner', () => {
 
   it('tras 3 fallos de arranque se desactiva y mide la latencia de ambos modos', async () => {
     let spawned = 0;
-    const host = new PsHost(
-      {},
-      {
-        spawnHost: () => {
-          spawned += 1;
-          throw new Error('no');
-        },
+    const host = new PsHost({
+      spawnHost: () => {
+        spawned += 1;
+        throw new Error('no');
       },
-    );
+    });
     const run = defaultRunner({}, host, async () => ({ stdout: 'ok', stderr: '' }));
     for (let i = 0; i < 5; i++) await run('z');
     expect(spawned).toBe(3);
     expect(psLatencySummary().spawn?.n).toBe(5);
-    const good = new PsHost({}, { spawnHost: () => fakeChild(ok).proc });
+    const good = new PsHost({ spawnHost: () => fakeChild(ok).proc });
     await defaultRunner({}, good, async () => ({ stdout: '', stderr: '' }))('a');
     expect(psLatencySummary().host?.n).toBe(1);
     good.close();

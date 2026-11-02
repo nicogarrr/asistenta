@@ -48,7 +48,7 @@ async function spawnPowerShell(script: string): Promise<PsResult> {
  */
 export function defaultRunner(
   env: NodeJS.ProcessEnv = process.env,
-  host: PsHost | null = env.PA_PS_HOST === '0' ? null : new PsHost(childEnv()),
+  host: PsHost | null = env.PA_PS_HOST === '0' ? null : new PsHost(),
   spawnRun: (script: string) => Promise<PsResult> = spawnPowerShell,
 ): (script: string) => Promise<PsResult> {
   let failures = 0;
