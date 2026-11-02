@@ -30,7 +30,7 @@ import {
   unsubLog,
   unsubscribeTargets,
 } from '../mail/unsubscribe.js';
-import { foldAccents } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as MailCategory[];
 const ACTIONS: RuleAction[] = ['archivar', 'limpieza', 'papelera', 'leido'];
@@ -181,7 +181,7 @@ export function summarize(mails: ScannedMail[], rulesFile: string): string {
     };
     by.set(r.category, [...(by.get(r.category) ?? []), m]);
     if (r.category === 'spam' && suspects.length < 3)
-      suspects.push(`«${m.subject.slice(0, 60)}» de ${m.from} (${r.reasons[0] ?? 'sospechoso'})`);
+      suspects.push(`«${sliceSafe(m.subject, 60)}» de ${m.from} (${r.reasons[0] ?? 'sospechoso'})`);
     const rule = matchRule(rules, { from: m.from, subject: m.subject, category: r.category });
     if (rule) ruled.set(rule.id, (ruled.get(rule.id) ?? 0) + 1);
   }
