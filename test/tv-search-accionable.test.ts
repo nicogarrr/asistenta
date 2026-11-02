@@ -104,7 +104,7 @@ describe('action=search del tool', () => {
     const r = (await tool.execute('t', { action: 'search', text: 'ceuta sporting' })) as {
       content: Array<{ text: string }>;
     };
-    expect(r.content[0].text).toContain('1. Ceuta - Sporting');
-    expect(r.content[0].text).toContain('appId=org.webosbrew.youtube.adfree');
+    expect(r.content[0]?.text).toContain('1. Ceuta - Sporting');
+    expect(r.content[0]?.text).toContain('appId=org.webosbrew.youtube.adfree');
   });
 });

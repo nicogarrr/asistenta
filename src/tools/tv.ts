@@ -649,7 +649,9 @@ async function runTvAction(
             type: 'text' as const,
             text:
               `En Movistar Plus+: ${lines.join(' ')} ` +
-              'Para verlo: abre Movistar Plus+ (launch) y busca el canal por su nombre con type, verificando con la captura.',
+              'Para verlo: abre Movistar Plus+ con action=launch appId=com.telefonica.app.nux (si está instalada) ' +
+              'y busca el canal por su nombre con type, verificando con la captura; si el teclado no acepta type, ' +
+              'prueba action=search, SIN PREGUNTAR.',
           },
         ],
         details: {
