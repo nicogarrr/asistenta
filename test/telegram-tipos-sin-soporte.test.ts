@@ -70,9 +70,24 @@ describe('mensajes que Asistenta aún no sabe leer', () => {
     expect(replies[0]).toMatch(/vídeos/);
   });
 
-  it('un vídeo con texto sigue llegando al asistente', async () => {
+  it('un vídeo con texto sigue llegando al asistente y avisa de que el vídeo no se ve', async () => {
     const { got, replies } = await receive({ video: { file_id: 'v' }, caption: 'mira esto' });
     expect(got[0]?.text).toBe('mira esto');
+    expect(replies).toEqual(['Aún no puedo ver vídeos ni GIF: te contesto solo al texto.']);
+  });
+
+  it('un GIF con texto también avisa, y el texto llega igual', async () => {
+    const { got, replies } = await receive({ animation: { file_id: 'g' }, caption: 'jaja' });
+    expect(got[0]?.text).toBe('jaja');
+    expect(replies).toEqual(['Aún no puedo ver vídeos ni GIF: te contesto solo al texto.']);
+  });
+
+  it('una foto con texto no recibe ese aviso', async () => {
+    const { got, replies } = await receive({
+      photo: [{ file_id: 'p', width: 1, height: 1 }],
+      caption: 'mira',
+    });
+    expect(got[0]?.photoFileId).toBe('p');
     expect(replies).toHaveLength(0);
   });
 
