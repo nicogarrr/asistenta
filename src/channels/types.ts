@@ -27,6 +27,8 @@ export interface AlbumDocument {
 /** Un audio más de un álbum de audios (varios enviados de una vez). */
 export interface AlbumAudio {
   fileId: string;
+  /** message_id de la pieza del álbum: «/play» respondiendo a este audio lo encuentra. */
+  messageId?: string;
   mimeType?: string;
   durationSeconds?: number;
   sizeBytes?: number;
@@ -55,6 +57,11 @@ export interface Inbound {
    * media_group_id): llegan en el mismo turno que `photoFileId`, también perezosas.
    */
   albumPhotoFileIds?: string[];
+  /**
+   * message_id del resto de piezas de un álbum (el turno lleva el de la primera):
+   * responder a la 2.ª foto sigue la misma conversación.
+   */
+  albumMessageIds?: string[];
   /** Vídeos o GIF que traía el álbum y no se ven (ya avisado una vez en el chat). */
   albumVideos?: number;
   /**
