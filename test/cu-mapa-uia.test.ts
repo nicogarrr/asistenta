@@ -174,14 +174,14 @@ describe('scripts de PowerShell', () => {
     expect(s).toContain('-not $el.Cached.IsPassword');
     expect(s).toContain('$sw.ElapsedMilliseconds -gt 1500');
     expect(s).toContain('$visited -ge 900');
-    expect(s).toContain('$rows.Count -lt 50');
+    expect(s).toContain('($rows.Count - $barRows) -lt 50');
     expect(s).toContain("$global:paMapId = 'm''1'");
-    expect(s).not.toContain('FindAll');
+    expect(s).not.toContain('TreeScope]::Descendants');
   });
 
   it('mapScript acota el límite', () => {
-    expect(mapScript('m', 99999)).toContain('$rows.Count -lt 200');
-    expect(mapScript('m', 0)).toContain('$rows.Count -lt 80');
+    expect(mapScript('m', 99999)).toContain('($rows.Count - $barRows) -lt 200');
+    expect(mapScript('m', 0)).toContain('($rows.Count - $barRows) -lt 80');
   });
 
   it('elementScript: índice desde 1, comprueba el mapa y solo enfoca con focus', () => {
