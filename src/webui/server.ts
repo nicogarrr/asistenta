@@ -33,6 +33,11 @@ export interface WebUiDeps {
   tareas?(): unknown | Promise<unknown>;
   /** Paquetes en camino según los correos de envío (solo lectura). Si falta o devuelve null, 503. */
   repartos?(): unknown | Promise<unknown>;
+  /**
+   * Tarjeta «Contexto»: de qué está hecho el contexto de cada conversación abierta
+   * (solo números y nombres, ver contexto.ts). Si falta o devuelve null, 503.
+   */
+  contexto?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(
     text: string,
@@ -105,6 +110,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'tareas' }
   | { method: 'GET'; kind: 'repartos' }
   | { method: 'GET'; kind: 'funciones' }
+  | { method: 'GET'; kind: 'contexto' }
   | { method: 'GET'; kind: 'status' }
   | { method: 'GET'; kind: 'sessions' }
   | { method: 'GET'; kind: 'memory' }
@@ -195,6 +201,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'repartos' };
     case '/api/funciones':
       return { method: 'GET', kind: 'funciones' };
+    case '/api/contexto':
+      return { method: 'GET', kind: 'contexto' };
     case '/api/status':
       return { method: 'GET', kind: 'status' };
     case '/api/sessions':
@@ -273,6 +281,11 @@ async function respondApi(
         break;
       case 'funciones':
         payload = panelFunciones();
+        break;
+      case 'contexto':
+        payload = deps.contexto ? await deps.contexto() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Contexto aún no disponible');
         break;
       case 'status':
         payload = await deps.status();

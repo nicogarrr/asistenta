@@ -611,6 +611,7 @@ import {
   watchValueText,
 } from './watch/pages.js';
 import { WebRouter } from './web/router.js';
+import { panelContextoDeHilos } from './webui/contexto.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
 import { panelRepartos } from './webui/repartos.js';
@@ -1925,6 +1926,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             ),
           // Tarjeta Paquetes: envíos leídos de los correos, solo lectura.
           repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
+          // Tarjeta Contexto: qué ocupa cada conversación y cuánto falta para resumir
+          // (solo números y nombres de herramientas, nunca el texto).
+          contexto: () =>
+            panelContextoDeHilos(
+              threads.values(),
+              vigilanteOwnerId ?? undefined,
+              config.contextWindowTokens,
+            ),
           status: () => ({
             model: config.model,
             provider: config.provider,
