@@ -5,7 +5,7 @@ import Ambient from './components/Ambient';
 import ExitPrompt, {LG_HOME_APP_ID} from './components/ExitPrompt';
 import Home from './screens/Home';
 import {useRemoteNav, type Zone} from './hooks/useRemoteNav';
-import type {AppItem} from './lib/apps';
+import {sortDockByPriority, type AppItem} from './lib/apps';
 import {buildLists, loadHidden, saveHidden, type CatId} from './lib/order';
 import {ConfigContext, loadConfig, saveConfig, type HomeConfig} from './lib/config';
 import {fetchPicks, type Pick} from './service/tmdb';
@@ -18,9 +18,6 @@ const PICKS_REFRESH_MS = 30 * 60_000;
 
 // Orden del dock: sus categorías de siempre en orden de uso.
 const DOCK_ORDER: CatId[] = ['stream', 'media', 'game', 'misc'];
-// Lo que más usa Nico va primero en el dock (el foco inicial cae en el primer
-// tile). El resto mantiene el orden de categorías detrás.
-const DOCK_PRIORITY = ['com.nuvio.tv', 'netflix', 'com.movistarplus.es.iptv'];
 
 export default function App () {
 	const [zone, setZone] = useState<Zone>('dock');
@@ -43,8 +40,7 @@ export default function App () {
 	// Dock aplanado (visibles), en orden de uso. El tile de Ajustes va en misc.
 	const dock = useMemo(() => {
 		const flat = DOCK_ORDER.flatMap((cat) => lists[cat].filter((a) => !hidden.has(a.id)));
-		const rank = (a: AppItem) => { const i = DOCK_PRIORITY.indexOf(a.id); return i === -1 ? DOCK_PRIORITY.length : i; };
-		return flat.sort((a, b) => rank(a) - rank(b));   // sort estable: el resto conserva su orden
+		return sortDockByPriority(flat);
 	}, [lists, hidden]);
 
 	const showToast = useCallback((msg: string) => {

@@ -42,6 +42,19 @@ export const APP_ALIASES: Record<string, string> = {
   tdt: 'com.webos.app.livetv',
   antena: 'com.webos.app.livetv',
   'la tele': 'com.webos.app.livetv',
+  // Apps de la tele de Nico (LG C5 rooteada), ids verificados contra listApps 2026-10-25.
+  movistar: 'com.telefonica.app.nux',
+  'movistar plus': 'com.telefonica.app.nux',
+  'movistar plus plus': 'com.telefonica.app.nux', // «Movistar Plus+»: el '+' final normaliza a ' plus'
+  movistarplus: 'com.telefonica.app.nux',
+  nuvio: 'space.nuvio.webos',
+  'nuvio tv': 'space.nuvio.webos',
+  ibo: 'iboplayer.lg',
+  'ibo player': 'iboplayer.lg',
+  'ibo player pro': 'iboplayer.lg',
+  moonlight: 'com.limelight.webos',
+  asistenta: 'com.tvweb.dashboard',
+  'youtube adfree': 'org.webosbrew.youtube.adfree',
 };
 
 /** Nombre para enseñar a la persona de los ids de APP_ALIASES («youtube.leanback.v4» -> «YouTube»). */
@@ -55,6 +68,12 @@ export const APP_NAMES: Record<string, string> = {
   'com.webos.app.browser': 'el navegador',
   'com.webos.app.home': 'el inicio',
   'com.webos.app.livetv': 'la TDT',
+  'com.telefonica.app.nux': 'Movistar Plus+',
+  'space.nuvio.webos': 'Nuvio TV',
+  'iboplayer.lg': 'IBO Player',
+  'com.limelight.webos': 'Moonlight',
+  'com.tvweb.dashboard': 'Asistenta',
+  'org.webosbrew.youtube.adfree': 'YouTube AdFree',
 };
 
 export interface ResolvedApp {
@@ -80,7 +99,10 @@ export function resolveAppId(
   if (installed?.some((a) => a.id === q)) return { id: q, how: 'id' };
   const nq = normalizeTvText(q);
   const alias = APP_ALIASES[nq];
-  if (alias) {
+  // El alias manda solo si no hay lista o el id esta instalado de verdad:
+  // si la tele tiene la app con OTRO id (p.ej. uno antiguo), gana el titulo
+  // instalado, nunca un id que la tele no conoce.
+  if (alias && (!installed || installed.some((a) => a.id === alias))) {
     const title = installed?.find((a) => a.id === alias)?.title;
     return { id: alias, how: 'alias', ...(title ? { title } : {}) };
   }

@@ -56,7 +56,7 @@ describe('movistarFind', () => {
     const res = await movistarFind('ceuta sporting', { now: NOW, fetchImpl: fakeFetch });
     expect(res).toHaveLength(1);
     expect(res[0]).toMatchObject({ channelName: 'M+ LALIGA TV', live: true });
-    expect(res[0].title).toContain('Ceuta FC - Real Sporting');
+    expect(res[0]?.title).toContain('Ceuta FC - Real Sporting');
   });
 
   it('todas las palabras deben salir, sin importar acentos ni orden', async () => {

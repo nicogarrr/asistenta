@@ -1,4 +1,4 @@
-import type {ScreenId} from './screens';
+import type {ScreenId} from './screens.js';
 
 export interface AppItem {
 	id: string;         // webOS appId — used for the real luna launch
@@ -37,3 +37,17 @@ export const APPS: Record<Exclude<ScreenId, 'home'>, AppItem[]> = {
 		{id: 'internal.settings', title: 'Ajustes', color: '#94a3b8', icon: 'icons/settings.png', launchType: 'internal'}
 	]
 };
+
+/**
+ * Los que más usa Nico van primero en el dock (el foco inicial cae en el primer
+ * tile). TIENEN que ser ids del catálogo APPS de arriba: un id que no existe no
+ * rompe nada, pero silenciosamente no prioriza (bug 2026-11-02: ids antiguos de
+ * Nuvio/Movistar que ya no eran los instalados).
+ */
+export const DOCK_PRIORITY = ['space.nuvio.webos', 'netflix', 'com.telefonica.app.nux'];
+
+/** Orden estable: prioritarios primero (en el orden de DOCK_PRIORITY), el resto conserva su sitio. */
+export function sortDockByPriority (items: AppItem[]): AppItem[] {
+	const rank = (a: AppItem) => { const i = DOCK_PRIORITY.indexOf(a.id); return i === -1 ? DOCK_PRIORITY.length : i; };
+	return [...items].sort((a, b) => rank(a) - rank(b));
+}
