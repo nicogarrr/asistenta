@@ -15,6 +15,12 @@ import { log } from '../log.js';
  * second layer reuses the first answer rather than asking again. Keyed by question and
  * not by tool, so two different purchases in one turn still ask twice - which is the
  * case where a second question is worth the interruption.
+ *
+ * Two identical questions at the same moment (two parallel calls for the same purchase,
+ * before the first has an answer) are not that sequence: they would be two charges. So
+ * the second is never asked and never approved on its own. It waits for the first and
+ * comes back denied whatever the answer was (a «no» is shared, a «sí» covers only the
+ * purchase it was asked for, an error denies). This can only deny earlier, never allow.
  */
 export interface PurchaseApprovals {
   /** Pregunta (o reutiliza la respuesta de este turno) por `action` + `summary` en el hilo. */
@@ -33,6 +39,8 @@ export interface PurchaseApprovals {
 /** `askHuman` hace la pregunta de verdad (en el daemon, Telegram sin botones de ámbito). */
 export function createPurchaseApprovals(): PurchaseApprovals {
   const answers = new Map<string, boolean>();
+  /** La pregunta idéntica que está ahora mismo en el chat, sin respuesta todavía. */
+  const inFlight = new Map<string, Promise<boolean>>();
   return {
     async ask(threadKey, action, summary, askHuman, signal) {
       const key = `${threadKey}:${action}:${summary}`;
@@ -40,10 +48,23 @@ export function createPurchaseApprovals(): PurchaseApprovals {
       if (remembered !== undefined) return remembered;
       // Turno ya cortado: nadie espera la respuesta, así que ni se pregunta (denegada).
       if (signal?.aborted) return false;
+      const pending = inFlight.get(key);
+      if (pending) {
+        // La misma pregunta ya está en el chat: no se repite y esta nunca se aprueba sola.
+        log.info('duplicate purchase approval denied', { thread: threadKey, tool: action });
+        await waitSettled(pending, signal);
+        return false;
+      }
       log.info('approval requested', { thread: threadKey, tool: action });
-      const approved = await (signal ? askHuman(summary, signal) : askHuman(summary));
-      answers.set(key, approved);
-      return approved;
+      const asking = signal ? askHuman(summary, signal) : askHuman(summary);
+      inFlight.set(key, asking);
+      try {
+        const approved = await asking;
+        answers.set(key, approved);
+        return approved;
+      } finally {
+        if (inFlight.get(key) === asking) inFlight.delete(key);
+      }
     },
     forgetThread(threadKey) {
       for (const key of answers.keys()) {
@@ -51,4 +72,16 @@ export function createPurchaseApprovals(): PurchaseApprovals {
       }
     },
   };
+}
+
+/** Espera a que la primera pregunta se resuelva (o falle), o a que se corte este turno. */
+function waitSettled(pending: Promise<boolean>, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    signal?.addEventListener('abort', done, { once: true });
+    pending.then(done, done);
+  });
 }
