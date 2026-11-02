@@ -362,6 +362,9 @@ export function searchTextAsWritten(original: string, query: string): string {
 export function parseTvCommand(text: string): TvIntent | null {
   const intent = parseTvCommandNorm(text);
   if (intent?.action !== 'search') return intent;
+  // «pon en YouTube https://youtu.be/ID»: el enlace tal cual (el id distingue mayúsculas).
+  const link = /https?:\/\/\S+/.exec(text)?.[0];
+  if (link && intent.text.startsWith('http')) return { ...intent, text: link };
   return { ...intent, text: searchTextAsWritten(text, intent.text) };
 }
 
