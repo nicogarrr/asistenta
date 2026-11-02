@@ -101,9 +101,8 @@ import {
   shorten,
   stripVoicePrefix,
 } from './channels/formatters.js';
-import { QaChannel } from './channels/qa.js';
 import { ChannelRegistry } from './channels/registry.js';
-import { TelegramChannel } from './channels/telegram.js';
+import type { TelegramChannel } from './channels/telegram.js';
 import {
   InboundReceipt,
   LiveNote,
@@ -372,6 +371,7 @@ import {
 } from './briefing-daily.js';
 import { briefingDoctorLine, briefingHour, envOn } from './briefing-env.js';
 import { permisosListaReply } from './channels/permisos-lista.js';
+import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
 import {
   cacheFullReply,
   commandButton,
@@ -379,8 +379,7 @@ import {
   moreButton,
   takeFullReply,
   tooBigForBotDownload,
-} from './channels/telegram.js';
-import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
+} from './channels/telegram-shared.js';
 import {
   CommandRoutineStore,
   commandRoutinesEnabled,
@@ -1659,10 +1658,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const actions = new ActionLog({ file: join(paths.state, 'actions.jsonl') });
 
   // Canal de QA solo en la sandbox (PA_QA_CHANNEL=1): mismo pipeline, entrada y salida por ficheros.
+  // grammY (~35 módulos) solo se carga aquí, al arrancar el canal: `pa ayuda` y las
+  // demás órdenes que no abren Telegram no lo pagan (ver channels/telegram-shared.ts).
   const telegram: TelegramChannel =
     process.env.PA_QA_CHANNEL === '1'
-      ? new QaChannel({ token, allowedUserIds: allowed, dir: join(paths.state, 'qa') })
-      : new TelegramChannel({ token, allowedUserIds: allowed });
+      ? new (await import('./channels/qa.js')).QaChannel({
+          token,
+          allowedUserIds: allowed,
+          dir: join(paths.state, 'qa'),
+        })
+      : new (await import('./channels/telegram.js')).TelegramChannel({
+          token,
+          allowedUserIds: allowed,
+        });
 
   /** Estado de openGym (solo lectura). Lanza OpenGymError con el motivo si no se puede. */
   const gymDeps = {
