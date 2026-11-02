@@ -1,13 +1,15 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { fetchWeatherDays, type WeatherConfig } from '../briefing-daily.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
-const Params = Type.Object({
-  dias: Type.Optional(
-    Type.Integer({ minimum: 1, maximum: 7, description: 'Días de previsión desde hoy (1-7).' }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    dias: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 7, description: 'Días de previsión desde hoy (1-7).' }),
+    ),
+  }),
+);
 
 const NO_PLACE =
   'No tengo configurado el sitio para el tiempo: pon PA_BRIEFING_LAT y PA_BRIEFING_LON en .env (y PA_BRIEFING_PLACE para el nombre).';
@@ -32,13 +34,13 @@ const dayName = (date: string, i: number): string => {
 export function createWeatherTool(
   config: () => WeatherConfig | null,
   fetchFn: typeof fetch = fetch,
-): AgentTool<typeof Params> {
+): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'tiempo',
     label: 'El tiempo',
     description:
       'Weather forecast (today up to 7 days) for the place configured in .env (PA_BRIEFING_LAT/LON). Use for «qué tiempo hace», «¿llueve mañana?», «¿hará frío el sábado?». Read-only. Only the configured place: for another city, search the web instead.',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const cfg = config();

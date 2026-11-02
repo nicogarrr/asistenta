@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
 import { type Embedder, hybridRank } from '../memory/semantic.js';
@@ -37,61 +37,65 @@ import {
  * was stored away. Secrets are refused with a reason instead of being copied
  * into a file the model re-reads every turn.
  */
-const MemoryParams = Type.Object({
-  action: Type.Union([
-    Type.Literal('remember'),
-    Type.Literal('recall'),
-    Type.Literal('forget'),
-    Type.Literal('get'),
-    Type.Literal('list'),
-    Type.Literal('timeline'),
-    Type.Literal('save_profile'),
-    Type.Literal('profile'),
-    Type.Literal('forget_profile'),
-    Type.Literal('suggest_nudge'),
-    Type.Literal('history'),
-  ]),
-  text: Type.Optional(
-    Type.String({
-      description:
-        'For remember: one durable fact, in the third person, as a single sentence. ' +
-        'For save_profile: one durable fact about the user. ' +
-        'For suggest_nudge: the user message to analyse. ' +
-        'Not instructions to yourself and not secrets — credentials are refused.',
-    }),
-  ),
-  query: Type.Optional(
-    Type.String({
-      description:
-        'For recall: what you want to remember. For history: words to look for in ' +
-        'past conversations of this chat. For forget_profile: the text to remove from the profile.',
-    }),
-  ),
-  id: Type.Optional(
-    Type.String({
-      description: 'For forget/get: the entry id from the context index, recall or list.',
-    }),
-  ),
-  include_superseded: Type.Optional(
-    Type.Boolean({
-      description:
-        'For list/recall without query: also show replaced entries, marked and ' +
-        'linked to their replacement. Default false: current facts only.',
-    }),
-  ),
-  from: Type.Optional(
-    Type.String({ description: 'For timeline: first day, YYYY-MM-DD inclusive.' }),
-  ),
-  to: Type.Optional(Type.String({ description: 'For timeline: last day, YYYY-MM-DD inclusive.' })),
-  cursor: Type.Optional(
-    Type.String({
-      description:
-        'For timeline: continuation token from a truncated page ("YYYY-MM-DD:offset" or ' +
-        '"unknown:offset"), copied exactly from the page tail.',
-    }),
-  ),
-  tags: Type.Optional(Type.Array(Type.String())),
-});
+const MemoryParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('remember'),
+      Type.Literal('recall'),
+      Type.Literal('forget'),
+      Type.Literal('get'),
+      Type.Literal('list'),
+      Type.Literal('timeline'),
+      Type.Literal('save_profile'),
+      Type.Literal('profile'),
+      Type.Literal('forget_profile'),
+      Type.Literal('suggest_nudge'),
+      Type.Literal('history'),
+    ]),
+    text: Type.Optional(
+      Type.String({
+        description:
+          'For remember: one durable fact, in the third person, as a single sentence. ' +
+          'For save_profile: one durable fact about the user. ' +
+          'For suggest_nudge: the user message to analyse. ' +
+          'Not instructions to yourself and not secrets — credentials are refused.',
+      }),
+    ),
+    query: Type.Optional(
+      Type.String({
+        description:
+          'For recall: what you want to remember. For history: words to look for in ' +
+          'past conversations of this chat. For forget_profile: the text to remove from the profile.',
+      }),
+    ),
+    id: Type.Optional(
+      Type.String({
+        description: 'For forget/get: the entry id from the context index, recall or list.',
+      }),
+    ),
+    include_superseded: Type.Optional(
+      Type.Boolean({
+        description:
+          'For list/recall without query: also show replaced entries, marked and ' +
+          'linked to their replacement. Default false: current facts only.',
+      }),
+    ),
+    from: Type.Optional(
+      Type.String({ description: 'For timeline: first day, YYYY-MM-DD inclusive.' }),
+    ),
+    to: Type.Optional(
+      Type.String({ description: 'For timeline: last day, YYYY-MM-DD inclusive.' }),
+    ),
+    cursor: Type.Optional(
+      Type.String({
+        description:
+          'For timeline: continuation token from a truncated page ("YYYY-MM-DD:offset" or ' +
+          '"unknown:offset"), copied exactly from the page tail.',
+      }),
+    ),
+    tags: Type.Optional(Type.Array(Type.String())),
+  }),
+);
 
 /**
  * The profile lives outside this tool's wiring more often than not (the CLI
@@ -195,7 +199,7 @@ export function createMemoryTool(
   snapshotOrGetter?: MemorySnapshot | (() => MemorySnapshot | undefined),
   semantic?: Embedder,
   sessions?: SessionStore,
-): AgentTool<typeof MemoryParams> {
+): AgentTool<ReturnType<typeof MemoryParams>> {
   return {
     name: 'memory',
     label: 'Memory',
@@ -226,7 +230,7 @@ export function createMemoryTool(
       '',
       'Credentials, keys and card numbers are refused, not stored.',
     ].join('\n'),
-    parameters: MemoryParams,
+    parameters: MemoryParams(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const scope = scopeOf();

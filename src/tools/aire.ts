@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import type { WeatherConfig } from '../briefing-daily.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
 /**
@@ -41,7 +41,7 @@ const POLENES: { key: string; nombre: string; moderado: number; alto: number }[]
 const CURRENT = ['european_aqi', 'pm2_5', 'pm10', 'nitrogen_dioxide', 'ozone'];
 const HOURLY = ['european_aqi', ...POLENES.map((p) => p.key)];
 
-const Params = Type.Object({});
+const Params = lazySchema(() => Type.Object({}));
 
 interface Datos {
   current: Record<string, number | null | undefined>;
@@ -66,7 +66,7 @@ const diaSiguiente = (dia: string): string => {
 export function createAireTool(
   config: () => WeatherConfig | null,
   deps: { fetchFn?: typeof fetch; now?: () => Date; timeoutMs?: number } = {},
-): AgentTool<typeof Params> {
+): AgentTool<ReturnType<typeof Params>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
   let cache: { at: number; key: string; datos: Datos } | null = null;
@@ -133,7 +133,7 @@ export function createAireTool(
     label: 'Calidad del aire y polen',
     description:
       'Air quality (European AQI, PM2.5, PM10, NO2, ozone) and pollen for today and tomorrow at the place configured in .env (PA_BRIEFING_LAT/LON, default Gijón), from Open-Meteo / Copernicus CAMS, no key. Use for «¿cómo está el aire?», «¿hay mucho polen?», «¿puedo salir a correr?» (air). Read-only. Only the configured place.',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async () => {
       const cfg = config() ?? GIJON;

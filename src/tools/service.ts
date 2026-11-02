@@ -19,8 +19,8 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { childEnv } from '../child-env.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { containsVaultValue } from '../gestor/playbooks.js';
 import { log } from '../log.js';
 import {
@@ -97,48 +97,51 @@ const defaultProbe = async (port: number): Promise<boolean> => {
   }
 };
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('proponer'),
-    Type.Literal('instalar'),
-    Type.Literal('servir'),
-    Type.Literal('parar'),
-    Type.Literal('listar'),
-    Type.Literal('estado'),
-  ]),
-  nombre: Type.Optional(Type.String({ description: 'Nombre corto del servicio [a-z0-9-].' })),
-  fuente: Type.Optional(
-    Type.String({ description: 'proponer: URL del repo/proyecto, tras investigarlo.' }),
-  ),
-  version: Type.Optional(Type.String({ description: 'proponer: versión concreta adoptada.' })),
-  licencia: Type.Optional(
-    Type.String({
-      description: 'proponer: licencia SPDX leída en la fuente (MIT, Apache-2.0...).',
-    }),
-  ),
-  coste: Type.Optional(
-    Type.String({
-      description: 'proponer: nota de coste leída en la fuente ("gratis", "open source").',
-    }),
-  ),
-  metodo: Type.Optional(
-    Type.Union([Type.Literal('docker'), Type.Literal('local')], {
-      description: 'proponer: docker (compose generado) o local (comando declarado).',
-    }),
-  ),
-  imagen: Type.Optional(Type.String({ description: 'proponer (docker): imagen a usar.' })),
-  comando: Type.Optional(
-    Type.String({
-      description: 'proponer (local): comando de instalación/arranque, argv separado por espacios.',
-    }),
-  ),
-  puerto: Type.Optional(
-    Type.Number({ description: 'proponer: puerto local en el que sirve (1024-65535).' }),
-  ),
-  notas: Type.Optional(
-    Type.String({ description: 'proponer: resumen honesto de lo investigado.' }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('proponer'),
+      Type.Literal('instalar'),
+      Type.Literal('servir'),
+      Type.Literal('parar'),
+      Type.Literal('listar'),
+      Type.Literal('estado'),
+    ]),
+    nombre: Type.Optional(Type.String({ description: 'Nombre corto del servicio [a-z0-9-].' })),
+    fuente: Type.Optional(
+      Type.String({ description: 'proponer: URL del repo/proyecto, tras investigarlo.' }),
+    ),
+    version: Type.Optional(Type.String({ description: 'proponer: versión concreta adoptada.' })),
+    licencia: Type.Optional(
+      Type.String({
+        description: 'proponer: licencia SPDX leída en la fuente (MIT, Apache-2.0...).',
+      }),
+    ),
+    coste: Type.Optional(
+      Type.String({
+        description: 'proponer: nota de coste leída en la fuente ("gratis", "open source").',
+      }),
+    ),
+    metodo: Type.Optional(
+      Type.Union([Type.Literal('docker'), Type.Literal('local')], {
+        description: 'proponer: docker (compose generado) o local (comando declarado).',
+      }),
+    ),
+    imagen: Type.Optional(Type.String({ description: 'proponer (docker): imagen a usar.' })),
+    comando: Type.Optional(
+      Type.String({
+        description:
+          'proponer (local): comando de instalación/arranque, argv separado por espacios.',
+      }),
+    ),
+    puerto: Type.Optional(
+      Type.Number({ description: 'proponer: puerto local en el que sirve (1024-65535).' }),
+    ),
+    notas: Type.Optional(
+      Type.String({ description: 'proponer: resumen honesto de lo investigado.' }),
+    ),
+  }),
+);
 
 /**
  * Docker's own words (daemon pipe, Windows path, exit code) go to the log; the
@@ -233,7 +236,7 @@ async function persist(deps: ServiceToolDeps, s: AdoptedService): Promise<AgentT
   return null;
 }
 
-export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Params> {
+export function createServiceTool(deps: ServiceToolDeps): AgentTool<ReturnType<typeof Params>> {
   const run = deps.run ?? defaultRunner;
   const probe = deps.probePort ?? defaultProbe;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -258,7 +261,7 @@ export function createServiceTool(deps: ServiceToolDeps): AgentTool<typeof Param
       'Cierra SIEMPRE con honestidad: qué se verificó de verdad (puerto, contenedor, serve status) y qué NO (p. ej. la conexión desde el móvil de Nico).',
       'Credenciales nunca en parámetros ni en notas: van al vault, aquí solo NOMBRES de clave.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       if (args.action === 'proponer') {

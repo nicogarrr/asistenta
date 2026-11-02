@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
 /**
@@ -19,20 +19,22 @@ const ENTITY = /^([a-z_]+)\.[a-z0-9_]{1,64}$/;
 const TIMEOUT_MS = 10_000;
 const MAX_LIST = 30;
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('estado'),
-    Type.Literal('encender'),
-    Type.Literal('apagar'),
-    Type.Literal('alternar'),
-  ]),
-  entidad: Type.Optional(
-    Type.String({
-      description:
-        'Entity id de Home Assistant (p. ej. light.salon) o su nombre («luz del salón»). Sin ella, estado lista luces, enchufes y ventiladores.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('estado'),
+      Type.Literal('encender'),
+      Type.Literal('apagar'),
+      Type.Literal('alternar'),
+    ]),
+    entidad: Type.Optional(
+      Type.String({
+        description:
+          'Entity id de Home Assistant (p. ej. light.salon) o su nombre («luz del salón»). Sin ella, estado lista luces, enchufes y ventiladores.',
+      }),
+    ),
+  }),
+);
 
 export interface CasaConfig {
   url: string;
@@ -136,7 +138,7 @@ export function findByName(states: HaState[], query: string): HaState[] {
   });
 }
 
-export function createCasaTool(deps: CasaDeps): AgentTool<typeof Params> {
+export function createCasaTool(deps: CasaDeps): AgentTool<ReturnType<typeof Params>> {
   const doFetch = deps.fetch ?? fetch;
   const call = async (cfg: CasaConfig, path: string, body?: unknown): Promise<unknown> => {
     const res = await doFetch(new URL(path, cfg.url), {
@@ -161,7 +163,7 @@ export function createCasaTool(deps: CasaDeps): AgentTool<typeof Params> {
       'Home Assistant de casa (luces, enchufes, ventiladores). action=estado mira cómo están;',
       'encender, apagar y alternar necesitan entidad (p. ej. light.salon) y piden permiso al dueño.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const cfg = await deps.config().catch(() => null);

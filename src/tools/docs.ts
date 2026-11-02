@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import type { DocMemory } from '../memory/docs.js';
 import { memoryScopesFor } from '../memory.js';
 
@@ -12,28 +12,30 @@ import { memoryScopesFor } from '../memory.js';
  * The scope is supplied by the caller, never by the model, for the same
  * reason as the note memory: a chat only ever sees its own shelf.
  */
-const DocsParams = Type.Object({
-  action: Type.Union([Type.Literal('search'), Type.Literal('list'), Type.Literal('delete')]),
-  confirm: Type.Optional(
-    Type.Boolean({
-      description:
-        'For delete: true ONLY after the user, in their own message, said yes to forgetting that exact item.',
-    }),
-  ),
-  docId: Type.Optional(
-    Type.String({
-      description:
-        'For delete: the [id] shown by action=list. Only when the user explicitly asks to forget that item.',
-    }),
-  ),
-  query: Type.Optional(
-    Type.String({
-      description:
-        'For search: words that appear in what you are looking for. All words must match; ' +
-        'two or three distinctive ones work better than a sentence.',
-    }),
-  ),
-});
+const DocsParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([Type.Literal('search'), Type.Literal('list'), Type.Literal('delete')]),
+    confirm: Type.Optional(
+      Type.Boolean({
+        description:
+          'For delete: true ONLY after the user, in their own message, said yes to forgetting that exact item.',
+      }),
+    ),
+    docId: Type.Optional(
+      Type.String({
+        description:
+          'For delete: the [id] shown by action=list. Only when the user explicitly asks to forget that item.',
+      }),
+    ),
+    query: Type.Optional(
+      Type.String({
+        description:
+          'For search: words that appear in what you are looking for. All words must match; ' +
+          'two or three distinctive ones work better than a sentence.',
+      }),
+    ),
+  }),
+);
 
 /** Human label for what a source was. */
 export function kindLabel(mime: string): string {
@@ -55,7 +57,7 @@ export function createDocsTool(
   store: DocMemory,
   scopeOf: () => string,
   opts: { now?: () => number } = {},
-): AgentTool<typeof DocsParams> {
+): AgentTool<ReturnType<typeof DocsParams>> {
   const now = opts.now ?? Date.now;
   // One pending request per scope: the item it names and when it was asked.
   const pending = new Map<string, { docId: string; at: number }>();
@@ -78,7 +80,7 @@ export function createDocsTool(
       'matches, say you did not FIND it - never that it does not exist: the search',
       'needs every word to appear, and a long document may only be partially indexed.',
     ].join('\n'),
-    parameters: DocsParams,
+    parameters: DocsParams(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const scope = scopeOf();

@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { type Static, Type } from 'typebox';
+import type { Static } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { APP_NAMES, needsAppLookup, resolveAppId } from '../tv/apps.js';
 import { inspectTv } from '../tv/inspection.js';
@@ -80,95 +81,101 @@ export interface TvToolDeps {
   setState: (state: TvMemoryState) => void;
 }
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('screenshot'),
-    Type.Literal('state'),
-    Type.Literal('status'),
-    Type.Literal('apps'),
-    Type.Literal('inspect'),
-    Type.Literal('launch'),
-    Type.Literal('key'),
-    Type.Literal('toast'),
-    Type.Literal('power'),
-    Type.Literal('volume'),
-    Type.Literal('mute'),
-    Type.Literal('input'),
-    Type.Literal('url'),
-    Type.Literal('closeApp'),
-    Type.Literal('screen'),
-    Type.Literal('media'),
-    Type.Literal('adblock'),
-    Type.Literal('adTracking'),
-    Type.Literal('volumeStep'),
-    Type.Literal('volumeHalf'),
-    Type.Literal('channel'),
-    Type.Literal('command'),
-    Type.Literal('scene'),
-    Type.Literal('picture'),
-  ]),
-  appId: Type.Optional(
-    Type.String({
-      description:
-        'Para launch: el id de la app (sacalo de action=apps) o su nombre ("Netflix", "YouTube", "Disney+"): se resuelve al id instalado.',
-    }),
-  ),
-  name: Type.Optional(
-    Type.String({
-      description: 'Para key: HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN, VOLUP, VOLDOWN.',
-    }),
-  ),
-  message: Type.Optional(Type.String({ description: 'Para toast: el texto a mostrar.' })),
-  on: Type.Optional(
-    Type.Boolean({
-      description:
-        'Para power/screen/mute/adTracking: true enciende/activa, false apaga/desactiva.',
-    }),
-  ),
-  level: Type.Optional(Type.Number({ description: 'Para volume: nivel absoluto, entero 0-100.' })),
-  input: Type.Optional(
-    Type.String({ description: 'Para input: hdmi1, hdmi2, hdmi3, hdmi4 o tv.' }),
-  ),
-  url: Type.Optional(
-    Type.String({ description: 'Para url: pagina http(s) a abrir en el navegador de la tele.' }),
-  ),
-  command: Type.Optional(
-    Type.String({ description: 'Para media: play, pause, playPause, stop, rewind o fastForward.' }),
-  ),
-  steps: Type.Optional(
-    Type.Number({
-      description:
-        'Para volumeStep: pasos relativos del mando, entero -15..15 sin 0 ("sube un poco" = 3, "baja 5" = -5). Va por SSAP, no necesita Glasshouse.',
-    }),
-  ),
-  channel: Type.Optional(
-    Type.String({ description: 'Para channel: up, down o el numero del canal (1-9999).' }),
-  ),
-  scene: Type.Optional(
-    Type.String({
-      description:
-        'Para scene: la rutina. "cine" (enciende si hace falta, quita el silencio, volumen 20 o level, abre appId si se pide y muestra un aviso); "noche" (volumen 8 o level y aviso, sin encender una tele apagada); "apagar-todo" (aviso y apagar la tele si esta encendida).',
-    }),
-  ),
-  text: Type.Optional(
-    Type.String({
-      description:
-        'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo").',
-    }),
-  ),
-  pictureMode: Type.Optional(
-    Type.String({
-      description:
-        'Para picture: modo de imagen de LG (standard, eco, cinema, vivid, sports, game, filmMaker...). «Pon la imagen en estandar» = standard.',
-    }),
-  ),
-  mode: Type.Optional(
-    Type.String({
-      description:
-        'Para adblock: off (nada), ads (publi y telemetria) o full (tambien tienda/updates LG).',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('screenshot'),
+      Type.Literal('state'),
+      Type.Literal('status'),
+      Type.Literal('apps'),
+      Type.Literal('inspect'),
+      Type.Literal('launch'),
+      Type.Literal('key'),
+      Type.Literal('toast'),
+      Type.Literal('power'),
+      Type.Literal('volume'),
+      Type.Literal('mute'),
+      Type.Literal('input'),
+      Type.Literal('url'),
+      Type.Literal('closeApp'),
+      Type.Literal('screen'),
+      Type.Literal('media'),
+      Type.Literal('adblock'),
+      Type.Literal('adTracking'),
+      Type.Literal('volumeStep'),
+      Type.Literal('volumeHalf'),
+      Type.Literal('channel'),
+      Type.Literal('command'),
+      Type.Literal('scene'),
+      Type.Literal('picture'),
+    ]),
+    appId: Type.Optional(
+      Type.String({
+        description:
+          'Para launch: el id de la app (sacalo de action=apps) o su nombre ("Netflix", "YouTube", "Disney+"): se resuelve al id instalado.',
+      }),
+    ),
+    name: Type.Optional(
+      Type.String({
+        description: 'Para key: HOME, BACK, ENTER, LEFT, RIGHT, UP, DOWN, VOLUP, VOLDOWN.',
+      }),
+    ),
+    message: Type.Optional(Type.String({ description: 'Para toast: el texto a mostrar.' })),
+    on: Type.Optional(
+      Type.Boolean({
+        description:
+          'Para power/screen/mute/adTracking: true enciende/activa, false apaga/desactiva.',
+      }),
+    ),
+    level: Type.Optional(
+      Type.Number({ description: 'Para volume: nivel absoluto, entero 0-100.' }),
+    ),
+    input: Type.Optional(
+      Type.String({ description: 'Para input: hdmi1, hdmi2, hdmi3, hdmi4 o tv.' }),
+    ),
+    url: Type.Optional(
+      Type.String({ description: 'Para url: pagina http(s) a abrir en el navegador de la tele.' }),
+    ),
+    command: Type.Optional(
+      Type.String({
+        description: 'Para media: play, pause, playPause, stop, rewind o fastForward.',
+      }),
+    ),
+    steps: Type.Optional(
+      Type.Number({
+        description:
+          'Para volumeStep: pasos relativos del mando, entero -15..15 sin 0 ("sube un poco" = 3, "baja 5" = -5). Va por SSAP, no necesita Glasshouse.',
+      }),
+    ),
+    channel: Type.Optional(
+      Type.String({ description: 'Para channel: up, down o el numero del canal (1-9999).' }),
+    ),
+    scene: Type.Optional(
+      Type.String({
+        description:
+          'Para scene: la rutina. "cine" (enciende si hace falta, quita el silencio, volumen 20 o level, abre appId si se pide y muestra un aviso); "noche" (volumen 8 o level y aviso, sin encender una tele apagada); "apagar-todo" (aviso y apagar la tele si esta encendida).',
+      }),
+    ),
+    text: Type.Optional(
+      Type.String({
+        description:
+          'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo").',
+      }),
+    ),
+    pictureMode: Type.Optional(
+      Type.String({
+        description:
+          'Para picture: modo de imagen de LG (standard, eco, cinema, vivid, sports, game, filmMaker...). «Pon la imagen en estandar» = standard.',
+      }),
+    ),
+    mode: Type.Optional(
+      Type.String({
+        description:
+          'Para adblock: off (nada), ads (publi y telemetria) o full (tambien tienda/updates LG).',
+      }),
+    ),
+  }),
+);
 
 const KEYS = [
   'HOME',
@@ -227,7 +234,7 @@ function needGh(
   return deps.ghControl;
 }
 
-export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
+export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'tv',
     label: 'Televisor LG',
@@ -269,7 +276,7 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
       'action=power envia la ORDEN (encender pantalla o apagar) sin confirmacion del estado fisico:',
       'encender no arranca una tele apagada del todo (sin SSAP no llega nada).',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     // Sequential: two captures in one batch can straddle a repaint and report a
     // screen state that no longer exists, same reason as the ocr tool.
     executionMode: 'sequential',
@@ -288,7 +295,7 @@ export function createTvTool(deps: TvToolDeps): AgentTool<typeof Params> {
   };
 }
 
-type TvArgs = Static<typeof Params>;
+type TvArgs = Static<ReturnType<typeof Params>>;
 
 /** Acciones que solo miran la tele: un mensaje viejo puede seguir pidiéndolas. */
 const TV_READ_ONLY: ReadonlySet<string> = new Set([

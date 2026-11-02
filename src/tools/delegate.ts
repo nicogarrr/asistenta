@@ -11,39 +11,41 @@
  * lista blanca de nombres que el ejecutor del hijo debe respetar.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { resolveSpecialist, SPECIALISTS, specialistNames } from '../core/specialists.js';
 import type { SubagentPool } from '../core/subagent.js';
 
 export const DELEGATE_TOOL_NAME = 'delegate';
 
-const DelegateParams = Type.Object({
-  task: Type.String({
-    minLength: 1,
-    maxLength: 4000,
-    description: 'Tarea concreta y autocontenida para el subagente, con el resultado esperado.',
-  }),
-  role: Type.Optional(
-    Type.Union([Type.Literal('explorer'), Type.Literal('planner'), Type.Literal('implementer')], {
-      description:
-        'explorer: lee y resume. planner: plan por pasos. implementer: propone el cambio como texto/diff; no escribe.',
-    }),
-  ),
-  specialist: Type.Optional(
-    Type.String({
+const DelegateParams = lazySchema(() =>
+  Type.Object({
+    task: Type.String({
       minLength: 1,
-      maxLength: 40,
-      description: `Especialista que hace la tarea con sus propias instrucciones y herramientas: ${specialistNames().join(', ')}. Si no existe, se usa un subagente genérico.`,
+      maxLength: 4000,
+      description: 'Tarea concreta y autocontenida para el subagente, con el resultado esperado.',
     }),
-  ),
-  tools: Type.Optional(
-    Type.Array(Type.String({ minLength: 1 }), {
-      maxItems: 32,
-      description:
-        'Nombres de herramientas que el hijo puede usar. Deben ser herramientas sin efectos secundarios.',
-    }),
-  ),
-});
+    role: Type.Optional(
+      Type.Union([Type.Literal('explorer'), Type.Literal('planner'), Type.Literal('implementer')], {
+        description:
+          'explorer: lee y resume. planner: plan por pasos. implementer: propone el cambio como texto/diff; no escribe.',
+      }),
+    ),
+    specialist: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: 40,
+        description: `Especialista que hace la tarea con sus propias instrucciones y herramientas: ${specialistNames().join(', ')}. Si no existe, se usa un subagente genérico.`,
+      }),
+    ),
+    tools: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        maxItems: 32,
+        description:
+          'Nombres de herramientas que el hijo puede usar. Deben ser herramientas sin efectos secundarios.',
+      }),
+    ),
+  }),
+);
 
 export interface DelegateDetails {
   depth: number;
@@ -87,7 +89,7 @@ export function createDelegateTool(
     /** Pregunta al humano del hilo; solo la usan los especialistas con efectos. */
     approve?: (question: string) => Promise<boolean>;
   },
-): AgentTool<typeof DelegateParams, DelegateDetails> {
+): AgentTool<ReturnType<typeof DelegateParams>, DelegateDetails> {
   return {
     name: DELEGATE_TOOL_NAME,
     label: 'Delegar',
@@ -98,7 +100,7 @@ export function createDelegateTool(
       'Pasa en tools solo herramientas sin efectos secundarios; el hijo no recibe el transcript del padre ni sus permisos, y devuelve un resumen en texto.',
       specialistLine(),
     ].join(' '),
-    parameters: DelegateParams,
+    parameters: DelegateParams(),
     executionMode: 'parallel',
     execute: async (_toolCallId, args, signal) => {
       const specialist =

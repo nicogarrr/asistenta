@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { type GymState, OpenGymError } from '../opengym/client.js';
 import { lastWorkoutText, todayText, weeklyGymText, weightText } from '../opengym/summary.js';
 
@@ -7,15 +7,17 @@ import { lastWorkoutText, todayText, weeklyGymText, weightText } from '../opengy
  * Consulta de SOLO LECTURA a openGym, el tracker de gimnasio de Nico.
  * El modelo elige qué mirar; no puede cambiar la URL ni escribir nada.
  */
-const Params = Type.Object({
-  what: Type.Union(
-    [Type.Literal('hoy'), Type.Literal('ultimo'), Type.Literal('peso'), Type.Literal('semana')],
-    {
-      description:
-        'hoy: qué rutina toca hoy. ultimo: el último entreno. peso: peso corporal. semana: resumen de la semana.',
-    },
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    what: Type.Union(
+      [Type.Literal('hoy'), Type.Literal('ultimo'), Type.Literal('peso'), Type.Literal('semana')],
+      {
+        description:
+          'hoy: qué rutina toca hoy. ultimo: el último entreno. peso: peso corporal. semana: resumen de la semana.',
+      },
+    ),
+  }),
+);
 
 export type GymKind = 'hoy' | 'ultimo' | 'peso' | 'semana';
 
@@ -48,7 +50,7 @@ export async function gymAnswer(deps: OpenGymDeps, what: GymKind): Promise<strin
   }
 }
 
-export function createOpenGymTool(deps: OpenGymDeps): AgentTool<typeof Params> {
+export function createOpenGymTool(deps: OpenGymDeps): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'opengym',
     label: 'openGym (solo lectura)',
@@ -59,7 +61,7 @@ export function createOpenGymTool(deps: OpenGymDeps): AgentTool<typeof Params> {
       'It cannot log or change anything. If it fails, tell the user the reason in Spanish;',
       'never invent workout data.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     execute: async (_id, params) => {
       const text = await gymAnswer(deps, params.what);
       return { content: [{ type: 'text', text }], details: { what: params.what } };

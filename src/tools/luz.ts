@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import type { Store } from '../db.js';
 import { log } from '../log.js';
 
@@ -30,27 +30,29 @@ export interface LuzHour {
   price: number;
 }
 
-const Params = Type.Object({
-  dia: Type.Optional(
-    Type.Union([Type.Literal('hoy'), Type.Literal('mañana')], {
-      description: 'Day: «hoy» (default) or «mañana» (published by Red Eléctrica around 20:30).',
-    }),
-  ),
-  horas: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      maximum: 8,
-      description:
-        'How many hours in a row the appliance needs (washing machine ≈ 2): finds the cheapest block.',
-    }),
-  ),
-  aviso: Type.Optional(
-    Type.Union([Type.Literal('activar'), Type.Literal('desactivar')], {
-      description:
-        'Only when the owner asks: turn on/off a nightly notice (21:00) with tomorrow’s cheap hours.',
-    }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    dia: Type.Optional(
+      Type.Union([Type.Literal('hoy'), Type.Literal('mañana')], {
+        description: 'Day: «hoy» (default) or «mañana» (published by Red Eléctrica around 20:30).',
+      }),
+    ),
+    horas: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 8,
+        description:
+          'How many hours in a row the appliance needs (washing machine ≈ 2): finds the cheapest block.',
+      }),
+    ),
+    aviso: Type.Optional(
+      Type.Union([Type.Literal('activar'), Type.Literal('desactivar')], {
+        description:
+          'Only when the owner asks: turn on/off a nightly notice (21:00) with tomorrow’s cheap hours.',
+      }),
+    ),
+  }),
+);
 
 export interface LuzDeps {
   fetchFn?: typeof fetch;
@@ -229,7 +231,7 @@ const DOWN =
 
 class LuzUnavailable extends Error {}
 
-export function createLuzTool(deps: LuzDeps = {}): AgentTool<typeof Params> {
+export function createLuzTool(deps: LuzDeps = {}): AgentTool<ReturnType<typeof Params>> {
   const fetchFn = deps.fetchFn ?? fetch;
   const now = deps.now ?? (() => new Date());
   const cache = new Map<string, { at: number; hours: LuzHour[] }>();
@@ -277,7 +279,7 @@ export function createLuzTool(deps: LuzDeps = {}): AgentTool<typeof Params> {
     label: 'Precio de la luz',
     description:
       'Spanish electricity price by hour (PVPC, Red Eléctrica, no key) for today or tomorrow: cheapest/most expensive hours, the price now and the cheapest block of N hours in a row. Use for «¿a qué hora pongo la lavadora?», «¿cuándo está barata la luz?», «precio de la luz mañana». Read-only. aviso=activar/desactivar only when the owner asks for (or to stop) a nightly notice.',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {

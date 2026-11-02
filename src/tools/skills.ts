@@ -14,7 +14,7 @@
  * stays an explicit second call: learning must never be a side effect.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { type Embedder, hybridRank } from '../memory/semantic.js';
 import { decideToSave } from '../skills/autocreate.js';
@@ -24,102 +24,105 @@ import { type SkillStore, scoreSkill } from '../skills/store.js';
 
 export const SKILLS_TOOL_NAME = 'skills';
 
-const SkillsParams = Type.Object({
-  action: Type.Union([
-    Type.Literal('list'),
-    Type.Literal('read'),
-    Type.Literal('save'),
-    Type.Literal('improve'),
-    Type.Literal('search'),
-    Type.Literal('suggest'),
-    Type.Literal('disable'),
-    Type.Literal('enable'),
-    Type.Literal('remove'),
-    Type.Literal('check'),
-    Type.Literal('accept'),
-  ]),
-  id: Type.Optional(
-    Type.String({
-      description:
-        'For read, improve, disable, enable and remove: the skill id (the slug of its name, see list).',
-    }),
-  ),
-  name: Type.Optional(
-    Type.String({
-      description:
-        'For save: short human name. The id is derived from it, and saving again with the same name updates that skill.',
-    }),
-  ),
-  description: Type.Optional(
-    Type.String({
-      description: 'For save: one line saying what the skill accomplishes.',
-    }),
-  ),
-  category: Type.Optional(
-    Type.String({
-      description:
-        'For save: grouping like "sistema", "navegación", "escritorio". Defaults to "general".',
-    }),
-  ),
-  whenToUse: Type.Optional(
-    Type.String({
-      description:
-        'For save: the request or situation that should trigger this skill. Phrase it as the user would ask.',
-    }),
-  ),
-  steps: Type.Optional(
-    Type.Array(
-      Type.String({
-        description: 'For save: one imperative line per step, in the order that worked.',
-      }),
-    ),
-  ),
-  outward: Type.Optional(
-    Type.Boolean({
-      description:
-        'For save: true if following it sends, books, buys, posts or switches something outside (default true when unsure). Permissions still ask as always.',
-    }),
-  ),
-  needs: Type.Optional(
-    Type.Array(
+const SkillsParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('list'),
+      Type.Literal('read'),
+      Type.Literal('save'),
+      Type.Literal('improve'),
+      Type.Literal('search'),
+      Type.Literal('suggest'),
+      Type.Literal('disable'),
+      Type.Literal('enable'),
+      Type.Literal('remove'),
+      Type.Literal('check'),
+      Type.Literal('accept'),
+    ]),
+    id: Type.Optional(
       Type.String({
         description:
-          'For save: what must be set up, e.g. correo, calendario, navegador, contactos, casa, notas-voz.',
+          'For read, improve, disable, enable and remove: the skill id (the slug of its name, see list).',
       }),
     ),
-  ),
-  tool: Type.Optional(
-    Type.String({ description: 'For save: the factory tool it relies on (fab_<id>), if any.' }),
-  ),
-  newSteps: Type.Optional(
-    Type.Array(
+    name: Type.Optional(
       Type.String({
-        description: 'For improve: the complete new step list, replacing the old one.',
+        description:
+          'For save: short human name. The id is derived from it, and saving again with the same name updates that skill.',
       }),
     ),
-  ),
-  reason: Type.Optional(
-    Type.String({
-      description: 'For improve: why the steps change. Kept in ## Notes next to what was removed.',
-    }),
-  ),
-  query: Type.Optional(
-    Type.String({
-      description: 'For search: words to match against name, description and whenToUse.',
-    }),
-  ),
-  transcript: Type.Optional(
-    Type.String({
-      description: 'For suggest: the transcript of the task just finished, tool calls included.',
-    }),
-  ),
-  result: Type.Optional(
-    Type.String({
-      description:
-        'For suggest: the final outcome text of the task, so failures are not learned from.',
-    }),
-  ),
-});
+    description: Type.Optional(
+      Type.String({
+        description: 'For save: one line saying what the skill accomplishes.',
+      }),
+    ),
+    category: Type.Optional(
+      Type.String({
+        description:
+          'For save: grouping like "sistema", "navegación", "escritorio". Defaults to "general".',
+      }),
+    ),
+    whenToUse: Type.Optional(
+      Type.String({
+        description:
+          'For save: the request or situation that should trigger this skill. Phrase it as the user would ask.',
+      }),
+    ),
+    steps: Type.Optional(
+      Type.Array(
+        Type.String({
+          description: 'For save: one imperative line per step, in the order that worked.',
+        }),
+      ),
+    ),
+    outward: Type.Optional(
+      Type.Boolean({
+        description:
+          'For save: true if following it sends, books, buys, posts or switches something outside (default true when unsure). Permissions still ask as always.',
+      }),
+    ),
+    needs: Type.Optional(
+      Type.Array(
+        Type.String({
+          description:
+            'For save: what must be set up, e.g. correo, calendario, navegador, contactos, casa, notas-voz.',
+        }),
+      ),
+    ),
+    tool: Type.Optional(
+      Type.String({ description: 'For save: the factory tool it relies on (fab_<id>), if any.' }),
+    ),
+    newSteps: Type.Optional(
+      Type.Array(
+        Type.String({
+          description: 'For improve: the complete new step list, replacing the old one.',
+        }),
+      ),
+    ),
+    reason: Type.Optional(
+      Type.String({
+        description:
+          'For improve: why the steps change. Kept in ## Notes next to what was removed.',
+      }),
+    ),
+    query: Type.Optional(
+      Type.String({
+        description: 'For search: words to match against name, description and whenToUse.',
+      }),
+    ),
+    transcript: Type.Optional(
+      Type.String({
+        description: 'For suggest: the transcript of the task just finished, tool calls included.',
+      }),
+    ),
+    result: Type.Optional(
+      Type.String({
+        description:
+          'For suggest: the final outcome text of the task, so failures are not learned from.',
+      }),
+    ),
+  }),
+);
 
 export interface SkillsToolDeps {
   store: SkillStore;
@@ -131,7 +134,7 @@ export interface SkillsToolDeps {
   repeats?: RepeatTracker;
 }
 
-export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsParams> {
+export function createSkillsTool(deps: SkillsToolDeps): AgentTool<ReturnType<typeof SkillsParams>> {
   const { store, semantic, checkEnv, repeats } = deps;
   return {
     name: SKILLS_TOOL_NAME,
@@ -163,7 +166,7 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<typeof SkillsP
       'action=accept only when the owner says yes to your «🔁 … ¿Lo guardo como habilidad?»',
       'offer: it saves that offered recipe (it will ask before acting outward).',
     ].join('\n'),
-    parameters: SkillsParams,
+    parameters: SkillsParams(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       switch (args.action) {

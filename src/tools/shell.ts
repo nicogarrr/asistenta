@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { childEnv } from '../child-env.js';
 import type { Config } from '../config.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { buildSandboxSpawn, sandboxMode, sandboxSpawnError } from './shell-sandbox.js';
 
@@ -153,12 +153,14 @@ export function resolveShell(): { file: string } {
   return { file: 'powershell.exe' };
 }
 
-const ShellParams = Type.Object({
-  command: Type.String({ description: 'PowerShell command to run.' }),
-  timeoutMs: Type.Optional(
-    Type.Number({ description: 'Override the default timeout, in milliseconds.' }),
-  ),
-});
+const ShellParams = lazySchema(() =>
+  Type.Object({
+    command: Type.String({ description: 'PowerShell command to run.' }),
+    timeoutMs: Type.Optional(
+      Type.Number({ description: 'Override the default timeout, in milliseconds.' }),
+    ),
+  }),
+);
 
 /** Entorno del shell del modelo: el del daemon sin credenciales (ver child-env.ts). */
 export function shellEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -170,14 +172,14 @@ export function shellEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 export function createShellTool(
   config: Config,
   deps: { spawn?: typeof spawn; env?: NodeJS.ProcessEnv } = {},
-): AgentTool<typeof ShellParams> {
+): AgentTool<ReturnType<typeof ShellParams>> {
   const spawnImpl = deps.spawn ?? spawn;
   return {
     name: 'shell',
     label: 'Shell',
     description:
       'Run a PowerShell command and return stdout, stderr and the exit code. Long output keeps only the first and last 6KB of each stream, with a note of how much was omitted.',
-    parameters: ShellParams,
+    parameters: ShellParams(),
     executionMode: 'sequential',
     execute: async (toolCallId, args, signal) => {
       // F12: sandbox opcional. Un modo inválido o docker ausente RECHAZA; nunca

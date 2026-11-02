@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import {
   defaultBatchFile,
@@ -34,62 +34,64 @@ import { foldAccents } from '../text.js';
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as MailCategory[];
 const ACTIONS: RuleAction[] = ['archivar', 'limpieza', 'papelera', 'leido'];
 
-const Params = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal('resumen'),
-      Type.Literal('reglas'),
-      Type.Literal('crear'),
-      Type.Literal('borrar'),
-      Type.Literal('limpiar_vista'),
-      Type.Literal('limpiar'),
-      Type.Literal('baja_vista'),
-      Type.Literal('baja'),
-      Type.Literal('bajas'),
-    ],
-    {
-      description:
-        'resumen: clasifica el correo reciente (no mueve nada). reglas: lista. crear/borrar: una regla. limpiar_vista: lista lo que se movería (no mueve). limpiar: mueve el lote aprobado.',
-    },
-  ),
-  cuantos: Type.Optional(
-    Type.Integer({ minimum: 1, maximum: 300, description: 'resumen: correos a mirar (100).' }),
-  ),
-  texto: Type.Optional(Type.String({ description: 'crear: lo que dijo el dueño, tal cual.' })),
-  remitente: Type.Optional(
-    Type.String({ description: 'crear: trozo de la dirección/dominio («linkedin»).' }),
-  ),
-  asunto: Type.Optional(Type.String({ description: 'crear: trozo del asunto.' })),
-  excepto: Type.Optional(
-    Type.String({ description: 'crear: si el asunto dice esto, no aplica («pedido»).' }),
-  ),
-  categoria: Type.Optional(Type.Union(CATEGORIES.map((c) => Type.Literal(c)))),
-  accion: Type.Optional(Type.Union(ACTIONS.map((a) => Type.Literal(a)))),
-  id: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      description: 'borrar: número de la regla. limpiar_vista: usar esa regla.',
-    }),
-  ),
-  destino: Type.Optional(
-    Type.Union(
-      (['limpieza', 'archivar', 'papelera'] as const).map((d) => Type.Literal(d)),
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union(
+      [
+        Type.Literal('resumen'),
+        Type.Literal('reglas'),
+        Type.Literal('crear'),
+        Type.Literal('borrar'),
+        Type.Literal('limpiar_vista'),
+        Type.Literal('limpiar'),
+        Type.Literal('baja_vista'),
+        Type.Literal('baja'),
+        Type.Literal('bajas'),
+      ],
       {
         description:
-          'limpiar_vista: limpieza (por defecto), archivar, o papelera solo si dijo «borrar».',
+          'resumen: clasifica el correo reciente (no mueve nada). reglas: lista. crear/borrar: una regla. limpiar_vista: lista lo que se movería (no mueve). limpiar: mueve el lote aprobado.',
       },
     ),
-  ),
-  lote: Type.Optional(
-    Type.String({ description: 'limpiar/baja: el id del lote de la vista previa.' }),
-  ),
-  numeros: Type.Optional(
-    Type.Array(Type.Integer({ minimum: 1 }), {
-      maxItems: 50,
-      description: 'baja_vista: los números de la lista que Nico eligió.',
-    }),
-  ),
-});
+    cuantos: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 300, description: 'resumen: correos a mirar (100).' }),
+    ),
+    texto: Type.Optional(Type.String({ description: 'crear: lo que dijo el dueño, tal cual.' })),
+    remitente: Type.Optional(
+      Type.String({ description: 'crear: trozo de la dirección/dominio («linkedin»).' }),
+    ),
+    asunto: Type.Optional(Type.String({ description: 'crear: trozo del asunto.' })),
+    excepto: Type.Optional(
+      Type.String({ description: 'crear: si el asunto dice esto, no aplica («pedido»).' }),
+    ),
+    categoria: Type.Optional(Type.Union(CATEGORIES.map((c) => Type.Literal(c)))),
+    accion: Type.Optional(Type.Union(ACTIONS.map((a) => Type.Literal(a)))),
+    id: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: 'borrar: número de la regla. limpiar_vista: usar esa regla.',
+      }),
+    ),
+    destino: Type.Optional(
+      Type.Union(
+        (['limpieza', 'archivar', 'papelera'] as const).map((d) => Type.Literal(d)),
+        {
+          description:
+            'limpiar_vista: limpieza (por defecto), archivar, o papelera solo si dijo «borrar».',
+        },
+      ),
+    ),
+    lote: Type.Optional(
+      Type.String({ description: 'limpiar/baja: el id del lote de la vista previa.' }),
+    ),
+    numeros: Type.Optional(
+      Type.Array(Type.Integer({ minimum: 1 }), {
+        maxItems: 50,
+        description: 'baja_vista: los números de la lista que Nico eligió.',
+      }),
+    ),
+  }),
+);
 
 export const NO_MAIL_ACCOUNT =
   'El correo no está configurado todavía: falta la cuenta de Gmail y su contraseña de aplicación.';
@@ -206,14 +208,14 @@ export function summarize(mails: ScannedMail[], rulesFile: string): string {
  * Clasifica por cabeceras y guarda reglas del dueño. No mueve ni borra correo: eso va
  * aparte, con la lista exacta enseñada antes y aprobada.
  */
-export function createMailRulesTool(deps: MailRulesDeps): AgentTool<typeof Params> {
+export function createMailRulesTool(deps: MailRulesDeps): AgentTool<ReturnType<typeof Params>> {
   const file = deps.rulesFile ?? defaultRulesFile();
   return {
     name: 'correo_reglas',
     label: 'Reglas de correo',
     description:
       'Mail triage and owner rules. resumen: classify recent inbox mail (importante/personal/notificación/publicidad/spam) by headers and show counts per sender plus suspected phishing; moves nothing. reglas: list saved rules. crear: save a rule from the owner\'s words (e.g. «lo de LinkedIn a la papelera» → remitente "linkedin", accion "papelera"; «lo de Amazon que no sea un pedido, archívalo» → remitente "amazon", excepto "pedido", accion "archivar"). borrar: delete rule by id. Rules never act alone. limpiar_vista («limpia lo no importante», «limpia lo de LinkedIn», «aplica la regla 2»): shows what would move (default: ads and notifications to Asistenta/Limpieza; destino archivar, or papelera ONLY if Nico said «borrar»), moves nothing, and returns a lote id. limpiar (lote): moves exactly that previewed batch; only after Nico says yes to that preview — he is asked again every time. Never permanent delete. baja_vista («date de baja de…», «quita suscripciones»): lists senders with an unsubscribe header and their mail count; with numeros/remitente it previews that exact list and returns a lote. baja (lote): unsubscribes exactly that list after Nico says yes (asked every time): one-click POST when offered; mailto ones are NOT sent here (draft them with correo nuevo, approved separately); plain links are given to Nico to open, never visited. bajas: what he unsubscribed from («¿de qué me he dado de baja?»).',
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const text = async (): Promise<string> => {

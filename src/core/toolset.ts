@@ -1,11 +1,11 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import {
   type DeferredSpec,
   deferredSpecs,
   LOADER_TOOL_NAME,
   threadAllowToolNames,
 } from './capabilities.js';
+import { lazySchema, Type } from './lazy-schema.js';
 
 /**
  * Conditional tool loading (P8).
@@ -25,9 +25,11 @@ export type { DeferredSpec };
 /** Derivado del catálogo de capacidades (core/capabilities.ts). */
 export const DEFERRED_DEFAULTS: Record<string, DeferredSpec> = deferredSpecs();
 
-const LoaderParams = Type.Object({
-  nombre: Type.String({ description: 'Nombre de la herramienta a cargar.' }),
-});
+const LoaderParams = lazySchema(() =>
+  Type.Object({
+    nombre: Type.String({ description: 'Nombre de la herramienta a cargar.' }),
+  }),
+);
 
 export { LOADER_TOOL_NAME };
 
@@ -108,7 +110,7 @@ export class ToolLoadout {
     return added;
   }
 
-  #loader(): AgentTool<typeof LoaderParams> {
+  #loader(): AgentTool<ReturnType<typeof LoaderParams>> {
     const pending = [...this.#deferred]
       .filter(([n]) => !this.#loaded.has(n))
       .map(([n, d]) => `${n} (${d.spec.purpose})`);
@@ -116,7 +118,7 @@ export class ToolLoadout {
       name: LOADER_TOOL_NAME,
       label: 'Cargar herramienta',
       description: `Activa una herramienta que aún no está disponible: ${pending.join('; ')}. Úsala si la necesitas y no la ves; queda disponible en el siguiente paso.`,
-      parameters: LoaderParams,
+      parameters: LoaderParams(),
       executionMode: 'sequential',
       execute: async (_id, args) => {
         const name = args.nombre.trim().toLowerCase();

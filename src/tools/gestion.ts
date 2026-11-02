@@ -29,7 +29,7 @@
  * the chat that asked for it and cannot be touched from another.
  */
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import type { Store } from '../db.js';
 import { EFFECT_CLASSES, EFFECT_LABEL, type EffectClass } from '../gestor/effects.js';
 import { missingLoginFields, normalizeDomain, siteKey } from '../gestor/login.js';
@@ -56,93 +56,95 @@ export const MAX_GESTION_CHARS = 3900;
 const EFFECT_DESCRIPTION =
   'Effect class of the step: lee (read-only) | escribe-local (writes on this PC) | envia-terceros (sends/publishes/books something with third parties) | paga (spends money or credits) | destructivo (deletes or destroys). Declare the WORST thing the step may do.';
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('preparar'),
-    Type.Literal('ejecutar'),
-    Type.Literal('paso'),
-    Type.Literal('completar'),
-    Type.Literal('cancelar'),
-    Type.Literal('listar'),
-    Type.Literal('estado'),
-    Type.Literal('playbook_leer'),
-    Type.Literal('playbook_guardar'),
-    Type.Literal('macro'),
-  ]),
-  id: Type.Optional(
-    Type.String({
-      description:
-        'Gestion id (from preparar/listar). Optional for paso/completar/cancelar/estado: the active gestion of this chat.',
-    }),
-  ),
-  titulo: Type.Optional(Type.String({ description: 'preparar: short title, in Spanish.' })),
-  encargo: Type.Optional(Type.String({ description: "preparar: the user's request, verbatim." })),
-  pasos: Type.Optional(
-    Type.Array(
-      Type.Object({
-        texto: Type.String({ description: 'The step, in Spanish.' }),
-        efecto: Type.String({ description: EFFECT_DESCRIPTION }),
-      }),
-      { description: 'preparar: the plan, one step per entry, in order.' },
-    ),
-  ),
-  logins: Type.Optional(
-    Type.Array(
-      Type.String({ description: 'A domain the plan must log into, e.g. seg-social.es.' }),
-      {
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('preparar'),
+      Type.Literal('ejecutar'),
+      Type.Literal('paso'),
+      Type.Literal('completar'),
+      Type.Literal('cancelar'),
+      Type.Literal('listar'),
+      Type.Literal('estado'),
+      Type.Literal('playbook_leer'),
+      Type.Literal('playbook_guardar'),
+      Type.Literal('macro'),
+    ]),
+    id: Type.Optional(
+      Type.String({
         description:
-          'preparar: sites the plan must log into. Credentials live in the vault as ' +
-          'site:<dominio>:username and site:<dominio>:password; the proposal lists every ' +
-          'missing key with the exact `pa vault set` command so Nico can store it. Values ' +
-          'never pass through here.',
-      },
+          'Gestion id (from preparar/listar). Optional for paso/completar/cancelar/estado: the active gestion of this chat.',
+      }),
     ),
-  ),
-  paso: Type.Optional(Type.Number({ description: 'paso: 1-based step number completed.' })),
-  nota: Type.Optional(
-    Type.String({ description: 'paso: one line on what happened in that step.' }),
-  ),
-  dominio: Type.Optional(
-    Type.String({
-      description:
-        'playbook_leer/playbook_guardar: the site domain (e.g. seg-social.es). Canonicalized ' +
-        'with the vault login convention, so www./URL/port forms land on the same playbook.',
-    }),
-  ),
-  login: Type.Optional(
-    Type.Array(Type.String({ description: 'One line of the login flow that worked.' }), {
-      description:
-        'playbook_guardar: login flow notes. Vault key NAMES only as references ' +
-        '(site:<dominio>:username|password); a real value here rejects the whole save.',
-    }),
-  ),
-  selectores: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        'playbook_guardar: selectors that worked, one line each: what it is + the selector.',
-    }),
-  ),
-  quirks: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        'playbook_guardar: quirks and waits (iframes, captcha, multi-step flows, timeouts).',
-    }),
-  ),
-  macro: Type.Optional(
-    Type.String({
-      description:
-        'macro: the stored macro name, always with its namespace (macro/<nombre>). If unsure, ask the user which routine they mean.',
-    }),
-  ),
-  parametros: Type.Optional(
-    Type.Array(Type.Object({ nombre: Type.String(), valor: Type.String() }), {
-      description:
-        'macro: one entry per declared parameter (nombre, valor). Every value is validated ' +
-        'against its declared type before anything runs. Values are task arguments, never ' +
-        'secrets - credentials stay in the vault as always.',
-    }),
-  ),
-});
+    titulo: Type.Optional(Type.String({ description: 'preparar: short title, in Spanish.' })),
+    encargo: Type.Optional(Type.String({ description: "preparar: the user's request, verbatim." })),
+    pasos: Type.Optional(
+      Type.Array(
+        Type.Object({
+          texto: Type.String({ description: 'The step, in Spanish.' }),
+          efecto: Type.String({ description: EFFECT_DESCRIPTION }),
+        }),
+        { description: 'preparar: the plan, one step per entry, in order.' },
+      ),
+    ),
+    logins: Type.Optional(
+      Type.Array(
+        Type.String({ description: 'A domain the plan must log into, e.g. seg-social.es.' }),
+        {
+          description:
+            'preparar: sites the plan must log into. Credentials live in the vault as ' +
+            'site:<dominio>:username and site:<dominio>:password; the proposal lists every ' +
+            'missing key with the exact `pa vault set` command so Nico can store it. Values ' +
+            'never pass through here.',
+        },
+      ),
+    ),
+    paso: Type.Optional(Type.Number({ description: 'paso: 1-based step number completed.' })),
+    nota: Type.Optional(
+      Type.String({ description: 'paso: one line on what happened in that step.' }),
+    ),
+    dominio: Type.Optional(
+      Type.String({
+        description:
+          'playbook_leer/playbook_guardar: the site domain (e.g. seg-social.es). Canonicalized ' +
+          'with the vault login convention, so www./URL/port forms land on the same playbook.',
+      }),
+    ),
+    login: Type.Optional(
+      Type.Array(Type.String({ description: 'One line of the login flow that worked.' }), {
+        description:
+          'playbook_guardar: login flow notes. Vault key NAMES only as references ' +
+          '(site:<dominio>:username|password); a real value here rejects the whole save.',
+      }),
+    ),
+    selectores: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          'playbook_guardar: selectors that worked, one line each: what it is + the selector.',
+      }),
+    ),
+    quirks: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          'playbook_guardar: quirks and waits (iframes, captcha, multi-step flows, timeouts).',
+      }),
+    ),
+    macro: Type.Optional(
+      Type.String({
+        description:
+          'macro: the stored macro name, always with its namespace (macro/<nombre>). If unsure, ask the user which routine they mean.',
+      }),
+    ),
+    parametros: Type.Optional(
+      Type.Array(Type.Object({ nombre: Type.String(), valor: Type.String() }), {
+        description:
+          'macro: one entry per declared parameter (nombre, valor). Every value is validated ' +
+          'against its declared type before anything runs. Values are task arguments, never ' +
+          'secrets - credentials stay in the vault as always.',
+      }),
+    ),
+  }),
+);
 
 function reply(text: string, isError = false): AgentToolResult {
   return { content: [{ type: 'text', text }], details: {}, isError };
@@ -196,7 +198,7 @@ export interface GestionToolDeps {
   vaultSnapshotValues?: () => Promise<string[]>;
 }
 
-export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Params> {
+export function createGestionTool(deps: GestionToolDeps): AgentTool<ReturnType<typeof Params>> {
   /** Reads the gestion and pins it to the calling chat: no cross-chat reach. */
   const mine = (id: string): Gestion | AgentToolResult => {
     const gestion = deps.gestor.read(id);
@@ -239,7 +241,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<typeof Param
         'prompt comes back in this result content for you to execute live in this chat, each ' +
         'step still governed by the gate. Parameters are task arguments, never secrets.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const scope = deps.scopeOf();

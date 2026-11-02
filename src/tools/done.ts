@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
 /**
@@ -13,13 +13,15 @@ import { log } from '../log.js';
  * call. `PersonalAgent` reads the summary back out of the tool result because a
  * terminated run has no final assistant text.
  */
-const DoneParams = Type.Object({
-  summary: Type.String({
-    minLength: 1,
-    maxLength: 1500,
-    description: 'Final message for the user: what is done, what is blocked, what is next.',
+const DoneParams = lazySchema(() =>
+  Type.Object({
+    summary: Type.String({
+      minLength: 1,
+      maxLength: 1500,
+      description: 'Final message for the user: what is done, what is blocked, what is next.',
+    }),
   }),
-});
+);
 
 export const DONE_TOOL_NAME = 'done';
 
@@ -34,7 +36,7 @@ export function extractDoneSummary(result: unknown): string | null {
   return text ? text : null;
 }
 
-export function createDoneTool(): AgentTool<typeof DoneParams> {
+export function createDoneTool(): AgentTool<ReturnType<typeof DoneParams>> {
   return {
     name: DONE_TOOL_NAME,
     label: 'Done',
@@ -43,7 +45,7 @@ export function createDoneTool(): AgentTool<typeof DoneParams> {
       'Call this tool by itself when the requested outcome is ready, blocked, or not worth more tool calls.',
       'Do not call any other tool in the same step, and do not act after calling it.',
     ].join(' '),
-    parameters: DoneParams,
+    parameters: DoneParams(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const summary = args.summary.trim();
@@ -58,14 +60,16 @@ export function createDoneTool(): AgentTool<typeof DoneParams> {
   };
 }
 
-const AskParams = Type.Object({
-  question: Type.String({
-    minLength: 1,
-    maxLength: 600,
-    description:
-      'One short question in the user language, with the 2-3 concrete options when there are any.',
+const AskParams = lazySchema(() =>
+  Type.Object({
+    question: Type.String({
+      minLength: 1,
+      maxLength: 600,
+      description:
+        'One short question in the user language, with the 2-3 concrete options when there are any.',
+    }),
   }),
-});
+);
 
 export const ASK_TOOL_NAME = 'preguntar';
 
@@ -80,7 +84,7 @@ export function isTerminalToolName(name: string): boolean {
  * amounts or dates and the user did not settle which. It performs nothing: it ends the run
  * with the question, so the next user message resolves the ambiguity.
  */
-export function createAskTool(): AgentTool<typeof AskParams> {
+export function createAskTool(): AgentTool<ReturnType<typeof AskParams>> {
   return {
     name: ASK_TOOL_NAME,
     label: 'Ask',
@@ -89,7 +93,7 @@ export function createAskTool(): AgentTool<typeof AskParams> {
       'Required before a consequential action when the request fits 2+ plausible recipients, items, dates, amounts or accounts and nothing in this chat or your memory settles it.',
       'Do not use it for harmless reads or when one reading is clearly the most likely. Do not ask what a tool can look up. Call it by itself.',
     ].join(' '),
-    parameters: AskParams,
+    parameters: AskParams(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
       const question = args.question.trim();

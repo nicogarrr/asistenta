@@ -1,11 +1,11 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { CalendarResponse, EventInstance, VEvent } from 'node-ical';
-import { Type } from 'typebox';
 import {
   type CalendarSources,
   loadCalendarSources,
   mergeCalendarEvents,
 } from '../agenda/sources.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { localTimeZone, wallClock } from '../datecontext.js';
 import { log } from '../log.js';
 import { sliceSafe } from '../text.js';
@@ -444,20 +444,24 @@ function fetchFailureMessage(err: unknown, secret: string): string {
   return 'No he podido leer el calendario remoto: no hay conexión o no responde. Prueba más tarde.';
 }
 
-const CalendarParams = Type.Object({
-  action: Type.Union([Type.Literal('agenda')], {
-    description: 'Only "agenda" exists: this tool cannot change anything.',
-  }),
-  days: Type.Optional(
-    Type.Number({
-      description: `How many days ahead to look. Default ${DEFAULT_AGENDA_DAYS}, maximum ${MAX_AGENDA_DAYS}.`,
-      minimum: 1,
-      maximum: MAX_AGENDA_DAYS,
+const CalendarParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([Type.Literal('agenda')], {
+      description: 'Only "agenda" exists: this tool cannot change anything.',
     }),
-  ),
-});
+    days: Type.Optional(
+      Type.Number({
+        description: `How many days ahead to look. Default ${DEFAULT_AGENDA_DAYS}, maximum ${MAX_AGENDA_DAYS}.`,
+        minimum: 1,
+        maximum: MAX_AGENDA_DAYS,
+      }),
+    ),
+  }),
+);
 
-export function createCalendarTool(deps: CalendarSources): AgentTool<typeof CalendarParams> {
+export function createCalendarTool(
+  deps: CalendarSources,
+): AgentTool<ReturnType<typeof CalendarParams>> {
   return {
     name: CALENDAR_TOOL_NAME,
     label: 'Calendar',
@@ -477,7 +481,7 @@ export function createCalendarTool(deps: CalendarSources): AgentTool<typeof Cale
       `The address lives in the vault under ${ICS_URL_KEY}; it is a read-only`,
       'password and is never printed or logged.',
     ].join('\n'),
-    parameters: CalendarParams,
+    parameters: CalendarParams(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       if (args.action !== 'agenda') {

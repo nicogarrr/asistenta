@@ -6,7 +6,7 @@
  */
 import { basename, dirname, extname, join } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { REPO_DIR } from '../paths.js';
 import { renderPdfPages, type SavedPage } from '../pdfmd/render.js';
 import { checkPages, splitPages, tableNote } from '../pdfmd/verify.js';
@@ -68,13 +68,15 @@ async function keepEvidence(
   ].join('\n');
 }
 
-const Params = Type.Object({
-  path: Type.String({ description: 'Ruta de una imagen (png, jpg, webp, bmp, tif) o un PDF.' }),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    path: Type.String({ description: 'Ruta de una imagen (png, jpg, webp, bmp, tif) o un PDF.' }),
+  }),
+);
 
 const text = (t: string) => ({ type: 'text' as const, text: t });
 
-export function createOcrLocalTool(deps: OcrLocalDeps): AgentTool<typeof Params> {
+export function createOcrLocalTool(deps: OcrLocalDeps): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'ocr_local',
     label: 'OCR local',
@@ -83,7 +85,7 @@ export function createOcrLocalTool(deps: OcrLocalDeps): AgentTool<typeof Params>
       '(PP-OCRv5 por defecto, GLM-OCR si PA_OCR_MODEL=glm). Sin red ni coste por llamada.',
       'Solo lee ficheros dentro de las carpetas permitidas. Para el texto de la pantalla usa `ocr`.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     execute: async (_id, args) => {
       const env = deps.env ?? process.env;
       if (!ocrLocalEnabled(env)) return { content: [text(OCR_LOCAL_DISABLED)], details: {} };

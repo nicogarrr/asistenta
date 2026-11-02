@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import type { Config } from '../config.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { desktopSignupBlock } from '../credentials/signup-guard.js';
 import { log } from '../log.js';
 import type { Decision, ToolCall } from '../permissions.js';
@@ -185,74 +185,79 @@ export function normalizeAction(text: string): Action | null {
   }
 }
 
-const RegionParams = Type.Object(
-  {
-    x: Type.Number({ description: 'Left edge in screenshot pixels.' }),
-    y: Type.Number({ description: 'Top edge in screenshot pixels.' }),
-    width: Type.Number({ description: 'Width in screenshot pixels.' }),
-    height: Type.Number({ description: 'Height in screenshot pixels.' }),
-  },
-  {
-    description:
-      'Region of interest in screenshot pixels. With screenshot, only that region is captured. ' +
-      'With click, x/y are relative to the roi top-left.',
-  },
+const RegionParams = lazySchema(() =>
+  Type.Object(
+    {
+      x: Type.Number({ description: 'Left edge in screenshot pixels.' }),
+      y: Type.Number({ description: 'Top edge in screenshot pixels.' }),
+      width: Type.Number({ description: 'Width in screenshot pixels.' }),
+      height: Type.Number({ description: 'Height in screenshot pixels.' }),
+    },
+    {
+      description:
+        'Region of interest in screenshot pixels. With screenshot, only that region is captured. ' +
+        'With click, x/y are relative to the roi top-left.',
+    },
+  ),
 );
 
-const ComputerParams = Type.Object({
-  action: Type.Union([
-    Type.Literal('screenshot'),
-    Type.Literal('click'),
-    Type.Literal('move'),
-    Type.Literal('drag'),
-    Type.Literal('type'),
-    Type.Literal('key'),
-    Type.Literal('batch'),
-  ]),
-  x: Type.Optional(Type.Number({ description: 'X coordinate in real screen pixels.' })),
-  y: Type.Optional(Type.Number({ description: 'Y coordinate in real screen pixels.' })),
-  toX: Type.Optional(Type.Number()),
-  toY: Type.Optional(Type.Number()),
-  text: Type.Optional(Type.String({ description: 'Text for the type action.' })),
-  secret: Type.Optional(
-    Type.Boolean({
-      description:
-        'For type: mark the text as a secret (credential or token). A secret type is ' +
-        'never approved through a chat question - the approval is denied and the vault ' +
-        'flow must type it instead. Never ask the user to paste the secret.',
-    }),
-  ),
-  key: Type.Optional(
-    Type.String({
-      description:
-        'Chord for the key action, e.g. "enter", "ctrl+s", "alt+F4", "shift+tab". Not SendKeys syntax.',
-    }),
-  ),
-  button: Type.Optional(Type.String()),
-  clicks: Type.Optional(Type.Number()),
-  roi: Type.Optional(RegionParams),
-  send: Type.Optional(
-    Type.Boolean({
-      description:
-        'For screenshot: also push the image to the user chat. Use it whenever they ' +
-        'asked for a capture, so the picture arrives in the chat and not only in your ' +
-        'context.',
-    }),
-  ),
-  look: Type.Optional(
-    Type.Boolean({
-      description:
-        'For click, move, drag, type, key and batch: also return a screenshot of the screen ' +
-        'after the action, so you can check the result and find the next target in the same ' +
-        'call instead of a separate screenshot. Its coordinates are what the next click uses.',
-    }),
-  ),
-  actions: Type.Optional(
-    Type.Array(Type.Record(Type.String(), Type.Unknown()), {
-      description: 'For the batch action: the actions to run in order, each like a single action.',
-    }),
-  ),
-});
+const ComputerParams = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('screenshot'),
+      Type.Literal('click'),
+      Type.Literal('move'),
+      Type.Literal('drag'),
+      Type.Literal('type'),
+      Type.Literal('key'),
+      Type.Literal('batch'),
+    ]),
+    x: Type.Optional(Type.Number({ description: 'X coordinate in real screen pixels.' })),
+    y: Type.Optional(Type.Number({ description: 'Y coordinate in real screen pixels.' })),
+    toX: Type.Optional(Type.Number()),
+    toY: Type.Optional(Type.Number()),
+    text: Type.Optional(Type.String({ description: 'Text for the type action.' })),
+    secret: Type.Optional(
+      Type.Boolean({
+        description:
+          'For type: mark the text as a secret (credential or token). A secret type is ' +
+          'never approved through a chat question - the approval is denied and the vault ' +
+          'flow must type it instead. Never ask the user to paste the secret.',
+      }),
+    ),
+    key: Type.Optional(
+      Type.String({
+        description:
+          'Chord for the key action, e.g. "enter", "ctrl+s", "alt+F4", "shift+tab". Not SendKeys syntax.',
+      }),
+    ),
+    button: Type.Optional(Type.String()),
+    clicks: Type.Optional(Type.Number()),
+    roi: Type.Optional(RegionParams()),
+    send: Type.Optional(
+      Type.Boolean({
+        description:
+          'For screenshot: also push the image to the user chat. Use it whenever they ' +
+          'asked for a capture, so the picture arrives in the chat and not only in your ' +
+          'context.',
+      }),
+    ),
+    look: Type.Optional(
+      Type.Boolean({
+        description:
+          'For click, move, drag, type, key and batch: also return a screenshot of the screen ' +
+          'after the action, so you can check the result and find the next target in the same ' +
+          'call instead of a separate screenshot. Its coordinates are what the next click uses.',
+      }),
+    ),
+    actions: Type.Optional(
+      Type.Array(Type.Record(Type.String(), Type.Unknown()), {
+        description:
+          'For the batch action: the actions to run in order, each like a single action.',
+      }),
+    ),
+  }),
+);
 
 interface Screen {
   width: number;
@@ -513,7 +518,7 @@ export function createComputerTool(
   backend: ScreenBackend,
   gate?: ActionGate,
   sendPhoto?: (bytes: Buffer, opts: { width: number; height: number }) => Promise<boolean>,
-): AgentTool<typeof ComputerParams> {
+): AgentTool<ReturnType<typeof ComputerParams>> {
   const scaling = { maxEdge: config.screenshotMaxEdge, quality: config.screenshotQuality };
   const rescalable = backend as ScreenBackend & {
     setScaling?: (maxEdge: number, quality: number) => void;
@@ -1139,7 +1144,7 @@ export function createComputerTool(
       'coordinates were wrong.',
       'Add look: true to an action or batch to get the screen after it in the same call.',
     ].join(' '),
-    parameters: ComputerParams,
+    parameters: ComputerParams(),
     // Sequential on purpose: two input actions in one batch can interleave and fight
     // over the mouse, which produces a click on the wrong thing and is very hard to
     // diagnose afterwards.

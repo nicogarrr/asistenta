@@ -1,11 +1,11 @@
 import { rmSync } from 'node:fs';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import {
   claimTeleFirewallWarning,
   TV_FIREWALL_HINT,
   teleFirewallAlreadyWarned,
 } from '../audio/tv-cast.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { type AudioRecall, agoLabel } from '../media/recall.js';
 import {
@@ -149,41 +149,43 @@ export interface MediaToolDeps {
   afterPlayback?: () => void;
 }
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('play'),
-    Type.Literal('list_audio'),
-    Type.Literal('camera_photo'),
-    Type.Literal('camera_clip'),
-    Type.Literal('camera_audio_clip'),
-    Type.Literal('mic_record'),
-    Type.Literal('screen_clip'),
-    Type.Literal('live_view'),
-  ]),
-  volume: Type.Optional(
-    Type.Number({ description: 'For play: 0-100. Default 100 (as loud as asked).' }),
-  ),
-  which: Type.Optional(
-    Type.Number({
-      description:
-        'For play: which audio, counting back. 1 = the last one sent (default), 2 = the one before, … (list_audio shows them in that order).',
-    }),
-  ),
-  target: Type.Optional(
-    Type.Union([Type.Literal('pc'), Type.Literal('tele')], {
-      description:
-        'For play: where it sounds. "pc" (default) = the PC speakers; "tele" = the LG TV ("en la tele").',
-    }),
-  ),
-  seconds: Type.Optional(Type.Number({ description: 'For the clip actions: 1-60. Default 10.' })),
-  fps: Type.Optional(Type.Number({ description: 'For screen_clip: 1-15. Default 8.' })),
-  source: Type.Optional(
-    Type.Union([Type.Literal('screen'), Type.Literal('camera'), Type.Literal('off')]),
-  ),
-  intervalSeconds: Type.Optional(
-    Type.Number({ description: 'For live_view on: 2-30s between frames. Default 5.' }),
-  ),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('play'),
+      Type.Literal('list_audio'),
+      Type.Literal('camera_photo'),
+      Type.Literal('camera_clip'),
+      Type.Literal('camera_audio_clip'),
+      Type.Literal('mic_record'),
+      Type.Literal('screen_clip'),
+      Type.Literal('live_view'),
+    ]),
+    volume: Type.Optional(
+      Type.Number({ description: 'For play: 0-100. Default 100 (as loud as asked).' }),
+    ),
+    which: Type.Optional(
+      Type.Number({
+        description:
+          'For play: which audio, counting back. 1 = the last one sent (default), 2 = the one before, … (list_audio shows them in that order).',
+      }),
+    ),
+    target: Type.Optional(
+      Type.Union([Type.Literal('pc'), Type.Literal('tele')], {
+        description:
+          'For play: where it sounds. "pc" (default) = the PC speakers; "tele" = the LG TV ("en la tele").',
+      }),
+    ),
+    seconds: Type.Optional(Type.Number({ description: 'For the clip actions: 1-60. Default 10.' })),
+    fps: Type.Optional(Type.Number({ description: 'For screen_clip: 1-15. Default 8.' })),
+    source: Type.Optional(
+      Type.Union([Type.Literal('screen'), Type.Literal('camera'), Type.Literal('off')]),
+    ),
+    intervalSeconds: Type.Optional(
+      Type.Number({ description: 'For live_view on: 2-30s between frames. Default 5.' }),
+    ),
+  }),
+);
 
 function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: 'text' as const, text }], details };
@@ -206,7 +208,7 @@ export function playbackFailureText(err: unknown): string {
   return 'No he podido reproducirlo por un fallo del reproductor.';
 }
 
-export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
+export function createMediaTool(deps: MediaToolDeps): AgentTool<ReturnType<typeof Params>> {
   const clamp = (value: unknown, fallback: number, min: number, max: number): number => {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
@@ -249,7 +251,7 @@ export function createMediaTool(deps: MediaToolDeps): AgentTool<typeof Params> {
       'result says so. If an audio is not remembered, say that the user has to send it again',
       'rather than guessing which one they meant.',
     ].join('\n'),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args, signal) => {
       switch (args.action) {

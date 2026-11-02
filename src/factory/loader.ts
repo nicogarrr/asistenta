@@ -17,7 +17,7 @@
  */
 
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { sliceSafe } from '../text.js';
 import { runFactoryToolSandboxed } from './runner.js';

@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { type DownloadOptions, downloadFromLink } from '../media/download.js';
 import { urlHostname } from '../text.js';
@@ -29,19 +29,21 @@ export interface DownloadToolDeps {
   }) => void;
 }
 
-const Params = Type.Object({
-  url: Type.String({ description: 'Absolute http(s) link the user sent.' }),
-  kind: Type.Optional(
-    Type.Union(
-      [Type.Literal('auto'), Type.Literal('video'), Type.Literal('pdf'), Type.Literal('audio')],
-      {
-        description:
-          'auto (default): a .pdf link is a PDF, anything else a video. ' +
-          'audio: keep only the sound as MP3 (music, podcasts, SoundCloud, the audio of a video).',
-      },
+const Params = lazySchema(() =>
+  Type.Object({
+    url: Type.String({ description: 'Absolute http(s) link the user sent.' }),
+    kind: Type.Optional(
+      Type.Union(
+        [Type.Literal('auto'), Type.Literal('video'), Type.Literal('pdf'), Type.Literal('audio')],
+        {
+          description:
+            'auto (default): a .pdf link is a PDF, anything else a video. ' +
+            'audio: keep only the sound as MP3 (music, podcasts, SoundCloud, the audio of a video).',
+        },
+      ),
     ),
-  ),
-});
+  }),
+);
 
 /** Host para logs y avisos: el mismo host comparable que el navegador y las vigilancias. */
 export function hostOf(url: string): string {
@@ -67,7 +69,7 @@ function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: 'text' as const, text }], details };
 }
 
-export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Params> {
+export function createDownloadTool(deps: DownloadToolDeps): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'download',
     label: 'Descargar vídeo o PDF',
@@ -81,7 +83,7 @@ export function createDownloadTool(deps: DownloadToolDeps): AgentTool<typeof Par
       'result says it was. Limit: 50 MB (Telegram). Private or login-only content fails; say',
       'so plainly, in Spanish, and never claim a download happened when the result is an error.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     execute: async (_id, params) => {
       const kind = params.kind ?? 'auto';
       const result = await downloadFromLink(params.url, kind, deps.options);

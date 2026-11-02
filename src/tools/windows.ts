@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { Type } from 'typebox';
 import { childEnv } from '../child-env.js';
+import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { psErrorSummary } from './ps-error.js';
 
@@ -344,20 +344,22 @@ try {
   return { window, visible, controls, note };
 }
 
-const Params = Type.Object({
-  action: Type.Union([
-    Type.Literal('list'),
-    Type.Literal('foreground'),
-    Type.Literal('controls'),
-    Type.Literal('focus'),
-  ]),
-  match: Type.Optional(
-    Type.String({ description: 'Substring of the window title, for focus and controls.' }),
-  ),
-  limit: Type.Optional(Type.Number({ description: 'Max controls to return. Default 60.' })),
-});
+const Params = lazySchema(() =>
+  Type.Object({
+    action: Type.Union([
+      Type.Literal('list'),
+      Type.Literal('foreground'),
+      Type.Literal('controls'),
+      Type.Literal('focus'),
+    ]),
+    match: Type.Optional(
+      Type.String({ description: 'Substring of the window title, for focus and controls.' }),
+    ),
+    limit: Type.Optional(Type.Number({ description: 'Max controls to return. Default 60.' })),
+  }),
+);
 
-export function createWindowsTool(): AgentTool<typeof Params> {
+export function createWindowsTool(): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'windows',
     label: 'Windows',
@@ -378,7 +380,7 @@ export function createWindowsTool(): AgentTool<typeof Params> {
       'For those, use the browser tool: it reads the real page. Windows running as',
       'administrator are invisible unless this agent also runs as administrator.',
     ].join(' '),
-    parameters: Params,
+    parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
       switch (args.action) {
