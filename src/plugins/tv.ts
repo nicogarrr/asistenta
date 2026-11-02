@@ -12,10 +12,19 @@ import type { Store } from '../db.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { createTvTool, type TvMemoryState, type TvToolDeps } from '../tools/tv.js';
+import { discoverWebOsTvs } from '../tv/discover.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.js';
+import { loadKnownTvs, relocateMovedTvs, saveTvClientKey } from '../tv/known-tvs.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
 import { readTvStatus } from '../tv/status.js';
+import {
+  currentTvTarget,
+  extractTvTarget,
+  isTvUnreachable,
+  tvTargetLabel,
+  withTvTarget,
+} from '../tv/target.js';
 import { sendWakeOnLan } from '../tv/wol.js';
 import { vaultGet, vaultSet, vaultSetMany } from '../vault.js';
 import type { CapabilityPlugin } from './types.js';
@@ -35,6 +44,13 @@ export function tvToolDeps(store: Store): TvToolDeps {
   // Si la tele olvido la client-key y Nico acepta el aviso de nuevo, la clave
   // nueva se guarda: sin esto cada orden volveria a sacar el aviso.
   const saveNewKey = async (key: string): Promise<void> => {
+    // Orden a otra tele (no la activa): su clave va a su entrada, no a la de la activa.
+    const target = currentTvTarget();
+    if (target) {
+      await saveTvClientKey(target.host, key);
+      log.info('tv: una tele del registro se ha vuelto a emparejar; client-key nueva guardada');
+      return;
+    }
     await vaultSet('tv:clientKey', key);
     log.info('tv: la tele se ha vuelto a emparejar; client-key nueva guardada');
   };
@@ -44,6 +60,14 @@ export function tvToolDeps(store: Store): TvToolDeps {
     clientKey: string;
     allowPlaintext: boolean;
   }> => {
+    const target = currentTvTarget();
+    if (target) {
+      return {
+        host: target.host,
+        clientKey: target.clientKey,
+        allowPlaintext: target.secure === '0',
+      };
+    }
     // Multi-casa: si la activa no responde en esta red y hay otra tele
     // conocida encendida, la activa pasa a ser esa (sin re-emparejar).
     try {
@@ -81,6 +105,12 @@ export function tvToolDeps(store: Store): TvToolDeps {
    */
   const GH_DEFAULT_ENDPOINTS = ['http://192.168.1.237:8080', 'http://100.126.88.124:8080'];
   const ghClient = async (): Promise<GlasshouseClient> => {
+    // Orden a otra tele: Glasshouse solo en SU IP (si no esta rooteada, falla
+    // como inalcanzable y se sigue por SSAP); nunca los endpoints de la activa.
+    const target = currentTvTarget();
+    if (target && target.host !== (await vaultGet('tv:host'))) {
+      return new GlasshouseClient({ endpoints: [`http://${target.host}:8080`] });
+    }
     const override = await vaultGet('tv:glasshouseUrl');
     const endpoints = override?.trim()
       ? override
@@ -91,7 +121,68 @@ export function tvToolDeps(store: Store): TvToolDeps {
     return new GlasshouseClient({ endpoints, token: await vaultGet('tv:glasshouseToken') });
   };
 
+  /**
+   * Si la IP guardada ya no contesta (el router le dio otra), busca la tele
+   * por MAC/UUID y reintenta UNA vez: solo cuando no se llego a conectar
+   * (TvUnreachableError = no salio nada), nunca tras una orden ambigua.
+   */
+  const withRelocation = async <T>(
+    host: string,
+    fn: () => Promise<T>,
+    retarget: (newHost: string) => (fn: () => Promise<T>) => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isTvUnreachable(err)) throw err;
+      const moves = await relocateMovedTvs(
+        await discoverWebOsTvs({ probeGlasshouse: false }).catch(() => []),
+      ).catch(() => []);
+      const move = moves.find((m) => m.from === host);
+      if (!move) throw err;
+      log.info('tv: la tele ha cambiado de IP; reintento en la nueva', {
+        from: move.from,
+        to: move.to,
+      });
+      return retarget(move.to)(fn);
+    }
+  };
+
+  const routeOrder: TvToolDeps['routeOrder'] = async (text) => {
+    const known = await loadKnownTvs();
+    const active = await vaultGet('tv:host');
+    const found = extractTvTarget(text, known);
+    const direct = <T>(fn: () => Promise<T>) => fn();
+    if (found.ask) return { text, ask: found.ask, run: direct };
+    const tv = found.tv;
+    if (!tv || tv.host === active) {
+      // La activa: el cableado de siempre (claves sueltas), sin contexto.
+      return {
+        text: found.text,
+        ...(tv ? { label: tvTargetLabel(tv) } : {}),
+        // Si cambió de IP, ensureActiveTv (auto-select.ts) ya la reencuentra en paired().
+        run: direct,
+      };
+    }
+    if (tv.brand === 'sony') {
+      return {
+        text,
+        ask: `«${tvTargetLabel(tv)}» es una Sony: de momento se maneja con «pa tv sony ...» o haciéndola la activa (pa tv usar ${tv.host}).`,
+        run: direct,
+      };
+    }
+    return {
+      text: found.text,
+      label: tvTargetLabel(tv),
+      run: <T>(fn: () => Promise<T>) =>
+        withTvTarget(tv, () =>
+          withRelocation(tv.host, fn, (to) => (again) => withTvTarget({ ...tv, host: to }, again)),
+        ),
+    };
+  };
+
   return {
+    routeOrder,
     shot: async () => {
       const { host, clientKey, allowPlaintext } = await paired();
       const image = await tvScreenshot(host, clientKey, {
@@ -176,8 +267,9 @@ export function tvToolDeps(store: Store): TvToolDeps {
       // Cadena Glasshouse -> SSAP -> Wake-on-LAN en src/tv/power.ts (reglas del
       // auditor #104 r1 intactas: solo se cambia de transporte si la orden no
       // llego). El WoL solo existe con la MAC guardada (pa tv mac).
-      const mac = await vaultGet('tv:mac');
-      const host = await vaultGet('tv:host');
+      const target = currentTvTarget();
+      const mac = target ? target.mac : await vaultGet('tv:mac');
+      const host = target ? target.host : await vaultGet('tv:host');
       return tvPower(on, {
         gh: async (action) => {
           await (await ghClient()).control(action);

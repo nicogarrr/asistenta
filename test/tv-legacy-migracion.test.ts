@@ -93,5 +93,4 @@ describe('migración en la primera escritura real', () => {
     expect(vault.get('tv:host')).toBe('192.168.1.41');
     expect(vault.get('tv:clientKey')).toBe('key-192.168.1.41');
   });
-
 });

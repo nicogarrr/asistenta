@@ -40,7 +40,22 @@ export interface TvMemoryState {
   bytes: number;
 }
 
+/**
+ * Ruta de una orden en palabras cuando hay varias teles (src/tv/target.ts):
+ * el texto sin la frase de lugar, quién la ejecuta (dentro del contexto de esa
+ * tele) y, si no está claro a cuál, la pregunta en vez de tocar ninguna.
+ */
+export interface TvOrderRoute {
+  text: string;
+  ask?: string;
+  /** Nombre de la tele nombrada, para la respuesta («Hecho (dormitorio)»). */
+  label?: string;
+  run: <T>(fn: () => Promise<T>) => Promise<T>;
+}
+
 export interface TvToolDeps {
+  /** Varias teles: a cuál va una orden en palabras. Sin esto, siempre la activa. */
+  routeOrder?: (text: string) => Promise<TvOrderRoute>;
   /** Frame actual de la tele. Lanza si no esta emparejada o apagada. */
   /** ext opcional: los mocks pueden omitirla (cae a jpg); el adapter real la deriva de la firma. */
   shot: () => Promise<{ image: Buffer; mimeType: string; ext?: string }>;
@@ -261,6 +276,7 @@ export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Para
       'action=volumeStep sube/baja el volumen por pasos del mando (steps), action=channel cambia de canal (up/down/numero).',
       'action=command entiende una orden natural en castellano (text) y la ejecuta: "apaga la tele", "abre Netflix",',
       '"volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Si no la entiende, lo dice.',
+      'Con varias teles, nombra cual en la orden ("apaga la tele del dormitorio"); sin nombre va a la activa.',
       'action=scene scene=cine es el "modo cine": encender si hace falta, quitar silencio, volumen (level, por defecto 20),',
       'abrir la app que pidan (appId, p.ej. Netflix) y un aviso; devuelve el resultado de cada paso.',
       'scene=noche baja el volumen (level, por defecto 8) sin encender; scene=apagar-todo avisa y apaga la tele.',
@@ -640,8 +656,13 @@ async function runTvAction(
       };
     }
     case 'command': {
-      const text = (args.text ?? '').trim();
-      if (!text) throw new Error('action=command necesita text: la orden en castellano.');
+      const raw = (args.text ?? '').trim();
+      if (!raw) throw new Error('action=command necesita text: la orden en castellano.');
+      const route = deps.routeOrder ? await deps.routeOrder(raw) : undefined;
+      if (route?.ask) {
+        return { content: [{ type: 'text' as const, text: route.ask }], details: { asked: true } };
+      }
+      const text = route?.text ?? raw;
       const intent = parseTvCommand(text);
       if (!intent && tvOrderHasTime(text)) {
         throw new Error(
@@ -653,11 +674,16 @@ async function runTvAction(
           `No he entendido "${text.slice(0, 80)}" como orden para la tele. Ejemplos: "apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2". Tambien puedes usar las acciones explicitas.`,
         );
       }
-      const res = await runTvAction(deps, intent as TvArgs);
+      const res = route
+        ? await route.run(() => runTvAction(deps, intent as TvArgs))
+        : await runTvAction(deps, intent as TvArgs);
       return {
         ...res,
         content: [
-          { type: 'text' as const, text: `Entendido: ${describeTvIntent(intent)}.` },
+          {
+            type: 'text' as const,
+            text: `Entendido: ${describeTvIntent(intent)}${route?.label ? ` (tele: ${route.label})` : ''}.`,
+          },
           ...res.content,
         ],
         details: { ...res.details, intent },
