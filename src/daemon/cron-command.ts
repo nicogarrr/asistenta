@@ -253,6 +253,13 @@ function goalRoutineCronRefusal(name: string, verb: 'borrar' | 'pausar' | 'reanu
  * Store and RoutineRunner without a daemon (auditor #135 ronda 2). Returns
  * the exact reply text; the caller owns delivery.
  */
+/**
+ * Las palabras para borrar una rutina o un disparador: «borrar», «quita», «elimina»…
+ * además de del/borra/rm. Antes «/cron borrar resumen» enseñaba la lista sin borrar y
+ * «/disparador borrar 2» daba el error de cómo crear uno.
+ */
+export const BORRAR_SUB = /^(?:del|rm|borra|borrar|quita|quitar|elimina|eliminar)$/;
+
 export function runCronCommand(deps: CronCommandDeps, args: string): string {
   const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
   const sub = (subRaw ?? '').toLowerCase();
@@ -381,7 +388,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     ].join('\n');
   }
 
-  if (sub === 'del' || sub === 'borra' || sub === 'rm') {
+  if (BORRAR_SUB.test(sub)) {
     const name = rest.trim();
     if (!name) {
       const names = routineNames(deps);
@@ -406,7 +413,13 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     return `Rutina "${name}" borrada: no habrá nuevas ejecuciones. Si hay una en marcha ahora mismo, puede terminar y llegar su mensaje.`;
   }
 
-  if (sub === 'pausa' || sub === 'pause' || sub === 'reanuda' || sub === 'reanudar') {
+  if (
+    sub === 'pausa' ||
+    sub === 'pausar' ||
+    sub === 'pause' ||
+    sub === 'reanuda' ||
+    sub === 'reanudar'
+  ) {
     const resuming = sub === 'reanuda' || sub === 'reanudar';
     const name = rest.trim();
     if (!name) {
