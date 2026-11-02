@@ -403,8 +403,13 @@ import {
   isCommandRoutine,
 } from './command-routine.js';
 import { fetchGoQuota } from './core/go-quota.js';
-import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
-import { formatGoQuota, formatUsageReport, parseUsageDays } from './core/usage-format.js';
+import { dailyBudgetExceeded, recentTurns, recordUsage, usageReport } from './core/usage.js';
+import {
+  formatGoQuota,
+  formatTurnList,
+  formatUsageReport,
+  parseUsageDays,
+} from './core/usage-format.js';
 import { envHashDoctorLine } from './doctor-env-hash.js';
 import { envUnknownKeysDoctorLine } from './doctor-env-keys.js';
 import { envLinesDoctorLine } from './doctor-env-lines.js';
@@ -5728,6 +5733,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** /consumo [hoy|semana|mes|N]: tokens y coste estimado por día y modelo (solo lectura). */
   const cmdConsumo = async (inbound: Inbound, args: string): Promise<void> => {
+    // /uso turnos: los últimos turnos uno a uno, con su composición.
+    if (/^turnos?$/i.test(args.trim())) {
+      await say(inbound, formatTurnList(recentTurns(5)), { quote: true });
+      return;
+    }
     const days = parseUsageDays(args);
     if (days === null) {
       preguntas.ask(chatKey(inbound), 'consumo', { accepts: (t) => parseUsageDays(t) !== null });
@@ -7156,6 +7166,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         priceOverrides: usedModel === config.model,
         inputTokens: result.inputTokens ?? 0,
         outputTokens: result.outputTokens ?? 0,
+        cacheReadTokens: result.cacheReadTokens ?? 0,
         kind: 'turn',
         context: thread.agent.contextEstimate(),
       });

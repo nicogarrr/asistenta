@@ -15,7 +15,7 @@ delete process.env.PA_PRICE_OUTPUT_PER_MTOK;
 
 const usage = await import('../src/core/usage.js');
 const { contextComposition } = await import('../src/core/history.js');
-const { formatContextAvg, formatGoQuota, formatUsageReport } = await import(
+const { formatContextAvg, formatGoQuota, formatTurnList, formatUsageReport } = await import(
   '../src/core/usage-format.js'
 );
 const { fetchGoQuota, parseGoQuota, resetGoQuotaCache } = await import('../src/core/go-quota.js');
@@ -215,5 +215,65 @@ describe('fetchGoQuota', () => {
     ok = false;
     resetGoQuotaCache();
     expect(await fetchGoQuota('https://opencode.ai/zen/go/v1', deps)).toBeNull();
+  });
+});
+
+describe('últimos turnos (/uso turnos)', () => {
+  it('recentTurns devuelve los más recientes con su cache y contexto', () => {
+    const rec = usage.recordUsage({
+      sessionId: 'turnos',
+      model: 'deepseek-v4.1-flash',
+      inputTokens: 1234,
+      outputTokens: 56,
+      cacheReadTokens: 400,
+      kind: 'turn',
+      context: { system: 100, memory: 20, history: 300, tools: 40 },
+    });
+    const list = usage.recentTurns(5);
+    expect(list.length).toBeGreaterThan(0);
+    expect(list[0].ts >= rec.ts).toBe(true);
+    const found = list.find((r) => r.sessionId === 'turnos');
+    expect(found?.cacheReadTokens).toBe(400);
+    expect(found?.context?.history).toBe(300);
+  });
+
+  it('formatTurnList muestra in/out medidos, cache y composición estimada', () => {
+    const text = formatTurnList([
+      {
+        ts: '2026-11-02T13:05:00.000Z',
+        day: '2026-11-02',
+        sessionId: 's',
+        model: 'm1',
+        inputTokens: 1234,
+        outputTokens: 56,
+        cacheReadTokens: 400,
+        kind: 'turn',
+        costEur: 0,
+        costMicros: 0,
+        context: { system: 100, memory: 20, history: 300, tools: 40 },
+      },
+      {
+        ts: '2026-11-02T13:04:00.000Z',
+        day: '2026-11-02',
+        sessionId: 's',
+        model: 'm1',
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        kind: 'turn',
+        costEur: 0,
+        costMicros: 0,
+      },
+    ]);
+    expect(text).toContain('medidos');
+    expect(text).toContain('estimada');
+    expect(text).toContain('1.234 in / 56 out (caché 400)');
+    expect(text).toContain('historial 300');
+    expect(text).toContain('13:04 m1: 10 in / 5 out');
+    expect(text).not.toContain('5 out (caché');
+  });
+
+  it('formatTurnList sin registros lo dice claro', () => {
+    expect(formatTurnList([])).toBe('Aún no hay turnos registrados.');
   });
 });
