@@ -6,6 +6,9 @@
  * the model once into `paths.models` and every run after that is offline.
  */
 
+import { existsSync } from 'node:fs';
+import { totalmem } from 'node:os';
+import { join } from 'node:path';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { withTimeout } from '../utils.js';
@@ -18,6 +21,8 @@ export interface SttResult {
   durationSeconds: number;
   /** Set when the audio was longer than the decode cap and only its head was read. */
   truncated?: boolean;
+  /** Aviso para el dueño (una vez): se está bajando el modelo grande. */
+  notice?: string;
 }
 
 export interface Stt {
@@ -108,21 +113,60 @@ export function splitUtteranceGaps(
 }
 
 /**
- * `onnx-community/whisper-small`, quantised.
+ * `onnx-community/whisper-small`, quantised: el respaldo de las notas de voz y el
+ * modelo de la palabra de activación (wake.ts), que necesita una pasada rápida cada
+ * segundo y medio.
  *
- * small rather than base since 2-nov-2026: «pon en YouTube Bailando de Enrique
+ * small en vez de base desde el 2-nov-2026: «pon en YouTube Bailando de Enrique
  * Iglesias» dicho por Nico salía «ponen tu tuf en el ordenador bailando de
- * entrecigulos», y una orden mal oída no va. Medido con la misma nota real suya,
- * base oía «Enrique Iglesias» como «regularistas»; con 72 órdenes sintéticas
- * (3 voces, con y sin ruido) small + pista + margen de silencio baja el WER de
- * ~33 % a ~10 %. Es el mismo checkpoint que ya usa la palabra de activación
- * (wake.ts), así que en un PC con la palabra encendida no hay descarga nueva.
- * Cuesta unas 3x la CPU de base: unos segundos por nota, no un atasco.
+ * entrecigulos». Con 74 notas de prueba (órdenes sintéticas en 3 voces castellanas,
+ * con y sin ruido, más 2 notas reales suyas) small + pista + margen de silencio baja
+ * el WER de ~34 % a ~8 %.
  *
  * Must stay multilingual: the `whisper-*.en` checkpoints cannot do Spanish at all
  * and the pipeline returns English-shaped noise rather than failing loudly.
  */
-export const DEFAULT_STT_MODEL = 'onnx-community/whisper-small';
+export const SMALL_STT_MODEL = 'onnx-community/whisper-small';
+
+/**
+ * `onnx-community/whisper-large-v3-turbo` (MIT), quantised: el modelo de las notas de
+ * voz por defecto desde el 2-nov-2026 (Nico: el mejor modelo libre, «me da igual lo
+ * que pese»). Medido con las mismas 74 notas: con la voz real de Nico es el único que
+ * oye «Enrique Iglesias» (WER 12,5 % frente a 33 % de small y 17 % de medium); una
+ * nota de 4-9 s tarda unos 2,5-3,5 s con 4 núcleos de CPU (small ~1-2 s; medium el
+ * doble que turbo y 6,6 GB). Pesa 1,1 GB de descarga (una vez) y ~3 GB de RAM.
+ */
+export const TURBO_STT_MODEL = 'onnx-community/whisper-large-v3-turbo';
+
+export const DEFAULT_STT_MODEL = TURBO_STT_MODEL;
+
+/** Con menos RAM total que esto, el modelo grande no compensa: small. */
+export const TURBO_MIN_RAM_BYTES = 8 * 1024 ** 3;
+
+/**
+ * El modelo de las notas de voz: `PA_STT_MODEL=turbo|small` manda; sin elegir, turbo
+ * salvo en un PC con poca RAM.
+ */
+export function sttModelFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  totalMem: number = totalmem(),
+): string {
+  const raw = (env.PA_STT_MODEL ?? '').trim().toLowerCase();
+  if (raw === 'small') return SMALL_STT_MODEL;
+  if (raw === 'turbo') return TURBO_STT_MODEL;
+  if (raw) log.warn('PA_STT_MODEL desconocido; uso el de por defecto', { value: raw });
+  return totalMem < TURBO_MIN_RAM_BYTES ? SMALL_STT_MODEL : TURBO_STT_MODEL;
+}
+
+/** El modelo (q8) ya está en la carpeta de modelos: cargarlo no necesita internet. */
+export function whisperCached(model: string, root: string = paths.models): boolean {
+  const dir = join(root, ...model.split('/'));
+  return (
+    existsSync(join(dir, 'config.json')) &&
+    existsSync(join(dir, 'onnx', 'encoder_model_quantized.onnx')) &&
+    existsSync(join(dir, 'onnx', 'decoder_model_merged_quantized.onnx'))
+  );
+}
 
 /**
  * Pista para whisper (el «initial prompt»): vocabulario de las órdenes de todos los
@@ -385,7 +429,7 @@ async function transcribeShort(
 }
 
 export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
-  const model = opts.model ?? DEFAULT_STT_MODEL;
+  const model = opts.model ?? SMALL_STT_MODEL;
 
   return {
     name: `whisper:${model}`,
@@ -461,6 +505,62 @@ export class SttError extends Error {
   }
 }
 
+/** Modelos ya cargados en memoria en este proceso. */
+const readyModels = new Set<string>();
+/** Última descarga del modelo grande que falló: no se reintenta antes de 10 min. */
+let bigFailedAt = 0;
+const BIG_RETRY_MS = 10 * 60_000;
+/** El aviso de descarga se da una vez por proceso. */
+let downloadNoticeGiven = false;
+
+export const STT_DOWNLOAD_NOTICE =
+  'Descargando el modelo de voz grande (1,1 GB, solo esta vez). Mientras tanto, tus audios van con el pequeño.';
+
+export interface SttDeps {
+  env?: NodeJS.ProcessEnv;
+  totalMem?: number;
+  isCached?: (model: string) => boolean;
+  now?: () => number;
+}
+
+/** Solo para tests: vuelve al estado de un proceso recién arrancado. */
+export function resetSttStateForTests(): void {
+  readyModels.clear();
+  inflight.clear();
+  bigFailedAt = 0;
+  downloadNoticeGiven = false;
+}
+
+/**
+ * Qué modelo transcribe esta nota. El grande solo si ya está en el disco o en
+ * memoria: si falta, se baja en segundo plano y esta nota va con small, para que la
+ * primera nota no espere minutos a una descarga de 1,1 GB.
+ */
+function pickModel(deps: SttDeps): { model: string; notice?: string } {
+  const preferred = sttModelFromEnv(deps.env ?? process.env, deps.totalMem ?? totalmem());
+  if (preferred === SMALL_STT_MODEL || readyModels.has(preferred)) return { model: preferred };
+  const now = (deps.now ?? Date.now)();
+  const recentlyFailed = now - bigFailedAt < BIG_RETRY_MS;
+  const cached = (deps.isCached ?? whisperCached)(preferred);
+  if (cached && !recentlyFailed) return { model: preferred };
+  if (cached) return { model: SMALL_STT_MODEL };
+  if (!inflight.has(preferred) && !recentlyFailed) {
+    log.info('stt big model download start', { model: preferred });
+    loadWhisperPipeline(preferred)
+      .then(() => {
+        readyModels.add(preferred);
+        log.info('stt big model ready', { model: preferred });
+      })
+      .catch((err: unknown) => {
+        bigFailedAt = (deps.now ?? Date.now)();
+        log.warn('stt big model download failed; small stays', { error: String(err) });
+      });
+  }
+  if (downloadNoticeGiven) return { model: SMALL_STT_MODEL };
+  downloadNoticeGiven = true;
+  return { model: SMALL_STT_MODEL, notice: STT_DOWNLOAD_NOTICE };
+}
+
 /**
  * Transcribe a voice note with the local model, reporting failures in Spanish.
  *
@@ -471,11 +571,26 @@ export class SttError extends Error {
 export async function transcribeVoiceNote(
   input: Buffer,
   opts: { mimeType?: string } = {},
+  deps: SttDeps = {},
 ): Promise<SttResult> {
   if (input.length === 0) throw new SttError('la nota de voz llegó vacía');
 
+  let { model, notice } = pickModel(deps);
   try {
-    return await createLocalWhisperStt().transcribe(input, opts);
+    if (model !== SMALL_STT_MODEL) {
+      try {
+        await loadWhisperPipeline(model);
+      } catch (err) {
+        // El grande no carga (archivo a medias, sin memoria…): esta nota va con small y
+        // no se vuelve a intentar hasta dentro de un rato.
+        log.warn('stt big model failed; using small', { error: String(err) });
+        bigFailedAt = (deps.now ?? Date.now)();
+        model = SMALL_STT_MODEL;
+      }
+    }
+    const result = await createLocalWhisperStt({ model }).transcribe(input, opts);
+    readyModels.add(model);
+    return notice ? { ...result, notice } : result;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     log.warn('stt failed', { error: detail });

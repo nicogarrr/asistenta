@@ -51,11 +51,14 @@ import { log } from '../log.js';
 import { listCaptureDevices } from '../screen/media.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { WHISPER_SAMPLE_RATE } from './audio.js';
-import { DEFAULT_STT_MODEL, loadWhisperPipeline } from './stt.js';
+import { loadWhisperPipeline, SMALL_STT_MODEL } from './stt.js';
 import { OWW_FRAME_SAMPLES, OwwWakeDetector } from './wakeword-oww.js';
 
-/** Same checkpoint as `src/voice/stt.ts`, and for the same reason: `whisper-*.en` cannot do Spanish. */
-const DEFAULT_MODEL = DEFAULT_STT_MODEL;
+/**
+ * whisper-small (el respaldo de las notas de voz, compartido en memoria con ellas): la
+ * palabra de activación necesita una pasada rápida y multilingüe, no el modelo grande.
+ */
+const DEFAULT_MODEL = SMALL_STT_MODEL;
 
 /**
  * Default wake word. The user's word for their assistant, in Spanish.
