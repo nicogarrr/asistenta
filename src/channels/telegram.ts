@@ -434,6 +434,10 @@ export class TelegramChannel implements ChannelAdapter {
         ? this.#resolveReply(String(msg.chat?.id), String(msg.reply_to_message.message_id))
         : undefined,
     };
+    // Un reenvío lo escribió otra persona: sin marca, «¿quedamos el jueves?» de un amigo
+    // parecía una petición del dueño y un «/…» reenviado se tomaba por comando suyo.
+    const forwarded = forwardedLabel(msg);
+    if (forwarded && inbound.text) inbound.text = `${forwarded}\n${inbound.text}`;
 
     if (incomingAudio) {
       inbound.audioFileId = incomingAudio.file_id;
@@ -2151,6 +2155,29 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('checklist' in msg)
     return 'Aún no sé leer listas de tareas de Telegram. Escríbemelas como texto.';
   return null;
+}
+
+/**
+ * Marca de un mensaje reenviado, con el nombre que Telegram deja ver (persona,
+ * remitente oculto, canal o grupo), o null si no es un reenvío. Empieza por «[», así
+ * que el texto marcado nunca se toma por un comando.
+ */
+export function forwardedLabel(msg: object): string | null {
+  if (!('forward_origin' in msg)) return null;
+  const origin = (msg as { forward_origin?: unknown }).forward_origin as
+    | {
+        sender_user?: { first_name?: string; last_name?: string };
+        sender_user_name?: string;
+        chat?: { title?: string };
+      }
+    | undefined;
+  if (!origin) return null;
+  const user = origin.sender_user;
+  const raw = user
+    ? [user.first_name, user.last_name].filter(Boolean).join(' ')
+    : (origin.sender_user_name ?? origin.chat?.title ?? '');
+  const name = sliceSafe(raw.replace(/[\s[\]]+/g, ' ').trim(), 60).trim();
+  return name ? `[Mensaje reenviado de ${name}]` : '[Mensaje reenviado]';
 }
 
 /** Aviso para un vídeo, GIF o contenido de pago que llega con texto: se contesta solo al texto. */
