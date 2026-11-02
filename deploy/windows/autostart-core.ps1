@@ -50,9 +50,33 @@ function Invoke-BoundedProgram {
         return @{Code=$p.ExitCode;Output=$out.GetAwaiter().GetResult()}
     }finally{$p.Dispose()}
 }
+# Preset del modelo con las reglas de Asistenta (scripts/instalar.mjs presetFromEnv): la variable
+# del sistema gana al .env, en el .env gana la última línea, vacío es «opencode», da igual
+# mayúsculas. Solo «opencode-local» usa el contenedor de Docker; con la nube no se toca Docker.
+function Get-ProviderPreset {
+    param([string]$RepoDir,[string]$EnvValue=$env:PA_PROVIDER_PRESET)
+    $v=if($EnvValue){$EnvValue.Trim()}else{''}
+    if(-not $v -and $RepoDir){
+        $file=Join-Path $RepoDir '.env'
+        if(Test-Path -LiteralPath $file -PathType Leaf){
+            try{
+                foreach($line in @(Get-Content -LiteralPath $file -ErrorAction Stop)){
+                    if($line -cmatch '^\s*(?:export\s+)?PA_PROVIDER_PRESET\s*=\s*(.*)$'){
+                        $raw=$Matches[1].Trim()
+                        if($raw -match '^"([^"]*)"' -or $raw -match "^'([^']*)'"){$raw=$Matches[1]}else{$raw=($raw -replace '\s+#.*$','')}
+                        $v=$raw.Trim()
+                    }
+                }
+            }catch{$v=''}
+        }
+    }
+    if(-not $v){return 'opencode'}
+    return $v.ToLowerInvariant()
+}
 function Start-OptionalOpenCode {
-    param([bool]$Enabled)
+    param([bool]$Enabled,[string]$Preset='opencode-local')
     if(-not $Enabled){return 'disabled'}
+    if($Preset -ne 'opencode-local'){return 'not-configured'}
     $docker=Get-Command docker.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if(-not $docker){return 'docker-missing'}
     try {

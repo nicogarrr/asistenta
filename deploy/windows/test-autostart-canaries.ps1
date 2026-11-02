@@ -59,6 +59,21 @@ function Invoke-BoundedProgram {
  throw 'Unexpected mutation'
 }
 Assert ((Start-OptionalOpenCode $false) -eq 'disabled' -and $script:programs.Count -eq 0) 'explicit opt-out no docker'
+# Nube (2 nov): sin PA_PROVIDER_PRESET=opencode-local no se abre Docker ni se arranca el contenedor.
+foreach($p in @('opencode','openrouter','')){Assert ((Start-OptionalOpenCode $true $p) -eq 'not-configured' -and $script:programs.Count -eq 0) "cloud preset '$p' never touches docker"}
+Assert ((Start-OptionalOpenCode $false 'opencode-local') -eq 'disabled' -and $script:programs.Count -eq 0) 'explicit opt-out still wins'
+$envDir=Join-Path ([IO.Path]::GetTempPath()) ('pa-preset-'+[guid]::NewGuid())
+New-Item -ItemType Directory -Path $envDir | Out-Null
+try{
+ Assert ((Get-ProviderPreset $envDir '') -eq 'opencode') 'no .env is the cloud default'
+ Set-Content -LiteralPath (Join-Path $envDir '.env') -Value @('PA_PROVIDER_PRESET=opencode-local','PA_PROVIDER_PRESET= OpenCode ')
+ Assert ((Get-ProviderPreset $envDir '') -eq 'opencode') 'last .env line wins, trimmed, any case'
+ Set-Content -LiteralPath (Join-Path $envDir '.env') -Value @('# PA_PROVIDER_PRESET=opencode','PA_PROVIDER_PRESET="OpenCode-Local" # docker')
+ Assert ((Get-ProviderPreset $envDir '') -eq 'opencode-local') 'quoted value, comment line ignored'
+ Assert ((Get-ProviderPreset $envDir ' openrouter ') -eq 'openrouter') 'system variable wins over .env'
+ Set-Content -LiteralPath (Join-Path $envDir '.env') -Value @('PA_PROVIDER_PRESET=')
+ Assert ((Get-ProviderPreset $envDir '') -eq 'opencode') 'empty value is the cloud default'
+}finally{Remove-Item -LiteralPath $envDir -Recurse -Force}
 Assert ((Start-OptionalOpenCode $true) -eq 'container-missing') 'missing optional LLM degrades'
 Assert (($script:programs -join '|') -notmatch '(^|\|)(start|run|rm|pull) ') 'missing container never created'
 $script:programs=@()

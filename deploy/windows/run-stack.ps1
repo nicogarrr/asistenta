@@ -11,7 +11,8 @@ try {
   [void](Wait-LocalService 'browserd' 20)
  }
 }catch{}
-$llm=Start-OptionalOpenCode $EnableLocalLlm
+# Docker/OpenCode local solo con PA_PROVIDER_PRESET=opencode-local; con la nube, ni se abre Docker.
+$llm=Start-OptionalOpenCode $EnableLocalLlm (Get-ProviderPreset $RepoDir)
 # A failed/missing optional dependency does not prevent Telegram, heartbeat or other daemon services.
 $env:PA_AUTOSTART_LLM_STATUS=$llm
 $env:PA_AUTOSTART_SUPERVISE='1'
