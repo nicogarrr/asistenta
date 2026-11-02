@@ -394,7 +394,11 @@ async function cuentasRun(
     }
     const data = a1 === 'keepass' ? toKeePassCsv(rows) : toBitwardenJson(rows);
     (deps.write ?? ((p, d) => writeFileSync(p, d, { mode: 0o600 })))(a2, data);
-    out(`Exportadas ${rows.length} cuentas a ${a2}.`);
+    out(
+      rows.length === 1
+        ? `Exportada 1 cuenta a ${a2}.`
+        : `Exportadas ${rows.length} cuentas a ${a2}.`,
+    );
     return 0;
   }
   if (sub === 'borrar' && a1) return borrar(a1, vault, deps, out);
