@@ -546,7 +546,7 @@ export function createGestionTool(deps: GestionToolDeps): AgentTool<ReturnType<t
             return reply(err instanceof Error ? err.message : String(err), true);
           }
           return reply(
-            `Gestión "${gestion.title}" terminada. ${gestion.ledger.length} pasos registrados. ` +
+            `Gestión "${gestion.title}" terminada. ${gestion.ledger.length} ${gestion.ledger.length === 1 ? 'paso registrado' : 'pasos registrados'}. ` +
               'Si el sitio enseñó algo reusable (flujo de login, selectores que funcionaron, esperas), ' +
               'guárdalo con gestion:playbook_guardar - la próxima gestión en ese dominio lo leerá al preparar el plan.',
           );

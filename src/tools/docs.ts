@@ -192,7 +192,7 @@ export function createDocsTool(
                   ? docs
                       .map(
                         (d) =>
-                          `- [${d.docId}] ${d.title} (${kindLabel(d.mimeType)}, ${d.chunks} fragmentos${d.truncated ? ', indexado parcial' : ''})`,
+                          `- [${d.docId}] ${d.title} (${kindLabel(d.mimeType)}, ${d.chunks} ${d.chunks === 1 ? 'fragmento' : 'fragmentos'}${d.truncated ? ', indexado parcial' : ''})`,
                       )
                       .join('\n')
                   : 'Este chat todavía no tiene documentos en la memoria.',
