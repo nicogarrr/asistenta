@@ -25,6 +25,11 @@ describe('icono de la bandeja', () => {
     ])
       expect(tray).toContain(`.Items.Add('${o}')`);
     expect(tray).toContain("'Pausar' } else { 'Reanudar' }");
+    // Reanudar/Reiniciar esperan activamente al arranque (hasta 90 s) en vez de
+    // un sleep fijo de 3-5 s: el punto rojo durante el arranque parecía botón roto.
+    expect(tray).toContain('function Wait-Encendida');
+    expect(tray).toContain('if (Wait-Encendida)');
+    expect(tray).toContain('puede tardar un minuto');
   });
 
   it('cada opción usa solo órdenes de pa', () => {
