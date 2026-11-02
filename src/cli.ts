@@ -351,6 +351,7 @@ function delegateTool(
   threadTools?: () => readonly AgentTool[],
   approve?: (question: string) => Promise<boolean>,
   background?: (job: BackgroundJob) => boolean,
+  owner?: string,
 ): AgentTool {
   delegateWiring ??= createDelegateWiring({
     config,
@@ -359,7 +360,7 @@ function delegateTool(
     parentTools: () => [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[],
   });
   return threadTools
-    ? delegateWiring.forThread(threadTools, approve, background)
+    ? delegateWiring.forThread(threadTools, approve, background, owner)
     : delegateWiring.tool;
 }
 
@@ -2360,6 +2361,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           chatId: chatIdOf(thread.chatKey),
         }),
         (job) => startBackgroundDelegate(thread, job),
+        // Los especialistas marcan «ocupada» a nombre de este chat (/stop de otro no los suelta).
+        thread.chatKey,
       ),
       // Each thread has its own gate and its own session key, so batch sub-actions
       // are policed by THIS conversation's approvals and an unwired gate never
