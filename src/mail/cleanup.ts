@@ -101,7 +101,7 @@ export function describeSelection(
   for (const [sender, list] of senders.slice(0, 8)) {
     const examples = list
       .slice(0, 2)
-      .map((m) => `«${m.subject.replace(/\s+/g, ' ').slice(0, 50)}»`)
+      .map((m) => `«${sliceSafe(m.subject.replace(/\s+/g, ' '), 50)}»`)
       .join(', ');
     lines.push(`• ${sender}: ${list.length} (p. ej. ${examples})`);
   }
