@@ -43,9 +43,9 @@ export function parseAltavozArgs(args: string): AltavozArgs {
 export function altavozStatusText(mode: AltavozMode): string {
   switch (mode) {
     case 'pc':
-      return '🔊 Altavoz activado: tus notas de voz sonarán en el PC al llegar. Si quieres quitarlo, dime «apágalo».';
+      return '🔊 Altavoz activado: tus notas de voz solo sonarán en el PC al llegar (no las transcribo ni contesto). Para hablarme, escríbeme o dime «apágalo».';
     case 'tele':
-      return '📺 Altavoz activado en la tele: tus notas de voz sonarán en la tele al llegar. Si quieres quitarlo, dime «apágalo».';
+      return '📺 Altavoz activado en la tele: tus notas de voz solo sonarán en la tele al llegar (no las transcribo ni contesto). Para hablarme, escríbeme o dime «apágalo».';
     default:
       return '🔇 Altavoz apagado. Si quieres que tus notas de voz suenen solas, dime «por el PC» o «por la tele».';
   }

@@ -9,7 +9,11 @@ import {
   parseAltavozArgs,
   stopReplyText,
 } from '../src/audio/altavoz.js';
-import { type AltavozInbound, routeInboundToAltavoz } from '../src/audio/altavoz-inbound.js';
+import {
+  type AltavozInbound,
+  altavozConfirmText,
+  routeInboundToAltavoz,
+} from '../src/audio/altavoz-inbound.js';
 import { resetTeleFirewallWarning, TV_FIREWALL_HINT } from '../src/audio/tv-cast.js';
 
 /**
@@ -34,6 +38,7 @@ let played: string[];
 let cast: string[];
 let downloads: string[];
 let replies: string[];
+let confirmations: string[];
 let tvHits: number;
 let pcGate: Promise<void> | null;
 
@@ -58,9 +63,12 @@ function setup(opts: { tele?: boolean } = {}) {
     remove: () => {},
     noFetchMs: 1_000,
   });
-  const deliver = (inbound: AltavozInbound, desktop = true) =>
-    routeInboundToAltavoz(inbound, {
-      mode: store.get(`telegram:dm:${inbound.chatId}`),
+  // Como el daemon: con el altavoz encendido la nota solo suena (megáfono) y la
+  // confirmación corta la manda el daemon; aquí la modela el deliver.
+  const deliver = (inbound: AltavozInbound, desktop = true) => {
+    const mode = store.get(`telegram:dm:${inbound.chatId}`);
+    const res = routeInboundToAltavoz(inbound, {
+      mode,
       desktop,
       ownerUserId: OWNER,
       player,
@@ -71,6 +79,9 @@ function setup(opts: { tele?: boolean } = {}) {
       reply: (text) => replies.push(text),
       key: `telegram:dm:${inbound.chatId}`,
     });
+    if (res === 'queued' && mode !== 'off') confirmations.push(altavozConfirmText(mode));
+    return res;
+  };
   return { player, deliver };
 }
 
@@ -86,6 +97,7 @@ beforeEach(() => {
   cast = [];
   downloads = [];
   replies = [];
+  confirmations = [];
   tvHits = 0;
   pcGate = null;
   resetTeleFirewallWarning();
@@ -97,13 +109,22 @@ afterEach(() => {
 });
 
 describe('e2e altavoz', () => {
-  it('/altavoz pc y una nota del dueño en privado suena en el PC sin contestar nada', async () => {
+  it('/altavoz pc y una nota del dueño en privado suena en el PC y solo confirma «sonó»', async () => {
     const { player, deliver } = setup();
     altavoz(ownerKey, 'pc');
     expect(deliver(voice())).toBe('queued');
     await player.idle();
     expect(played).toEqual(['/tmp/voz-1.mp3']);
+    expect(confirmations).toEqual(['🔊 Sonó en el PC.']);
     expect(replies).toEqual([]);
+  });
+
+  it('/altavoz tele: la confirmación corta dice «Sonó en la tele»', async () => {
+    const { player, deliver } = setup({ tele: true });
+    altavoz(ownerKey, 'tele');
+    expect(deliver(voice())).toBe('queued');
+    await player.idle();
+    expect(confirmations).toEqual(['📺 Sonó en la tele.']);
   });
 
   it('el modo sobrevive a un reinicio (se lee del fichero)', async () => {
