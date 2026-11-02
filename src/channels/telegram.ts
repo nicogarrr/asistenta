@@ -439,6 +439,10 @@ export class TelegramChannel implements ChannelAdapter {
     const forwarded = forwardedLabel(msg);
     if (forwarded && inbound.text) inbound.text = `${forwarded}\n${inbound.text}`;
     if (forwarded) inbound.forwardedFrom = forwarded;
+    const replyQuote = msg.reply_to_message
+      ? replyQuoteNote(msg.reply_to_message, ctx.me?.id)
+      : null;
+    if (replyQuote) inbound.replyQuote = replyQuote;
 
     if (incomingAudio) {
       inbound.audioFileId = incomingAudio.file_id;
@@ -2179,6 +2183,39 @@ export function forwardedLabel(msg: object): string | null {
     : (origin.sender_user_name ?? origin.chat?.title ?? '');
   const name = sliceSafe(raw.replace(/[\s[\]]+/g, ' ').trim(), 60).trim();
   return name ? `[Mensaje reenviado de ${name}]` : '[Mensaje reenviado]';
+}
+
+/**
+ * Cita del mensaje al que se responde, para el modelo: quién lo escribió (o de quién era
+ * el reenvío) y su texto en una línea, acotado. Empieza por «[», así que nunca se toma
+ * por un comando; es contexto citado, no una petición. null si no tiene texto.
+ */
+export function replyQuoteNote(reply: object, botId?: number): string | null {
+  const r = reply as {
+    text?: string;
+    caption?: string;
+    from?: { id?: number; first_name?: string; last_name?: string };
+  };
+  const raw = (r.text ?? r.caption ?? '').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  const cut = sliceSafe(raw, 300);
+  const quoted = cut.length < raw.length ? `${cut.trimEnd()}…` : cut;
+  const forwarded = forwardedLabel(reply);
+  let who: string;
+  if (forwarded) who = `un ${forwarded.slice(1, -1).replace(/^Mensaje/, 'mensaje')}`;
+  else if (botId !== undefined && r.from?.id === botId) who = 'tu mensaje';
+  else {
+    const name = sliceSafe(
+      [r.from?.first_name, r.from?.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/[\s[\]]+/g, ' ')
+        .trim(),
+      60,
+    ).trim();
+    who = name ? `un mensaje de ${name}` : 'un mensaje';
+  }
+  return `[Respondiendo a ${who}: «${quoted}»]`;
 }
 
 /** Aviso para un vídeo, GIF o contenido de pago que llega con texto: se contesta solo al texto. */
