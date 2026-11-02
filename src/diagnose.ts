@@ -94,7 +94,7 @@ export interface DiagnoseState {
   heartbeatAgeMs: number | null;
   version: string | null;
   node: string;
-  /** Por qué se cerró la vez anterior (ultimo-cierre.json), con el error si lo hubo. */
+  /** Por qué se cerró la vez anterior (ultimo-cierre.estado), con el error si lo hubo. */
   lastExit?: { at: string; reason: string; error?: string; stack?: string };
   /** Qué tarea o permiso mantiene a Asistenta «ocupada» ahora (misma fuente que la actualización). */
   busy?: string;
@@ -513,7 +513,7 @@ export async function diagnose(deps: DiagnoseInput = {}): Promise<DiagnoseReport
     node: process.version,
   };
   try {
-    const ex = JSON.parse(readFileSync(join(stateDir, 'ultimo-cierre.json'), 'utf8')) as {
+    const ex = JSON.parse(readFileSync(join(stateDir, 'ultimo-cierre.estado'), 'utf8')) as {
       at?: string;
       reason?: string;
       error?: { name?: string; message?: string; stack?: string; repeated?: number };
