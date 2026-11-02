@@ -18,7 +18,9 @@ import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.j
 import { loadKnownTvs, relocateMovedTvs, saveTvClientKey } from '../tv/known-tvs.js';
 import { tvKey, tvRequest, tvScreenshot, tvToast } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
+import type { KnownTv } from '../tv/registry.js';
 import { rokuDriver } from '../tv/roku.js';
+import { samsungDriver } from '../tv/samsung.js';
 import { readTvStatus } from '../tv/status.js';
 import {
   currentTvTarget,
@@ -86,9 +88,10 @@ export function tvToolDeps(store: Store): TvToolDeps {
         err: String(err),
       });
     }
-    if ((await vaultGet('tv:activeBrand')) === 'roku') {
+    const activeBrand = await vaultGet('tv:activeBrand');
+    if (activeBrand === 'roku' || activeBrand === 'samsung') {
       throw new Error(
-        'La tele activa es un Roku: dale la orden en palabras (action=command, p. ej. "baja el volumen"); esta accion es de las LG.',
+        `La tele activa es ${activeBrand === 'roku' ? 'un Roku' : 'una Samsung'}: dale la orden en palabras (action=command, p. ej. "baja el volumen"); esta accion es de las LG.`,
       );
     }
     const host = await vaultGet('tv:host');
@@ -161,16 +164,24 @@ export function tvToolDeps(store: Store): TvToolDeps {
     const found = extractTvTarget(text, known);
     const direct = <T>(fn: () => Promise<T>) => fn();
     if (found.ask) return { text, ask: found.ask, run: direct };
-    // Un Roku (nombrado, o el activo sin nombrar) va por su driver ECP, nunca por SSAP.
+    // Roku y Samsung (nombrados, o la activa sin nombrar) van por su driver, nunca por SSAP.
     const activeTv = known.find((t) => t.host === active);
-    const tv = found.tv ?? (activeTv?.brand === 'roku' ? activeTv : undefined);
-    if (tv?.brand === 'roku') {
-      const roku = tv;
+    const isOther = (t: KnownTv | undefined) => t?.brand === 'roku' || t?.brand === 'samsung';
+    const tv = found.tv ?? (isOther(activeTv) ? activeTv : undefined);
+    if (tv && isOther(tv)) {
+      const other = tv;
+      const driver =
+        other.brand === 'roku'
+          ? rokuDriver(other.host)
+          : samsungDriver(
+              { host: other.host, token: other.clientKey, secure: other.secure === '1' },
+              { mac: other.mac, onToken: (key) => saveTvClientKey(other.host, key) },
+            );
       return {
         text: found.text,
-        label: tvTargetLabel(roku),
+        label: tvTargetLabel(other),
         run: direct,
-        intentRunner: (intent) => runIntentOnDriver(rokuDriver(roku.host), intent),
+        intentRunner: (intent) => runIntentOnDriver(driver, intent),
       };
     }
     if (!tv || tv.host === active) {

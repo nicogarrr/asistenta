@@ -659,6 +659,7 @@ Uso:
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
   pa vigilancias [--json]  qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
   pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez; sin IP la busca)
+  pa tv setup-samsung <ip>  emparejar una Samsung Tizen de la wifi (acepta el aviso en la tele, una vez)
   pa tv setup-roku <ip>   guardar un Roku (o tele con Roku) de la wifi; sin emparejar, por su API local
   pa tv buscar            buscar las teles de la wifi (LG y Sony) y reencontrar las que cambiaron de IP
   pa tv teles             listar las teles emparejadas (la activa, marcada)

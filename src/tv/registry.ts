@@ -10,7 +10,7 @@
 export interface KnownTv {
   host: string;
   /** Marca; las entradas viejas sin brand son LG (era la unica soportada). */
-  brand?: 'lg' | 'sony' | 'roku';
+  brand?: 'lg' | 'sony' | 'roku' | 'samsung';
   /** Nombre legible (del XML UPnP o el que le ponga el dueno). */
   name?: string;
   model?: string;
@@ -35,7 +35,8 @@ export function parseRegistry(raw: string | undefined | null): KnownTv[] {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
       const t = item as Record<string, unknown>;
       if (typeof t.host !== 'string' || !t.host.trim()) continue;
-      const brand = t.brand === 'sony' ? 'sony' : t.brand === 'roku' ? 'roku' : 'lg';
+      const brand =
+        t.brand === 'sony' || t.brand === 'roku' || t.brand === 'samsung' ? t.brand : 'lg';
       // La clave de emparejamiento solo aplica a LG (Sony usa PSK por host en el vault).
       if (brand === 'lg' && (typeof t.clientKey !== 'string' || !t.clientKey)) continue;
       out.push({
