@@ -585,6 +585,7 @@ import { stopSpokenReply } from './voice/stop-speech.js';
 import { SttError, transcribeVoiceNote } from './voice/stt.js';
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
+import { createTtsConVozLocal } from './voice/voz-local.js';
 import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
 import {
   COMPARE_WATCH_STALE,
@@ -1719,9 +1720,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     log.warn('correo canal sin arrancar', { reason: emailSetup.reason });
 
   const screen = new WindowsScreen();
-  const tts = createDefaultTts(process.env, {
-    onFallback: (err) => log.warn('tts fallback', { err }),
+  // Voz local (sherpa-onnx) primero; mientras se descarga o si falla, la de siempre.
+  const tts = createTtsConVozLocal(process.env, {
+    respaldo: createDefaultTts(process.env, {
+      onFallback: (err) => log.warn('tts fallback', { err }),
+    }),
+    onFallback: (err) => log.warn('voz local: fallback', { err }),
   });
+  // Al arrancar (también tras autoactualizar) baja la voz si falta o cambió; no bloquea.
+  void tts.precargar();
 
   /**
    * One mutex for everything that moves the machine. Reasoning runs outside it;
