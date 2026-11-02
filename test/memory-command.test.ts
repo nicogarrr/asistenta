@@ -21,7 +21,7 @@ describe('runMemoryCommand', () => {
     // Así guarda todo lo demás (contexto del turno, tool memory): chatKey#thread.
     store.remember('telegram:123#main', 'prefiere respuestas cortas');
     const reply = runMemoryCommand(store, 'telegram:123#main');
-    expect(reply).toContain('Recuerdo 1 cosas:');
+    expect(reply).toContain('Recuerdo 1 cosa:');
     expect(reply).toContain('prefiere respuestas cortas');
     // El scope viejo del comando: con la memoria llena decía no recordar nada.
     expect(runMemoryCommand(store, 'telegram:123')).toContain('No recuerdo nada');
@@ -33,9 +33,7 @@ describe('runMemoryCommand', () => {
       '(0 conversaciones con memoria)',
     );
     store.remember('telegram:999#main', 'un dato de otro chat');
-    expect(runMemoryCommand(store, 'telegram:123#main')).toContain(
-      '(1 conversaciones con memoria)',
-    );
+    expect(runMemoryCommand(store, 'telegram:123#main')).toContain('(1 conversación con memoria)');
   });
 });
 

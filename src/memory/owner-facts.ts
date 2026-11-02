@@ -96,8 +96,9 @@ export function aboutMeText(entries: readonly string[], max = 15): string {
     return 'Todavía no tengo nada apuntado sobre ti. Si me cuentas algo («mi dentista es…», «no me escribas antes de las 9»), lo apunto.';
   }
   const last = shown.slice(-max);
+  const hidden = shown.length - last.length;
   const more =
-    shown.length > last.length ? `\n(y ${shown.length - last.length} cosas más antiguas)` : '';
+    hidden > 0 ? `\n(y ${hidden} ${hidden === 1 ? 'cosa más antigua' : 'cosas más antiguas'})` : '';
   return `Esto es lo que sé de ti:\n${last.map((e) => `• ${e}`).join('\n')}${more}\n\nPara borrar algo: «olvida lo de …».`;
 }
 
