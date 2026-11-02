@@ -13,6 +13,7 @@ import {
   memoryScopesFor,
   scoreEntry,
 } from '../memory.js';
+import { sliceSafe } from '../text.js';
 
 /**
  * Long-term memory as a tool.
@@ -491,7 +492,7 @@ export function createMemoryTool(
               month: 'short',
               year: 'numeric',
             });
-            return `- [${when}] ${h.title}: ${(h.snippet || h.summary).replace(/\s+/g, ' ').slice(0, 220)}`;
+            return `- [${when}] ${h.title}: ${sliceSafe((h.snippet || h.summary).replace(/\s+/g, ' '), 220)}`;
           });
           return {
             content: [
