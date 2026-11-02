@@ -9,7 +9,12 @@ import {
   WATCHDOG_USAGE,
 } from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
-import { learnNameAnswer, PreguntasPendientes, SI_RESPUESTA } from './daemon/pregunta-pendiente.js';
+import {
+  learnNameAnswer,
+  PreguntasPendientes,
+  routineNameAnswer,
+  SI_RESPUESTA,
+} from './daemon/pregunta-pendiente.js';
 import {
   ERASE_BUSY_ASK,
   ERASE_PROMPT,
@@ -4029,7 +4034,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         return;
       }
       preguntas.ask(chatKey(inbound), 'routine', {
-        answer: (t) => names.find((n) => n.toLowerCase() === t.trim().toLowerCase()) ?? null,
+        answer: routineNameAnswer(names),
       });
       await say(inbound, `¿Qué rutina repito? Tienes: ${names.slice(0, 10).join(', ')}.`, {
         quote: true,
