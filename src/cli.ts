@@ -167,6 +167,7 @@ import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
 import { TurnAck, TurnSetbacks } from './daemon/turn-ack.js';
 import { parseVerdict, TurnWatchdog, turnWatchdogScan } from './daemon/turn-watchdog.js';
+import { pideVoz } from './daemon/voice-ask.js';
 import { voiceUtteranceTurn } from './daemon/voice-turn.js';
 import { applyConfiguredTimeZone, localDay, localTimeZone, wallHourMinute } from './datecontext.js';
 import { Store } from './db.js';
@@ -1815,7 +1816,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const fullControl = (await vaultGet('agent:fullControl')) === 'true';
   const ocrAvailability = desktop ? await ocrAvailable().catch(() => false) : false;
-  const voiceDefault = (await vaultGet('agent:voice')) !== 'off';
+  // Voz solo si Nico la pide (o activa /voz on): por defecto, texto.
+  const voiceDefault = (await vaultGet('agent:voice')) === 'on';
+  /** Mensajes en los que Nico pidió la respuesta en voz o dijo que conduce. */
+  const voiceAsked = new Set<string>();
 
   // Originals are kept in private state/media for the recall TTL and chat cap.
   // Handles and originals survive restart; no other chat can resolve them.
@@ -2991,12 +2995,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    */
   const answer = async (thread: Thread, inbound: Inbound, text: string): Promise<void> => {
     const wantsVoice = voiceOn.get(inbound.chatId) ?? voiceDefault;
+    const asked = voiceAsked.delete(inbound.messageId);
     // keepMarks: títulos y **negritas** salen en negrita de verdad (HTML escapado,
     // con texto plano de respaldo si Telegram rechaza el formato).
     const cleaned = cleanForTelegram(stripVoicePrefix(text.trim()), { keepMarks: true });
     const short = shorten(cleaned);
     let audio: ChannelAudio | undefined;
-    if (desktop && wantsVoice && inbound.audioFileId && text.trim()) {
+    if (desktop && ((wantsVoice && inbound.audioFileId) || asked) && text.trim()) {
       // Con tope: un SAPI lento o colgado no puede retener la respuesta escrita.
       const spoken = await speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
         log.warn('tts failed, sending text only', { reason }),
@@ -6358,7 +6363,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     voiceOn.set(inbound.chatId, next);
     await say(
       inbound,
-      next ? 'Te contesto con voz cuando me hables por voz.' : 'Te contesto solo con texto.',
+      next
+        ? 'Te contesto con voz cuando me hables por voz (por defecto, solo texto).'
+        : 'Te contesto solo con texto.',
       { quote: true },
     );
   };
@@ -7173,6 +7180,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
 
       if (!opts.external) rememberUserRequest(thread, prompt);
+      if (!opts.external && pideVoz(prompt)) voiceAsked.add(inbound.messageId);
       if (documentNote) prompt = prompt.trim() ? `${documentNote}\n${prompt}` : documentNote;
 
       if (!prompt.trim() && !images?.length) {
