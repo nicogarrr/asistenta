@@ -183,6 +183,8 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   internet: 'web',
   buscar: 'web',
   busqueda: 'web',
+  navegador: 'web',
+  browser: 'web',
   mail: 'correo',
   email: 'correo',
   gmail: 'correo',
@@ -192,6 +194,9 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   agenda: 'calendario',
   citas: 'calendario',
   festivos: 'calendario',
+  googlecalendar: 'calendario',
+  calendariodegoogle: 'calendario',
+  gcal: 'calendario',
   nota: 'notas',
   apuntes: 'notas',
   memoria: 'notas',
@@ -203,6 +208,7 @@ const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   pantalla: 'pc',
   tele: 'tv',
   television: 'tv',
+  televisor: 'tv',
   smarttv: 'tv',
   casa: 'hogar',
   homeassistant: 'hogar',
@@ -221,7 +227,7 @@ function normalizeName(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase()
-    .replace(/^especialistas?\s+(?:de|del|en)?\s*/, '')
+    .replace(/^especialistas?\s+(?:(?:del|de|en)\s+)?/, '')
     .replace(/^(?:el|la|los|las|mi|mis)\s+/, '')
     .replace(/[\s._-]+/g, '');
 }

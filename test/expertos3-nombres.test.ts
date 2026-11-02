@@ -34,7 +34,7 @@ describe('resolveSpecialist: nombres con espacios, guiones y artículos', () => 
     'la',
     '',
     '   ',
-    'tele visor',
+    'tele tienda',
     'constructor',
     '__proto__',
     'toString',
