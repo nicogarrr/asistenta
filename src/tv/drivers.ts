@@ -25,6 +25,8 @@ export interface TvDriver {
   /** appId en el idioma de las LG (APP_ALIASES: netflix, youtube.leanback.v4...). */
   launch?(appId: string): Promise<void>;
   media?(command: TvDriverMedia): Promise<void>;
+  /** Apps instaladas de verdad (Roku /query/apps, Samsung ed.installedApp.get). */
+  apps?(): Promise<Array<{ id: string; title: string }>>;
   /** Buscar `query` (dentro de la app `appId`, en el idioma de las LG, si se da). */
   search?(query: string, appId?: string): Promise<void>;
 }

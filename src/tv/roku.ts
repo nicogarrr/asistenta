@@ -6,6 +6,8 @@
  * Solo IPs privadas (assertTvHost), timeouts cortos y sin seguir redirecciones.
  */
 
+import type { TvApp } from './app-cache.js';
+import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
 import { assertTvHost } from './lgtv.js';
 
@@ -47,6 +49,8 @@ export class RokuError extends Error {
 
 export interface RokuDeps {
   fetchImpl?: typeof fetch;
+  /** Apps instaladas (guardadas por tele en el daemon); sin esto, /query/apps cada vez. */
+  installedApps?: () => Promise<TvApp[]>;
 }
 
 async function ecp(
@@ -104,12 +108,33 @@ export async function rokuDeviceInfo(host: string, deps: RokuDeps = {}): Promise
   };
 }
 
+function unescapeXml(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/** Apps instaladas de verdad: GET /query/apps (`<app id="12" …>Netflix</app>`). */
+export async function rokuInstalledApps(host: string, deps: RokuDeps = {}): Promise<TvApp[]> {
+  const xml = await ecp(host, '/query/apps', 'GET', deps);
+  const out: TvApp[] = [];
+  for (const m of xml.matchAll(/<app\b([^>]*)>([^<]*)<\/app>/gi)) {
+    const id = /\bid="([^"]+)"/i.exec(m[1] ?? '')?.[1]?.trim();
+    const title = unescapeXml((m[2] ?? '').trim());
+    if (id && title && /^[\w.-]{1,64}$/.test(id)) out.push({ id, title });
+  }
+  return out;
+}
+
 /** Ruta ECP de búsqueda: /search/browse?keyword=…[&provider-id=…&launch=true]. */
 export function rokuSearchPath(query: string, appId?: string): string {
   const keyword = query.trim().slice(0, 100);
   if (!keyword) throw new RokuError('¿Qué busco en el Roku? Dime el título.');
   const params = new URLSearchParams({ keyword });
-  const provider = appId ? ROKU_APP_IDS[appId] : undefined;
+  const provider = appId ? ROKU_APP_IDS[lgAppIdFor(appId)] : undefined;
   if (provider) {
     params.set('provider-id', provider);
     params.set('launch', 'true');
@@ -132,13 +157,25 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
     key: (name) => press(ROKU_KEYS[name]),
     media: (command) => press(ROKU_MEDIA[command]),
     launch: async (appId) => {
-      const id = ROKU_APP_IDS[appId];
-      if (!id)
-        throw new RokuError(
-          `No sé abrir «${appId}» en el Roku; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
+      let id = ROKU_APP_IDS[lgAppIdFor(appId)];
+      let installed: TvApp[] = [];
+      if (!id) {
+        installed = await (deps.installedApps ?? (() => rokuInstalledApps(host, deps)))().catch(
+          () => [],
         );
-      await ecp(host, `/launch/${id}`, 'POST', deps);
+        id = matchInstalledApp(appId, installed)?.id;
+      }
+      if (!id) {
+        const names = installedNames(installed);
+        throw new RokuError(
+          names
+            ? `No encuentro «${appId}» en el Roku. Tiene: ${names}.`
+            : `No sé abrir «${appId}» en el Roku; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
+        );
+      }
+      await ecp(host, `/launch/${encodeURIComponent(id)}`, 'POST', deps);
     },
+    apps: () => (deps.installedApps ?? (() => rokuInstalledApps(host, deps)))(),
     search: async (query, appId) => {
       // Búsqueda propia del Roku (ECP /search/browse): abre su pantalla de
       // resultados con el texto ya puesto, sin teclear letra a letra. Con una

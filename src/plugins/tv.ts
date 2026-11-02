@@ -28,8 +28,8 @@ import {
 } from '../tv/lgtv.js';
 import { tvPower } from '../tv/power.js';
 import type { KnownTv } from '../tv/registry.js';
-import { rokuDriver } from '../tv/roku.js';
-import { samsungDriver, sharedSamsungPool } from '../tv/samsung.js';
+import { rokuDriver, rokuInstalledApps } from '../tv/roku.js';
+import { samsungDriver, samsungInstalledApps, sharedSamsungPool } from '../tv/samsung.js';
 import { deepLaunchPayload } from '../tv/search-recipes.js';
 import { readTvStatus } from '../tv/status.js';
 import {
@@ -245,10 +245,19 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
       const other = tv;
       const driver =
         other.brand === 'roku'
-          ? rokuDriver(other.host)
+          ? rokuDriver(other.host, {
+              installedApps: () => appCache.get(other.host, () => rokuInstalledApps(other.host)),
+            })
           : samsungDriver(
               { host: other.host, token: other.clientKey, secure: other.secure === '1' },
               {
+                installedApps: () =>
+                  appCache.get(other.host, () =>
+                    samsungInstalledApps(
+                      { host: other.host, token: other.clientKey, secure: other.secure === '1' },
+                      { onToken: (key) => saveTvClientKey(other.host, key) },
+                    ),
+                  ),
                 mac: other.mac,
                 onToken: (key) => saveTvClientKey(other.host, key),
                 // Daemon: la conexión se queda abierta entre órdenes (como la LG, #1891).
