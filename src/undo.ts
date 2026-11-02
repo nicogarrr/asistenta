@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
+import { wallDateMinute } from './datecontext.js';
 
 /**
  * Deshacer: antes de que la herramienta `write` toque un fichero, guarda cómo estaba.
@@ -113,6 +114,11 @@ function neverLanded(meta: Meta, dir: string): boolean {
 }
 
 /** Repone la última escritura guardada. Devuelve el texto para el usuario. */
+/** La hora de la escritura en la hora local de Nico (PA_TIMEZONE), no en UTC. */
+function cuando(at: string): string {
+  return wallDateMinute(new Date(at)) || at.slice(0, 16).replace('T', ' ');
+}
+
 export function undoLast(): string {
   if (!undoDir || !existsSync(undoDir)) return 'No tengo ninguna escritura que deshacer.';
   const all = readdirSync(undoDir).sort();
@@ -150,9 +156,9 @@ export function undoLast(): string {
     mkdirSync(dirname(meta.path), { recursive: true });
     writeFileSync(meta.path, readFileSync(join(dir, 'content')));
     rmSync(dir, { recursive: true, force: true });
-    return `He repuesto ${meta.path} a como estaba antes de la última escritura (${meta.at.slice(0, 16).replace('T', ' ')} UTC). Solo deshago lo que se escribió con la herramienta de ficheros; lo hecho por la shell no.`;
+    return `He repuesto ${meta.path} a como estaba antes de la última escritura (${cuando(meta.at)}). Solo deshago lo que se escribió con la herramienta de ficheros; lo hecho por la shell no.`;
   }
   if (now !== null) rmSync(meta.path, { force: true });
   rmSync(dir, { recursive: true, force: true });
-  return `Ese fichero no existía antes: he borrado ${meta.path}, que se creó en la última escritura (${meta.at.slice(0, 16).replace('T', ' ')} UTC).`;
+  return `Ese fichero no existía antes: he borrado ${meta.path}, que se creó en la última escritura (${cuando(meta.at)}).`;
 }
