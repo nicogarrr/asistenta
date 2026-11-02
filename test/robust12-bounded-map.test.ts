@@ -22,6 +22,7 @@ describe('mapa con tope', () => {
   it('el daemon no guarda mensaje→conversación sin límite', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/const messageThread = new Map</);
-    expect(src).toMatch(/const messageThread = new BoundedMap</);
+    // En memoria sigue acotado; la copia en disco (reply-threads.ts) poda por filas y días.
+    expect(src).toMatch(/const messageThread = durableMessageThread\(\s*new BoundedMap</);
   });
 });

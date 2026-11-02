@@ -144,6 +144,7 @@ import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/pane
 import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
 import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
+import { durableMessageThread, openReplyThreadStore } from './daemon/reply-threads.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { createSpecialistAsk, denySpecialistAsksForChat } from './daemon/specialist-ask.js';
@@ -2053,7 +2054,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   }
   // chatKey:messageId -> thread key; bounded so it does not grow all day (robustez-12).
-  const messageThread = new BoundedMap<string, string>(5000);
+  // Con copia en memory.db (reply-threads.ts): responder a un mensaje antiguo sigue
+  // en su conversación también después de reiniciar o autoactualizar.
+  const messageThread = durableMessageThread(
+    new BoundedMap<string, string>(5000),
+    openReplyThreadStore(memoryDb, (err) =>
+      log.warn('reply thread store unavailable', { err: String(err) }),
+    ),
+    {
+      labelOf: (key) => threads.get(key)?.label,
+      onError: (err) => log.warn('reply thread store failed', { err: String(err) }),
+    },
+  );
 
   /**
    * Retire conversations nobody has used for a while.
@@ -2076,7 +2088,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       max: MAX_THREADS,
       selected: (chatKey_) => activeTopic.get(chatKey_),
       // Per-thread state outside the Thread object goes with it (robustez-12).
-      perThread: [threadInbound, factorySyncs, { delete: (k: string) => lastTurns.forget(k) }],
+      perThread: [
+        threadInbound,
+        factorySyncs,
+        { delete: (k: string) => lastTurns.forget(k) },
+        { delete: (k: string) => messageThread.forgetThread(k) },
+      ],
       onEvict: (victim) => {
         // The browser profile stays on disk on purpose; only the live Chromium goes.
         const service = browsers.get(victim.key);
@@ -2756,6 +2773,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     resolveInboundThread(inbound, chatKey(inbound), {
       activeTopic,
       messageThread,
+      durableThread: (key) => messageThread.durable(key),
       threads,
       goalScopeBySentId: (key, sentId) => goalNotifier.scopeBySentId(key, sentId),
       splitGoalScope,
@@ -4412,7 +4430,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       chatKey: chatKey_,
       activeTopic: activeTopic.get(chatKey_),
       replyThreadKey: inbound.replyToMessageId
-        ? messageThread.get(`${chatKey_}:${inbound.replyToMessageId}`)
+        ? messageThread.durable(`${chatKey_}:${inbound.replyToMessageId}`)?.threadKey
         : undefined,
       // Fallback durable, como resolveThread: tras un reinicio messageThread
       // está vacío y la notificación persistida de un objetivo sigue encontrando
