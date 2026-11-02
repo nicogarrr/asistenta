@@ -590,7 +590,8 @@ export class TelegramChannel implements ChannelAdapter {
     // foto era un turno y «¿cuál te gusta más?» recibía una respuesta suelta por foto.
     // Igual con varios documentos enviados de una vez: un turno «indexado» por fichero.
     const album = (msg as { media_group_id?: string }).media_group_id;
-    if (album && (inbound.photoFileId || inbound.documentFileId) && !inbound.audioFileId) {
+    // Y con varios audios: antes cada uno era un turno y «¿de qué hablan?» oía solo uno.
+    if (album && (inbound.photoFileId || inbound.documentFileId || inbound.audioFileId)) {
       this.#holdAlbum(`${inbound.chatId}:${album}`, inbound, handlers, addressed);
       return;
     }
@@ -702,6 +703,22 @@ export class TelegramChannel implements ChannelAdapter {
           mimeType: inbound.documentMimeType,
           name: inbound.documentName,
           sizeBytes: inbound.documentSizeBytes,
+        },
+      ];
+    }
+    if (inbound.audioFileId && !first.audioFileId) {
+      first.audioFileId = inbound.audioFileId;
+      first.audioMimeType = inbound.audioMimeType;
+      first.audioDurationSeconds = inbound.audioDurationSeconds;
+      first.audioSizeBytes = inbound.audioSizeBytes;
+    } else if (inbound.audioFileId && (first.albumAudios?.length ?? 0) < ALBUM_MAX_PHOTOS - 1) {
+      first.albumAudios = [
+        ...(first.albumAudios ?? []),
+        {
+          fileId: inbound.audioFileId,
+          mimeType: inbound.audioMimeType,
+          durationSeconds: inbound.audioDurationSeconds,
+          sizeBytes: inbound.audioSizeBytes,
         },
       ];
     }
@@ -1871,19 +1888,15 @@ export function isStopCommand(text: string): boolean {
   return STOP_COMMAND.test(text.trim());
 }
 
-/** Pieza que puede ir en un álbum retenido: foto, vídeo/GIF o documento (no audio). */
+/** Pieza que puede ir en un álbum retenido: foto, vídeo/GIF, documento o audio. */
 function isAlbumMedia(msg: {
   photo?: unknown[];
   video?: unknown;
   animation?: unknown;
-  document?: { mime_type?: string; file_name?: string };
+  document?: unknown;
+  audio?: unknown;
 }): boolean {
-  return Boolean(
-    msg.photo?.length ||
-      msg.video ||
-      msg.animation ||
-      (msg.document && !isAudioDocument(msg.document)),
-  );
+  return Boolean(msg.photo?.length || msg.video || msg.animation || msg.document || msg.audio);
 }
 
 /**

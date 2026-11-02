@@ -111,7 +111,13 @@ import {
   receiptStartText,
   voiceHeardText,
 } from './channels/telegram-receipts.js';
-import type { AlbumDocument, ChannelAudio, Inbound, Outbound } from './channels/types.js';
+import type {
+  AlbumAudio,
+  AlbumDocument,
+  ChannelAudio,
+  Inbound,
+  Outbound,
+} from './channels/types.js';
 import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
 import { type Config, loadConfig } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
@@ -6922,7 +6928,31 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         recall.retain(chatKey(inbound), inbound.messageId, bytes);
         await telegram.action(inbound.chatId, 'typing');
         try {
-          const heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
+          let heard = await transcribeVoiceNote(bytes, { mimeType: inbound.audioMimeType });
+          const firstHeard = heard.text;
+          // Varios audios enviados de una vez: todos en este turno, numerados. Antes cada
+          // uno era su propio turno y «¿de qué hablan?» se contestaba oyendo solo uno.
+          if (inbound.albumAudios?.length) {
+            const rest = await transcribeAlbumAudios(
+              inbound.albumAudios,
+              (id) => telegram.downloadFile(id),
+              (b, mimeType) => transcribeVoiceNote(b, { mimeType }),
+            );
+            for (const r of rest) {
+              if (!r.heard) continue;
+              try {
+                docMemory.indexTranscript(
+                  memoryScopesFor(thread.key).write,
+                  r.audio.fileId,
+                  r.heard.text,
+                  inbound.text,
+                );
+              } catch (err) {
+                log.warn('transcript index failed', { err });
+              }
+            }
+            heard = albumHeard(heard, rest);
+          }
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
           prompt = voiceNotePrompt(heard, inbound.forwardedFrom, text);
@@ -6934,12 +6964,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           });
           // Remembered with the handle, so "suéltame ese audio" two messages later
           // has something to act on.
-          recall.setTranscript(chatKey(inbound), inbound.messageId, heard.text);
+          recall.setTranscript(chatKey(inbound), inbound.messageId, firstHeard);
           try {
             docMemory.indexTranscript(
               memoryScopesFor(thread.key).write,
               inbound.messageId,
-              heard.text,
+              firstHeard,
               inbound.text,
             );
           } catch (err) {
@@ -8665,11 +8695,13 @@ function fileErrorReason(raw: string): string | null {
  * persona; sin esa marca, el audio reenviado de un amigo parecía una orden del dueño.
  */
 export function voiceNotePrompt(
-  heard: { text: string; truncated?: boolean },
+  heard: { text: string; truncated?: boolean; count?: number },
   forwardedFrom?: string,
   caption?: string,
 ): string {
-  const voice = `[Nota de voz transcrita${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
+  const what =
+    heard.count && heard.count > 1 ? `${heard.count} audios transcritos` : 'Nota de voz transcrita';
+  const voice = `[${what}${heard.truncated ? ' (audio largo: solo los primeros 15 minutos)' : ''}] ${heard.text}`;
   // El texto que acompañaba al audio se perdía. Si es tuyo va delante, como tus palabras;
   // si el audio es reenviado, va dentro de la marca del reenvío, como lo demás del otro.
   const said = caption?.trim() ?? '';
@@ -8776,6 +8808,58 @@ export async function ocrEachFile(
  * Descarga el resto de fotos de un álbum. Una que falla no tumba las demás: se cuenta,
  * para decir al modelo cuántas no vio.
  */
+/** Un audio más de un álbum, ya transcrito (o por qué no). */
+export interface AlbumAudioHeard {
+  audio: AlbumAudio;
+  heard?: { text: string; truncated?: boolean };
+  failed?: 'download' | 'transcribe';
+}
+
+/** Transcribe el resto de audios de un álbum; uno que falla se cuenta y no tumba los demás. */
+export async function transcribeAlbumAudios(
+  audios: readonly AlbumAudio[],
+  download: (fileId: string) => Promise<Buffer | null>,
+  transcribe: (bytes: Buffer, mimeType?: string) => Promise<{ text: string; truncated?: boolean }>,
+): Promise<AlbumAudioHeard[]> {
+  const out: AlbumAudioHeard[] = [];
+  for (const audio of audios) {
+    const bytes = await download(audio.fileId).catch(() => null);
+    if (!bytes) {
+      out.push({ audio, failed: 'download' });
+      continue;
+    }
+    try {
+      out.push({ audio, heard: await transcribe(bytes, audio.mimeType) });
+    } catch {
+      out.push({ audio, failed: 'transcribe' });
+    }
+  }
+  return out;
+}
+
+/** Junta lo oído del primer audio y del resto del álbum, numerado («(2/3) …»). */
+export function albumHeard<T extends { text: string; truncated?: boolean }>(
+  first: T,
+  rest: readonly AlbumAudioHeard[],
+): T & { count: number } {
+  const n = rest.length + 1;
+  const lines = [`(1/${n}) ${first.text}`];
+  for (const [i, r] of rest.entries()) {
+    const said = r.heard
+      ? r.heard.text
+      : r.failed === 'download'
+        ? '[no se pudo descargar]'
+        : '[no se pudo transcribir]';
+    lines.push(`(${i + 2}/${n}) ${said}`);
+  }
+  return {
+    ...first,
+    text: lines.join('\n'),
+    truncated: first.truncated || rest.some((r) => r.heard?.truncated) || undefined,
+    count: n,
+  };
+}
+
 export async function downloadAlbumPhotos(
   ids: readonly string[],
   download: (id: string) => Promise<Buffer | null>,
