@@ -8,6 +8,8 @@
  * en una limpieza. Todo es lectura: aquí no se mueve ni se borra nada.
  */
 
+import { sliceSafe } from '../text.js';
+
 export type MailCategory = 'importante' | 'personal' | 'notificacion' | 'publicidad' | 'spam';
 
 export const CATEGORY_LABEL: Record<MailCategory, string> = {
@@ -259,8 +261,8 @@ export async function classifyMail(
     try {
       const category = await model({
         from: addressOf(input.from),
-        subject: input.subject.slice(0, 200),
-        snippet: (input.text ?? '').replace(/\s+/g, ' ').slice(0, 300),
+        subject: sliceSafe(input.subject, 200),
+        snippet: sliceSafe((input.text ?? '').replace(/\s+/g, ' '), 300),
       });
       if (category && category in CATEGORY_LABEL)
         return { category, source: 'modelo', reasons: ['lo decidió el modelo'] };
