@@ -93,32 +93,81 @@ const dayCap = new DayCap();
  */
 const DEDUPE_WINDOW_MS = 10_000;
 const DEDUPE_MAX = 20;
-const dedupe = new Map<string, { start: number; seen: number }>();
+type DedupeEntry = {
+  start: number;
+  seen: number;
+  msg: string;
+  timer?: ReturnType<typeof setTimeout>;
+};
+const dedupe = new Map<string, DedupeEntry>();
+let exitHooked = false;
 
 /** Para pruebas. */
 export function resetLogDedupe(): void {
+  for (const e of dedupe.values()) if (e.timer) clearTimeout(e.timer);
   dedupe.clear();
 }
 
-/** 'write' deja pasar; 'drop' omite; con `summary` hay que escribir antes el resumen de la ventana anterior. */
+/**
+ * Escribe el resumen de lo omitido en la ventana de `entry` y lo deja a cero. Antes el resumen
+ * solo salía si el mismo mensaje volvía tras la ventana: si el bucle paraba, lo omitido no se
+ * contaba nunca. Ahora sale al cerrar la ventana (temporizador), al salir del proceso y si la
+ * entrada se descarta por el tope del mapa.
+ */
+function flushEntry(entry: DedupeEntry): void {
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = undefined;
+  const omitted = entry.seen - DEDUPE_MAX;
+  if (omitted <= 0) return;
+  entry.seen = DEDUPE_MAX;
+  write('warn', 'líneas repetidas omitidas', { mensaje: entry.msg, omitidas: omitted });
+}
+
+/** Vuelca los resúmenes pendientes (al cerrar el proceso). */
+export function flushLogDedupe(): void {
+  for (const e of [...dedupe.values()]) flushEntry(e);
+}
+
+/** 'write' deja pasar; 'drop' omite. El resumen de la ventana anterior se escribe aquí mismo. */
 function dedupeDecision(
   level: LogLevel,
   msg: string,
   fields: Record<string, unknown>,
   nowMs: number,
-): { action: 'write' | 'drop'; summary?: { msg: string; omitted: number } } {
-  if (level !== 'error' && level !== 'warn') return { action: 'write' };
+): 'write' | 'drop' {
+  if (level !== 'error' && level !== 'warn') return 'write';
   const err = fields.err as { message?: unknown } | undefined;
   const key = `${level}|${msg}|${typeof err?.message === 'string' ? err.message.slice(0, 120) : ''}`;
   const entry = dedupe.get(key);
   if (!entry || nowMs - entry.start > DEDUPE_WINDOW_MS) {
-    const omitted = entry ? entry.seen - DEDUPE_MAX : 0;
-    dedupe.set(key, { start: nowMs, seen: 1 });
-    if (dedupe.size > 500) dedupe.delete(dedupe.keys().next().value as string);
-    return omitted > 0 ? { action: 'write', summary: { msg, omitted } } : { action: 'write' };
+    if (entry) flushEntry(entry);
+    dedupe.delete(key);
+    dedupe.set(key, { start: nowMs, seen: 1, msg });
+    if (dedupe.size > 500) {
+      const oldest = dedupe.keys().next().value as string;
+      const gone = dedupe.get(oldest);
+      dedupe.delete(oldest);
+      if (gone) flushEntry(gone);
+    }
+    return 'write';
   }
   entry.seen += 1;
-  return entry.seen > DEDUPE_MAX ? { action: 'drop' } : { action: 'write' };
+  if (entry.seen <= DEDUPE_MAX) return 'write';
+  if (!entry.timer) {
+    const t = setTimeout(
+      () => {
+        if (dedupe.get(key) === entry) flushEntry(entry);
+      },
+      Math.max(0, entry.start + DEDUPE_WINDOW_MS - nowMs) + 1,
+    );
+    t.unref?.();
+    entry.timer = t;
+    if (!exitHooked) {
+      exitHooked = true;
+      process.once('exit', flushLogDedupe);
+    }
+  }
+  return 'drop';
 }
 
 /** Las líneas fatales se escriben aunque el log del día esté lleno. */
@@ -131,14 +180,7 @@ function write(
   toConsole = true,
 ): void {
   if (LEVEL_ORDER[level] < threshold) return;
-  const decision = dedupeDecision(level, msg, fields, Date.now());
-  if (decision.action === 'drop') return;
-  if (decision.summary) {
-    write('warn', 'líneas repetidas omitidas', {
-      mensaje: decision.summary.msg,
-      omitidas: decision.summary.omitted,
-    });
-  }
+  if (dedupeDecision(level, msg, fields, Date.now()) === 'drop') return;
   const ts = new Date().toISOString();
   let line: string;
   try {
