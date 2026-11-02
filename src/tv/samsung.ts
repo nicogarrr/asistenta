@@ -14,6 +14,7 @@ import type { TvApp } from './app-cache.js';
 import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
 import { assertTvHost, TV_SESSION_IDLE_MS, tvSessionIdleMs } from './lgtv.js';
+import { youtubeVideoId } from './search-recipes.js';
 import { sendWakeOnLan } from './wol.js';
 
 const APP_NAME_B64 = Buffer.from('Asistenta').toString('base64');
@@ -331,8 +332,6 @@ const APPS_TIMEOUT_MS = 4_000;
 /** Puerto DIAL de las Samsung (Application-URL http://IP:8080/ws/apps/). */
 export const SAMSUNG_DIAL_PORT = 8080;
 const DIAL_TIMEOUT_MS = 4_000;
-const YT_VIDEO_ID =
-  /(?:youtu\.be\/|[?&]v=|^v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/;
 
 /**
  * Arranca una app por DIAL (el protocolo con el que el móvil «envía» Netflix o
@@ -364,10 +363,8 @@ export async function samsungDialLaunch(
   if (!res.ok) throw new SamsungError(`La Samsung no abrió ${app} (DIAL ${res.status}).`);
 }
 
-/** Id de vídeo de YouTube en lo pedido (enlace o «v=ID»), o null si es texto. */
-export function youtubeVideoId(query: string): string | null {
-  return YT_VIDEO_ID.exec(query.trim())?.[1] ?? null;
-}
+/** Id de vídeo de YouTube en lo pedido: ahora en search-recipes (lo comparten LG, Roku y Samsung). */
+export { youtubeVideoId };
 
 /**
  * Apps instaladas de verdad: «ed.installedApp.get» por el mismo canal del
