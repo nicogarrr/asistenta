@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
 import { log } from '../log.js';
-import { normalizeHostname } from '../text.js';
+import { normalizeHostname, sliceSafe } from '../text.js';
 import { isFetchable, isFetchableResolved } from '../tools/fetch.js';
 
 /** Same narrowing as voice/decode.ts: typed as a module, a string at runtime. */
@@ -326,7 +326,7 @@ export async function downloadVideo(
         continue;
       }
       const meta = lines.filter((l) => l !== filepath);
-      const title = (meta[0] ?? 'Vídeo').slice(0, 200);
+      const title = sliceSafe(meta[0] ?? 'Vídeo', 200);
       const seconds = Math.max(0, Math.round(Number(meta[1]) || 0));
       const bytes = await readFile(filepath);
       return { ok: true, kind: 'video', bytes, title, seconds, filename: 'video.mp4' };
@@ -447,7 +447,7 @@ export async function downloadAudio(
       };
     }
     const meta = lines.filter((l) => l !== filepath);
-    const title = (meta[0] ?? 'Audio').slice(0, 200);
+    const title = sliceSafe(meta[0] ?? 'Audio', 200);
     const seconds = Math.max(0, Math.round(Number(meta[1]) || 0));
     const bytes = await readFile(filepath);
     return { ok: true, kind: 'audio', bytes, title, seconds, filename: audioFilename(title) };
