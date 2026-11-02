@@ -24,6 +24,7 @@ export interface ReceiptInput {
   /** Resto de un álbum: el acuse cuenta todos los ficheros, no solo el primero. */
   albumPhotoFileIds?: readonly string[];
   albumDocuments?: readonly unknown[];
+  albumAudios?: readonly unknown[];
 }
 
 /** Largo máximo de lo transcrito que se enseña en el acuse. */
@@ -68,6 +69,8 @@ export function receiptStartText(kind: ReceiptKind, inbound: ReceiptInput = {}):
       ? `🖼️ Mirando las ${docs} imágenes…`
       : `📄 Leyendo ${docs} documentos…`;
   }
+  const audios = 1 + (inbound.albumAudios?.length ?? 0);
+  if (kind === 'voice' && audios > 1) return `🎧 Transcribiendo los ${audios} audios…`;
   switch (kind) {
     case 'voice':
       return '🎙️ Transcribiendo la nota de voz…';

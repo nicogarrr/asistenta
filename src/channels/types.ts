@@ -24,6 +24,14 @@ export interface AlbumDocument {
   sizeBytes?: number;
 }
 
+/** Un audio más de un álbum de audios (varios enviados de una vez). */
+export interface AlbumAudio {
+  fileId: string;
+  mimeType?: string;
+  durationSeconds?: number;
+  sizeBytes?: number;
+}
+
 export interface Inbound {
   channel: string;
   /** Stable per-channel account id, so one process can serve several. */
@@ -60,6 +68,8 @@ export interface Inbound {
   audioDurationSeconds?: number;
   /** Tamaño del audio que declara Telegram, en bytes (si lo da). */
   audioSizeBytes?: number;
+  /** Resto de audios de un álbum: se transcriben en el mismo turno que `audioFileId`. */
+  albumAudios?: AlbumAudio[];
   /**
    * A forwarded document (PDF, text file, ...), also fetched lazily: the bytes
    * feed the document memory, and downloading on arrival would reorder
