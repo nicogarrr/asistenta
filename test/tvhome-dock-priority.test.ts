@@ -7,9 +7,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   APPS,
-  type AppItem as Tile,
   DOCK_PRIORITY,
   sortDockByPriority,
+  type AppItem as Tile,
 } from '../tools/tv-home/src/lib/apps.js';
 
 const CATALOGO: Tile[] = Object.values(APPS).flat();

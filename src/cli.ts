@@ -237,7 +237,7 @@ import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
-import { trackBusyIn } from './ocupada.js';
+import { describeBusy, trackBusyIn } from './ocupada.js';
 import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
@@ -3062,7 +3062,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   // La autoactualización solo reinicia con este fichero diciendo «libre».
-  trackBusyIn(paths.state);
+  const cutByRestart = trackBusyIn(paths.state);
+  if (cutByRestart.length > 0) {
+    // Lo que el cierre anterior dejó a medias se dice una vez, sin que Nico tenga que preguntar.
+    setTimeout(() => {
+      const owner = briefingOwner();
+      if (!owner) return;
+      void telegram
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: owner,
+          text: `Me reinicié y se cortó lo que estaba haciendo: ${describeBusy(cutByRestart)}. Dime «sigue» y lo retomo.`,
+        })
+        .catch((err: unknown) =>
+          log.warn('aviso de tarea cortada no enviado', { err: String(err) }),
+        );
+    }, 30_000).unref();
+  }
   const lifecycle = installLifecycle({
     name: 'agent',
     onShutdown: async () => {

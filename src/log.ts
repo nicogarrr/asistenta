@@ -86,6 +86,44 @@ const dayCap = new DayCap();
  * loses it is worse than one that has no logs; `npm`/NSSM capture both, so we
  * write both. Scrub at this final boundary too: callers may pass raw errors.
  */
+/**
+ * Un mismo aviso o error repetido en bucle (342 mil «uncaught exception» en un día) llenaba el
+ * tope del log y tapaba todo lo demás, incluida la causa. De cada mensaje igual se escriben
+ * las primeras DEDUPE_MAX por ventana; el resto se cuenta y se resume en una sola línea.
+ */
+const DEDUPE_WINDOW_MS = 10_000;
+const DEDUPE_MAX = 20;
+const dedupe = new Map<string, { start: number; seen: number }>();
+
+/** Para pruebas. */
+export function resetLogDedupe(): void {
+  dedupe.clear();
+}
+
+/** 'write' deja pasar; 'drop' omite; con `summary` hay que escribir antes el resumen de la ventana anterior. */
+function dedupeDecision(
+  level: LogLevel,
+  msg: string,
+  fields: Record<string, unknown>,
+  nowMs: number,
+): { action: 'write' | 'drop'; summary?: { msg: string; omitted: number } } {
+  if (level !== 'error' && level !== 'warn') return { action: 'write' };
+  const err = fields.err as { message?: unknown } | undefined;
+  const key = `${level}|${msg}|${typeof err?.message === 'string' ? err.message.slice(0, 120) : ''}`;
+  const entry = dedupe.get(key);
+  if (!entry || nowMs - entry.start > DEDUPE_WINDOW_MS) {
+    const omitted = entry ? entry.seen - DEDUPE_MAX : 0;
+    dedupe.set(key, { start: nowMs, seen: 1 });
+    if (dedupe.size > 500) dedupe.delete(dedupe.keys().next().value as string);
+    return omitted > 0 ? { action: 'write', summary: { msg, omitted } } : { action: 'write' };
+  }
+  entry.seen += 1;
+  return entry.seen > DEDUPE_MAX ? { action: 'drop' } : { action: 'write' };
+}
+
+/** Las líneas fatales se escriben aunque el log del día esté lleno. */
+const FATAL = /^(uncaught exception|shutdown|startup failed)/;
+
 function write(
   level: LogLevel,
   msg: string,
@@ -93,6 +131,14 @@ function write(
   toConsole = true,
 ): void {
   if (LEVEL_ORDER[level] < threshold) return;
+  const decision = dedupeDecision(level, msg, fields, Date.now());
+  if (decision.action === 'drop') return;
+  if (decision.summary) {
+    write('warn', 'líneas repetidas omitidas', {
+      mensaje: decision.summary.msg,
+      omitidas: decision.summary.omitted,
+    });
+  }
   const ts = new Date().toISOString();
   let line: string;
   try {
@@ -112,8 +158,8 @@ function write(
     const day = localDay();
     const file = join(paths.log, `${day}.jsonl`);
     const room = dayCap.room(day, file, Buffer.byteLength(line) + 1);
-    if (room === 'write') appendFileSync(file, `${line}\n`);
-    else if (room === 'full-now') appendFileSync(file, `${dayCapMarker(ts)}\n`);
+    if (room === 'full-now') appendFileSync(file, `${dayCapMarker(ts)}\n`);
+    if (room === 'write' || FATAL.test(msg)) appendFileSync(file, `${line}\n`);
   } catch {
     // Never let logging be the reason a turn dies.
   }

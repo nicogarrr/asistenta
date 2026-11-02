@@ -626,7 +626,8 @@ export class PersonalAgent {
   /** Signal that the run is parked on a human decision; pauses the idle watchdog. */
   setAwaitingApproval(waiting: boolean): void {
     if (waiting) {
-      if (this.#approvalsWaiting === 0) this.#approvalBusyEnd = busyBegin('aprobaciones');
+      if (this.#approvalsWaiting === 0)
+        this.#approvalBusyEnd = busyBegin('aprobaciones', 'permiso');
       this.#approvalsWaiting += 1;
       return;
     }
@@ -1119,7 +1120,7 @@ export class PersonalAgent {
     hooks?: RunHooks,
   ): Promise<AgentRunResult> {
     // Mientras dura el turno, la autoactualización no reinicia el daemon.
-    const endBusy = busyBegin('turnos');
+    const endBusy = busyBegin('turnos', prompt.replace(/\s+/g, ' ').trim());
     try {
       return await this.#runTurn(prompt, images, hooks);
     } finally {

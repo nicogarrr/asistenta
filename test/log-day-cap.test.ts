@@ -26,7 +26,7 @@ const today = (): string => join(logDir, `${localDay()}.jsonl`);
 describe('tope diario del registro', () => {
   it('al llegar al tope escribe un aviso una vez y deja de crecer; la consola sigue', () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    for (let i = 0; i < 200; i++) log.error('bucle de errores', { i, pad: 'x'.repeat(80) });
+    for (let i = 0; i < 200; i++) log.error(`bucle de errores ${i}`, { i, pad: 'x'.repeat(80) });
     const printed = out.mock.calls.length;
     out.mockRestore();
     expect(printed).toBe(200);
