@@ -2,6 +2,15 @@
 
 import { existsSync, writeFileSync } from 'node:fs';
 import {
+  braviaPowerOff,
+  braviaPowerStatus,
+  braviaSetMute,
+  braviaSetVolume,
+  braviaSystemInfo,
+  braviaVolume,
+} from './bravia.js';
+import { discoverWebOsTvs } from './discover.js';
+import {
   assertTvHost,
   pairTv,
   sanitizeTvText,
@@ -12,10 +21,27 @@ import {
 } from './lgtv.js';
 import { describeTvIntent, parseTvCommand, tvIntentNotice, tvOrderHasTime } from './natural.js';
 import { readNeighborMac } from './neighbor-mac.js';
+import { findTv, parseRegistry, registryToJson, upsertTv } from './registry.js';
 import { TV_CHAT_MAX_LEN } from './tv-chat-command.js';
 import { sendWakeOnLan, validateTvMac } from './wol.js';
 
 const TV_HOST_KEY = 'tv:host';
+const TV_REGISTRY_KEY = 'tv:tvs';
+const TV_ACTIVE_BRAND = 'tv:activeBrand';
+/** PSK de cada Sony por host: tv:sonyPsk:<ip> (como la client-key, pero por tele). */
+const sonyPskKey = (host: string) => `tv:sonyPsk:${host}`;
+
+async function requireSonyPsk(): Promise<{ host: string; psk: string }> {
+  const { vaultGet } = await import('../vault.js');
+  const host = await vaultGet(TV_HOST_KEY);
+  const psk = host ? await vaultGet(sonyPskKey(host)) : undefined;
+  if (!host || !psk) {
+    throw new Error(
+      'La tele activa no es una Sony configurada: emparejala con `pa tv setup-sony <ip>` (la clave PSK se pone en la tele, en Ajustes > Red > Home network setup > IP control).',
+    );
+  }
+  return { host, psk };
+}
 const TV_CLIENT_KEY = 'tv:clientKey';
 const TV_SECURE_KEY = 'tv:secure';
 const TV_MAC_KEY = 'tv:mac';
@@ -45,8 +71,16 @@ export function macFromNetworkInfo(info: unknown): string | null {
  * a sacar el aviso (igual que la tool tv, #660).
  */
 async function saveNewClientKey(key: string): Promise<void> {
-  const { vaultSet } = await import('../vault.js');
+  const { vaultGet, vaultSet } = await import('../vault.js');
   await vaultSet(TV_CLIENT_KEY, key);
+  // El registro multi-tele guarda la clave nueva de la tele activa tambien.
+  const host = await vaultGet(TV_HOST_KEY);
+  if (host) {
+    const list = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+    const known = findTv(list, host);
+    if (known)
+      await vaultSet(TV_REGISTRY_KEY, registryToJson(upsertTv(list, { ...known, clientKey: key })));
+  }
   process.stderr.write('pa tv: la tele se ha vuelto a emparejar; client-key nueva guardada.\n');
 }
 
@@ -57,6 +91,11 @@ async function requirePaired(): Promise<{
   onNewClientKey: (key: string) => Promise<void>;
 }> {
   const { vaultGet } = await import('../vault.js');
+  if ((await vaultGet(TV_ACTIVE_BRAND)) === 'sony') {
+    throw new Error(
+      'La tele activa es la Sony y esa orden es de la LG. Cambia con `pa tv usar <ip>` o usa `pa tv sony ...`.',
+    );
+  }
   const host = await vaultGet(TV_HOST_KEY);
   const clientKey = await vaultGet(TV_CLIENT_KEY);
   if (!host || !clientKey) {
@@ -198,18 +237,212 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       } catch {
         mac = null;
       }
-      const { vaultSetMany } = await import('../vault.js');
+      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
       await vaultSetMany({
         [TV_HOST_KEY]: host,
         [TV_CLIENT_KEY]: clientKey,
         [TV_SECURE_KEY]: secure ? '1' : '0',
+        [TV_ACTIVE_BRAND]: 'lg',
         ...(mac ? { [TV_MAC_KEY]: mac } : {}),
       });
+      // Registro multi-tele: esta queda guardada y pasa a ser la activa.
+      const prev = findTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), host);
+      await vaultSet(
+        TV_REGISTRY_KEY,
+        registryToJson(
+          upsertTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+            host,
+            ...(prev?.name ? { name: prev.name } : {}),
+            ...(prev?.model ? { model: prev.model } : {}),
+            clientKey,
+            secure: secure ? '1' : '0',
+            ...(mac ? { mac } : {}),
+            pairedAt: new Date().toISOString(),
+          }),
+        ),
+      );
       if (mac) process.stdout.write(`MAC guardada para encenderla por red: ${mac}\n`);
       process.stdout.write(
         secure
           ? 'Tele emparejada y guardada (canal cifrado). Prueba: pa tv toast "hola"\n'
           : 'Tele emparejada y guardada (canal ws sin cifrar: la tele no abrio el 3001).\n',
+      );
+      return 0;
+    }
+    case 'setup-sony': {
+      const hostArg = rest.find((a) => !a.startsWith('--'))?.trim();
+      if (!hostArg) {
+        process.stderr.write(
+          'uso: pa tv setup-sony <ip>   (la PSK la lees de la tele: Ajustes > Red > Home network setup > IP control)\n',
+        );
+        return 2;
+      }
+      let host: string;
+      try {
+        host = assertTvHost(hostArg);
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return 2;
+      }
+      // PSK por stdin para que no quede en el historial de la consola.
+      process.stdout.write('Pega la clave PSK de la tele y pulsa Enter: ');
+      const psk = await new Promise<string>((resolve) => {
+        let buf = '';
+        process.stdin.resume();
+        process.stdin.on('data', (chunk) => {
+          buf += String(chunk);
+          const nl = buf.indexOf('\n');
+          if (nl >= 0) {
+            process.stdin.pause();
+            resolve(buf.slice(0, nl));
+          }
+        });
+      });
+      if (!psk.trim()) {
+        process.stderr.write('Sin clave no puedo emparejar: no se guarda nada.\n');
+        return 1;
+      }
+      const info = await braviaSystemInfo(host, psk.trim()).catch((err: unknown) => {
+        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        return null;
+      });
+      if (!info) return 1;
+      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
+      await vaultSet(sonyPskKey(host), psk.trim());
+      await vaultSet(
+        TV_REGISTRY_KEY,
+        registryToJson(
+          upsertTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+            host,
+            brand: 'sony',
+            clientKey: '',
+            secure: '1',
+            ...(info.name ? { name: info.name } : {}),
+            ...(info.model ? { model: info.model } : {}),
+            pairedAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      await vaultSetMany({ [TV_HOST_KEY]: host, [TV_ACTIVE_BRAND]: 'sony' });
+      process.stdout.write(
+        `Sony Bravia emparejada y activa${info.model ? ` (${info.model})` : ''}. Prueba: pa tv sony estado\n`,
+      );
+      return 0;
+    }
+    case 'sony': {
+      const what = rest[0]?.trim().toLowerCase();
+      const { host, psk } = await requireSonyPsk();
+      if (what === 'estado' || what === 'status') {
+        const [power, vol] = await Promise.all([
+          braviaPowerStatus(host, psk),
+          braviaVolume(host, psk).catch(() => null),
+        ]);
+        const volTxt = vol ? `, volumen ${vol.volume}${vol.mute ? ' (silenciada)' : ''}` : '';
+        process.stdout.write(`Sony ${host}: ${power}${volTxt}.\n`);
+        return 0;
+      }
+      if (what === 'volumen') {
+        const n = Number(rest[1]);
+        if (!Number.isFinite(n)) {
+          process.stderr.write('uso: pa tv sony volumen <0-100>\n');
+          return 2;
+        }
+        await braviaSetVolume(host, psk, n);
+        process.stdout.write(`Volumen al ${Math.max(0, Math.min(100, Math.round(n)))}.\n`);
+        return 0;
+      }
+      if (what === 'mute' || what === 'silencio') {
+        await braviaSetMute(host, psk, true);
+        process.stdout.write('Silenciada.\n');
+        return 0;
+      }
+      if (what === 'sonido') {
+        await braviaSetMute(host, psk, false);
+        process.stdout.write('Sonido de vuelta.\n');
+        return 0;
+      }
+      if (what === 'apaga' || what === 'off') {
+        await braviaPowerOff(host, psk);
+        process.stdout.write('Apagada (en espera).\n');
+        return 0;
+      }
+      process.stderr.write(
+        'uso: pa tv sony estado|volumen <n>|mute|sonido|apaga   (encender es por Wake-on-LAN con «Remote start» activo en la tele)\n',
+      );
+      return 2;
+    }
+    case 'descubrir': {
+      // Solo lectura: el M-SEARCH no muestra nada en pantalla.
+      const found = await discoverWebOsTvs();
+      if (found.length === 0) {
+        process.stdout.write(
+          'No he encontrado teles LG webOS encendidas en esta red. ¿Estan en la misma wifi que el PC?\n',
+        );
+        return 0;
+      }
+      const known = parseRegistry(await (await import('../vault.js')).vaultGet(TV_REGISTRY_KEY));
+      for (const tv of found) {
+        const partes = [
+          tv.ip,
+          tv.brand === 'sony' ? 'Sony Bravia' : (tv.name ?? 'sin nombre'),
+          ...(tv.model ? [tv.model] : []),
+          tv.glasshouse ? 'rooteada (Glasshouse)' : tv.brand === 'sony' ? 'IP Control' : 'webOS',
+          findTv(known, tv.ip)
+            ? 'ya emparejada'
+            : tv.brand === 'sony'
+              ? `emparejar: pa tv setup-sony ${tv.ip}`
+              : `emparejar: pa tv setup ${tv.ip}`,
+        ];
+        process.stdout.write(`${partes.join('  ·  ')}\n`);
+      }
+      return 0;
+    }
+    case 'teles': {
+      const { vaultGet } = await import('../vault.js');
+      const list = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const active = await vaultGet(TV_HOST_KEY);
+      if (list.length === 0) {
+        process.stdout.write('No hay teles emparejadas. Empareja una con: pa tv setup <ip>\n');
+        return 0;
+      }
+      for (const tv of list) {
+        const partes = [
+          tv.host === active ? '(activa)' : '        ',
+          tv.host,
+          tv.brand === 'sony' ? 'Sony' : (tv.name ?? 'sin nombre'),
+          ...(tv.model ? [tv.model] : []),
+          tv.secure === '1' ? 'cifrada' : 'sin cifrar',
+          ...(tv.mac ? [`MAC ${tv.mac}`] : []),
+        ];
+        process.stdout.write(`${partes.join('  ')}\n`);
+      }
+      return 0;
+    }
+    case 'usar': {
+      const want = rest.find((a) => !a.startsWith('--'))?.trim();
+      if (!want) {
+        process.stderr.write('uso: pa tv usar <ip|nombre>   (cambia la tele activa)\n');
+        return 2;
+      }
+      const { vaultGet, vaultSetMany } = await import('../vault.js');
+      const list = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const tv = findTv(list, want);
+      if (!tv) {
+        process.stderr.write(
+          `No tengo emparejada ninguna tele «${want}». Mira las tuyas con: pa tv teles (o descubre otras con: pa tv descubrir)\n`,
+        );
+        return 1;
+      }
+      await vaultSetMany({
+        [TV_HOST_KEY]: tv.host,
+        [TV_ACTIVE_BRAND]: tv.brand ?? 'lg',
+        ...(tv.brand === 'sony'
+          ? {}
+          : { [TV_CLIENT_KEY]: tv.clientKey, [TV_SECURE_KEY]: tv.secure }),
+        ...(tv.mac ? { [TV_MAC_KEY]: tv.mac } : {}),
+      });
+      process.stdout.write(
+        `Tele activa: ${tv.brand === 'sony' ? `Sony Bravia (${tv.host})` : tv.name ? `${tv.name} (${tv.host})` : tv.host}.\n`,
       );
       return 0;
     }
