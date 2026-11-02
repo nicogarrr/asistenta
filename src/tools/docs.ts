@@ -38,12 +38,29 @@ const DocsParams = lazySchema(() =>
   }),
 );
 
+const MIME_LABEL: Record<string, string> = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word',
+  'application/msword': 'Word',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel',
+  'application/vnd.ms-excel': 'Excel',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint',
+  'application/vnd.ms-powerpoint': 'PowerPoint',
+  'application/vnd.oasis.opendocument.text': 'documento de LibreOffice',
+  'application/vnd.oasis.opendocument.spreadsheet': 'hoja de cálculo de LibreOffice',
+  'application/vnd.oasis.opendocument.presentation': 'presentación de LibreOffice',
+  'application/epub+zip': 'libro EPUB',
+  'text/csv': 'CSV',
+  'application/csv': 'CSV',
+};
+
 /** Human label for what a source was. */
 export function kindLabel(mime: string): string {
   if (mime === 'image/ocr') return 'foto, texto leído con OCR';
   if (mime === 'audio/transcript') return 'audio transcrito';
   if (mime === 'application/pdf') return 'PDF';
-  return mime;
+  // El resto, por el nombre que el dueño reconoce: el MIME crudo
+  // («application/vnd.openxmlformats-officedocument…») acababa leído en el chat.
+  return MIME_LABEL[mime] ?? (mime.startsWith('text/') && mime !== 'text/csv' ? 'texto' : mime);
 }
 
 function coverage(s: { docs: number; partial: number }): string {
