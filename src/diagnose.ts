@@ -531,7 +531,13 @@ export async function diagnose(deps: DiagnoseInput = {}): Promise<DiagnoseReport
   }
   try {
     const detail = readBusyDetail(stateDir, at);
-    if (detail.items.length > 0) state.busy = describeBusy(detail.items, at);
+    const all = [...detail.items, ...detail.hung];
+    // Con el proceso muerto, ocupada.json se queda como estaba al cerrarse: decir «ocupada
+    // con…» debajo de «se ha parado» parecía que seguía trabajando.
+    if (alive === false) {
+      if (all.length > 0)
+        state.busy = `nada, está parada (al cerrarse tenía abierto: ${describeBusy(all, at)})`;
+    } else if (detail.items.length > 0) state.busy = describeBusy(detail.items, at);
     else if (detail.hung.length > 0) {
       state.busy = `colgado (no frena la actualización): ${describeBusy(detail.hung, at)}`;
     }
