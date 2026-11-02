@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Store } from '../src/db.js';
+import { loadDatabaseSync } from '../src/sqlite.js';
 import {
   buildTriggerPrompt,
   formatTriggerList,
@@ -54,6 +55,34 @@ describe('trigger store', () => {
     expect(store.getTrigger(t.id)?.lastFiredAt).toBe('2026-10-19T01:00:00.000Z');
     expect(store.deleteTrigger(t.id)).toBe(true);
     expect(store.listTriggers()).toHaveLength(0);
+  });
+
+  it('una fila con args corruptos se omite y no tira el listado ni al motor', async () => {
+    saveProcedure();
+    const good = store.saveTrigger({
+      scope: SCOPE,
+      routine: 'archiva-pdf',
+      event: 'archivo',
+      match: '.pdf',
+      args: { a: '1' },
+    });
+    const bad = store.saveTrigger({
+      scope: SCOPE,
+      routine: 'archiva-pdf',
+      event: 'archivo',
+      match: '.doc',
+      args: { a: '1' },
+    });
+    const DatabaseSync = loadDatabaseSync();
+    const db = new DatabaseSync(join(dir, 'db.sqlite'));
+    db.prepare("UPDATE routine_triggers SET args = '{roto' WHERE id = ?").run(bad.id);
+    db.close();
+    expect(store.listTriggers().map((t) => t.id)).toEqual([good.id]);
+    expect(store.getTrigger(bad.id)).toBeNull();
+    // El contrato del motor («never throws: the rest still fire») vale también al leer la tabla.
+    const engine = new TriggerEngine({ store, run: async () => {} });
+    const result = await engine.emit({ type: 'archivo', scope: SCOPE, text: 'hay un .pdf' });
+    expect(result.fired).toBe(1);
   });
 
   it('es idempotente: mismo scope/rutina/evento/coincidencia actualiza, no duplica', () => {
