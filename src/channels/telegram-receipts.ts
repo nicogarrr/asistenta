@@ -43,6 +43,16 @@ export function receiptKind(inbound: ReceiptInput): ReceiptKind | null {
   return null;
 }
 
+/**
+ * ¿Sale acuse al llegar este mensaje? Una nota de voz NO: el dueño pidió que Asistenta
+ * haga lo que se le pide, sin «transcribiendo…» ni repetir lo que entendió, salvo que él
+ * pida la transcripción en el propio audio (entonces la respuesta la trae). Lo único que
+ * sí se dice es que no se entendió nada ({@link voiceHeardText} con texto vacío).
+ */
+export function receiptStartsFor(kind: ReceiptKind): boolean {
+  return kind !== 'voice';
+}
+
 /** Nombre corto y legible del fichero (sin rutas, con tope). */
 function shortName(name: string | undefined): string {
   const base = (name ?? '').split(/[\\/]/).pop()?.trim() ?? '';
