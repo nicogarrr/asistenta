@@ -9,6 +9,7 @@ import {
 } from '../mail/deliveries.js';
 import { deliveriesText } from '../mail/deliveries-text.js';
 import type { MailMessage } from '../mail/types.js';
+import { sliceSafe } from '../text.js';
 
 const Params = lazySchema(() =>
   Type.Object({
@@ -60,7 +61,7 @@ function chosenKey(db: DatabaseSync, said: string, now: number): string | undefi
 }
 
 const choiceLabel = (d: Delivery): string =>
-  `${d.carrier}${d.tracking ? ` (${d.tracking})` : ` («${d.title.slice(0, 60)}»)`}`;
+  `${d.carrier}${d.tracking ? ` (${d.tracking})` : ` («${sliceSafe(d.title, 60)}»)`}`;
 
 export interface DeliveriesToolDeps {
   db: DatabaseSync;
