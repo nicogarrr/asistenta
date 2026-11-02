@@ -3,7 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 // La sonda cargaba el código del intento (BrowserService) en su propio proceso: ese código
 // podía parchear process.stdout y process.exit y convertir un FALLA en PASA. Ahora corre en
@@ -130,30 +130,35 @@ export class BrowserService {
 }
 `;
 
-async function runProbe(service: string, env: NodeJS.ProcessEnv = process.env) {
+async function runProbe(
+  service: string,
+  env: NodeJS.ProcessEnv = process.env,
+  extra: string[] = [],
+) {
   const dir = mkdtempSync(join(tmpdir(), 'evo-probe-agent-'));
-  dirs.push(dir);
-  cpSync(join(repo, 'evolve'), join(dir, 'evolve'), { recursive: true });
-  mkdirSync(join(dir, 'src', 'browser'), { recursive: true });
-  writeFileSync(join(dir, 'src', 'browser', 'service.ts'), service);
-  cpSync(join(repo, 'src', 'evolve'), join(dir, 'src', 'evolve'), { recursive: true });
-  symlinkSync(join(repo, 'node_modules'), join(dir, 'node_modules'), 'junction');
-  return exec(
-    process.execPath,
-    [join(repo, 'node_modules', 'vite-node', 'vite-node.mjs'), 'evolve/probe-generic-flow.ts'],
-    { cwd: dir, timeout: 150_000, env },
-  ).then(
-    (o) => ({ code: 0 as number | null, stdout: o.stdout }),
-    (e: { code?: number; stdout?: string }) => ({ code: e.code ?? null, stdout: e.stdout ?? '' }),
-  );
+  try {
+    cpSync(join(repo, 'evolve'), join(dir, 'evolve'), { recursive: true });
+    mkdirSync(join(dir, 'src', 'browser'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'browser', 'service.ts'), service);
+    cpSync(join(repo, 'src', 'evolve'), join(dir, 'src', 'evolve'), { recursive: true });
+    symlinkSync(join(repo, 'node_modules'), join(dir, 'node_modules'), 'junction');
+    return await exec(
+      process.execPath,
+      [join(repo, 'node_modules', 'vite-node', 'vite-node.mjs'), 'evolve/probe-generic-flow.ts'],
+      { cwd: dir, timeout: 150_000, env },
+    ).then(
+      (o) => ({ code: 0 as number | null, stdout: o.stdout }),
+      (e: { code?: number; stdout?: string }) => ({ code: e.code ?? null, stdout: e.stdout ?? '' }),
+    );
+  } finally {
+    // Cada prueba borra lo suyo: corren a la vez y un afterEach común borraría la carpeta de otra.
+    for (const d of [dir, ...extra]) rmSync(d, { recursive: true, force: true });
+  }
 }
 
-const dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-
-describe('la sonda no se deja falsear desde el código del intento', () => {
+// Las cinco sondas pasan casi todo el tiempo esperando avisos que nunca llegan (cada FALLA
+// agota su ventana), así que corren a la vez: el fichero tarda lo que la más lenta, no la suma.
+describe.concurrent('la sonda no se deja falsear desde el código del intento', () => {
   it('un FALLA sigue siendo FALLA aunque el intento parchee stdout y exit', async () => {
     const r = await runProbe(FORGER);
     expect(r.stdout).toMatch(/^FALLA {2}la captura devuelve bytes enviables/m);
@@ -209,8 +214,7 @@ describe('la sonda no se deja falsear desde el código del intento', () => {
     'Node copiado como «chrome» en la carpeta de navegadores no cuenta como navegador',
     async () => {
       const pw = mkdtempSync(join(tmpdir(), 'evo-probe-pw-'));
-      dirs.push(pw);
-      const r = await runProbe(DISGUISED, { ...process.env, PLAYWRIGHT_BROWSERS_PATH: pw });
+      const r = await runProbe(DISGUISED, { ...process.env, PLAYWRIGHT_BROWSERS_PATH: pw }, [pw]);
       expect(r.stdout).toMatch(/FALLA {2}el campo recibe foco/);
       for (const label of [
         'la URL adivinada con 404 no quema el turno',
