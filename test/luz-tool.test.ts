@@ -104,7 +104,7 @@ describe('tool luz: «¿a qué hora pongo la lavadora?»', () => {
       fetchFn: fake([], { '2026-11-01': ok(NOV1) }),
       now: () => new Date('2026-11-01T20:55:00Z'),
     });
-    expect(textOf(await late.execute('t', { horas: 2 }))).toContain('de 22 a 0 h');
+    expect(textOf(await late.execute('t', { horas: 2 }))).toContain('de 22 a 24 h');
     // A las 22:30 ya no caben 2 h enteras hoy (la de las 22 ya va por la mitad).
     const veryLate = createLuzTool({
       fetchFn: fake([], { '2026-11-01': ok(NOV1) }),

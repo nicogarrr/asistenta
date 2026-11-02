@@ -95,9 +95,15 @@ const hourOf = (at: Date): string =>
     ),
   );
 
+/** La hora en que ACABA un tramo: a medianoche es «24» («de 22 a 24 h»), no «0». */
+const endHourOf = (at: Date): string => {
+  const h = hourOf(at);
+  return h === '0' ? '24' : h;
+};
+
 /** «10–11 h», en hora de Madrid (los días de cambio de hora salen bien). */
 function span(from: Date, hours = 1): string {
-  return `${hourOf(from)}–${hourOf(new Date(from.getTime() + hours * 3_600_000))} h`;
+  return `${hourOf(from)}–${endHourOf(new Date(from.getTime() + hours * 3_600_000))} h`;
 }
 
 /** 0.08363 → «0,084 €/kWh». */
@@ -151,7 +157,7 @@ function ranges(hours: LuzHour[]): string {
   const parts = groups.map((g) => {
     const first = g[0] as LuzHour;
     const end = new Date(first.at.getTime() + g.length * 3_600_000);
-    return `de ${hourOf(first.at)} a ${hourOf(end)} h`;
+    return `de ${hourOf(first.at)} a ${endHourOf(end)} h`;
   });
   if (parts.length <= 1) return parts.join('');
   return `${parts.slice(0, -1).join(', ')} y ${parts.at(-1)}`;
@@ -206,7 +212,7 @@ export function luzText(
     const what = n === 1 ? 'Para 1 hora' : `Para ${n} horas seguidas`;
     if (block) {
       lines.push(
-        `• ${what}${opts.isToday ? ' (lo que queda de hoy)' : ''}: de ${hourOf(block.from)} a ${hourOf(new Date(block.from.getTime() + n * 3_600_000))} h, a ${euros(block.avg)} de media`,
+        `• ${what}${opts.isToday ? ' (lo que queda de hoy)' : ''}: de ${hourOf(block.from)} a ${endHourOf(new Date(block.from.getTime() + n * 3_600_000))} h, a ${euros(block.avg)} de media`,
       );
     } else {
       // Los precios de mañana salen hacia las 20:30: pasada esa hora no hay que esperar.
