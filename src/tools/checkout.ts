@@ -543,7 +543,7 @@ export interface CheckoutToolDeps {
    * too, and the tool asks again, because a gate that can be misconfigured is not a
    * reason to leave the charge to chance.
    */
-  requireApproval: (action: string, summary: string) => Promise<boolean>;
+  requireApproval: (action: string, summary: string, signal?: AbortSignal) => Promise<boolean>;
   /**
    * Hard cap per purchase, in cents. Above it the tool refuses BEFORE asking:
    * a confirmation the agent must never collect is not collected. Default 300 EUR.
@@ -717,7 +717,7 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
     // Sequential: one page, and two selections clicking at once is how the wrong option
     // gets bought.
     executionMode: 'sequential',
-    execute: async (_id, raw) => {
+    execute: async (_id, raw, signal) => {
       const args = raw as unknown as Record<string, unknown>;
       const action = textOf(args.action);
 
@@ -977,7 +977,8 @@ export function createCheckoutTool(deps: CheckoutToolDeps): AgentTool<typeof Che
             'Yo NO pulso el boton de pagar: eso lo haces tu. Dime "si" y te dejo el navegador con la pantalla de pago abierta.',
           ].join(' ');
 
-          const approved = await deps.requireApproval('checkout:confirm', summary);
+          // La señal del turno: un /stop o un turno cortado retira la pregunta (solo deniega).
+          const approved = await deps.requireApproval('checkout:confirm', summary, signal);
           if (!approved) {
             log.info('checkout declined', { amount, hasItem: true });
             return {

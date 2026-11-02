@@ -22,7 +22,9 @@ export interface PurchaseApprovals {
     threadKey: string,
     action: string,
     summary: string,
-    askHuman: (summary: string) => Promise<boolean>,
+    askHuman: (summary: string, signal?: AbortSignal) => Promise<boolean>,
+    /** La señal del turno: con el turno cortado (/stop, timeout) la pregunta se retira. */
+    signal?: AbortSignal,
   ): Promise<boolean>;
   /** Fin del turno del hilo: ninguna respuesta pasa al turno siguiente. */
   forgetThread(threadKey: string): void;
@@ -32,12 +34,14 @@ export interface PurchaseApprovals {
 export function createPurchaseApprovals(): PurchaseApprovals {
   const answers = new Map<string, boolean>();
   return {
-    async ask(threadKey, action, summary, askHuman) {
+    async ask(threadKey, action, summary, askHuman, signal) {
       const key = `${threadKey}:${action}:${summary}`;
       const remembered = answers.get(key);
       if (remembered !== undefined) return remembered;
+      // Turno ya cortado: nadie espera la respuesta, así que ni se pregunta (denegada).
+      if (signal?.aborted) return false;
       log.info('approval requested', { thread: threadKey, tool: action });
-      const approved = await askHuman(summary);
+      const approved = await (signal ? askHuman(summary, signal) : askHuman(summary));
       answers.set(key, approved);
       return approved;
     },

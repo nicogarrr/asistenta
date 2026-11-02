@@ -2188,7 +2188,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // site, and the flow would walk into a wall the user had to open twice.
       createCheckoutTool({
         page: createCheckoutPage(browserFor(thread.key), scope),
-        requireApproval: (action, summary) => askCheckout(thread, action, summary),
+        requireApproval: (action, summary, signal) => askCheckout(thread, action, summary, signal),
         goal: () => recentRequestsLabel(thread),
         maxAmountCents: 30_000,
       }),
@@ -2622,8 +2622,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
   const purchaseApprovals = createPurchaseApprovals();
-  const askCheckout = (thread: Thread, action: string, summary: string): Promise<boolean> =>
-    purchaseApprovals.ask(thread.key, action, summary, (q) => askOncePerTurn(thread, q));
+  const askCheckout = (
+    thread: Thread,
+    action: string,
+    summary: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> =>
+    purchaseApprovals.ask(
+      thread.key,
+      action,
+      summary,
+      (q, s) => askOncePerTurn(thread, q, s),
+      signal,
+    );
 
   const getOrCreateThread = async (
     chatKey_: string,
