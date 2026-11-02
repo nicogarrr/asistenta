@@ -59,6 +59,8 @@ export interface AgentRunResult {
   attempts: number;
   inputTokens: number;
   outputTokens: number;
+  /** Entrada servida desde cache del proveedor (medida, 0 si no la reporta). */
+  cacheReadTokens: number;
   /** Structured trail of the run (no tool output text), for learning from failures. */
   steps: RunStep[];
   /**
@@ -1155,6 +1157,7 @@ export class PersonalAgent {
       toolErrors: 0,
       inputTokens: 0,
       outputTokens: 0,
+      cacheReadTokens: 0,
       steps: [],
       startActions: new Map(),
       fingerprints: [],
@@ -1413,6 +1416,7 @@ export class PersonalAgent {
         error = event.message.errorMessage ?? null;
         shared.inputTokens += event.message.usage?.input ?? 0;
         shared.outputTokens += event.message.usage?.output ?? 0;
+        shared.cacheReadTokens += event.message.usage?.cacheRead ?? 0;
         // A failed turn that only lives in the transcript is invisible in the logs,
         // which is how a stuck run looks identical to a working one. Log it.
         if (error) {
@@ -1506,6 +1510,7 @@ export class PersonalAgent {
       attempts: 1,
       inputTokens: shared.inputTokens,
       outputTokens: shared.outputTokens,
+      cacheReadTokens: shared.cacheReadTokens,
       filesWritten: shared.fileWrites.count,
     };
   }
@@ -1586,6 +1591,7 @@ interface AttemptState {
   toolErrors: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
   steps: RunStep[];
   /** toolCallId -> action label, set at start and consumed at end. */
   startActions: Map<string, string>;

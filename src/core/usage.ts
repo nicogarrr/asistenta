@@ -330,6 +330,24 @@ export function usageForSession(id: string): UsageTotals {
   }
 }
 
+/** Últimos registros (cualquier sesión), del más reciente al más antiguo. */
+export function recentTurns(limit = 5): UsageRecord[] {
+  const cap = Math.max(1, Math.min(50, Math.floor(limit) || 5));
+  try {
+    const files = readdirSync(paths.log)
+      .filter((name) => USAGE_FILE.test(name))
+      .sort()
+      .slice(-SESSION_USAGE_DAYS)
+      .map((name) => join(paths.log, name));
+    return files
+      .flatMap((file) => readRecords(file))
+      .sort((a, b) => b.ts.localeCompare(a.ts))
+      .slice(0, cap);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * true si el coste de hoy supera `limitEur`.
  *

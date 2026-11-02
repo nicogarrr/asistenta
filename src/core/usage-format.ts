@@ -1,5 +1,5 @@
 import type { GoQuota } from './go-quota.js';
-import type { ContextEstimate, UsageReport, UsageReportTotals } from './usage.js';
+import type { ContextEstimate, UsageRecord, UsageReport, UsageReportTotals } from './usage.js';
 
 /**
  * Texto de /consumo: tokens y coste estimado por dia y por modelo, mas el
@@ -144,4 +144,21 @@ export function parseUsageDays(args: string): number | null {
     return n >= 1 && n <= 31 ? n : null;
   }
   return null;
+}
+
+/** Lista de últimos turnos: tokens medidos + composición estimada si la tienen. */
+export function formatTurnList(records: UsageRecord[]): string {
+  if (records.length === 0) return 'Aún no hay turnos registrados.';
+  const out: string[] = ['Últimos turnos (tokens medidos; composición estimada):'];
+  for (const r of records) {
+    const time = /T(\d{2}:\d{2})/.exec(r.ts)?.[1] ?? '--:--';
+    const cache = r.cacheReadTokens > 0 ? ` (caché ${formatTokens(r.cacheReadTokens)})` : '';
+    const ctx = r.context
+      ? ` · sistema ${formatTokens(r.context.system)} · memoria ${formatTokens(r.context.memory)} · historial ${formatTokens(r.context.history)} · herramientas ${formatTokens(r.context.tools)}`
+      : '';
+    out.push(
+      `  ${time} ${r.model || 'modelo?'}: ${formatTokens(r.inputTokens)} in / ${formatTokens(r.outputTokens)} out${cache}${ctx}`,
+    );
+  }
+  return out.join('\n');
 }
