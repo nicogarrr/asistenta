@@ -436,3 +436,29 @@ try {
 } finally { $gm.Dispose() }
 `;
 }
+
+/** Geometría de la última captura completa que vio el modelo (para pasar píxeles reales a los suyos). */
+export interface SharedView {
+  width: number;
+  height: number;
+  nativeWidth: number;
+  nativeHeight: number;
+}
+
+let sharedView: SharedView | null = null;
+
+/**
+ * La publica `computer` en cada captura completa. `windows controls` la usa para dar
+ * coordenadas en el mismo espacio que `computer.click`: antes daba píxeles reales y el
+ * clic los volvía a escalar (×1,5 en 1920×1080 con capturas de 1280).
+ */
+export function shareView(view: SharedView | null): void {
+  sharedView =
+    view && view.width > 0 && view.height > 0 && view.nativeWidth > 0 && view.nativeHeight > 0
+      ? { ...view }
+      : null;
+}
+
+export function lastSharedView(): SharedView | null {
+  return sharedView;
+}

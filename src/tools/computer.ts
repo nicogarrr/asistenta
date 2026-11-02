@@ -13,6 +13,7 @@ import {
   type MarkBox,
   marksOf,
   shareMap,
+  shareView,
   type UiElement,
   type UiMap,
 } from '../screen/ui-map.js';
@@ -723,6 +724,12 @@ export function createComputerTool(
     }
     view = { width: shot.width, height: shot.height };
     viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
+    shareView({
+      width: shot.width,
+      height: shot.height,
+      nativeWidth: shot.nativeWidth,
+      nativeHeight: shot.nativeHeight,
+    });
     return [
       {
         type: 'text',
@@ -907,6 +914,18 @@ export function createComputerTool(
         const { shot, mapText, mapDetails } = mapped;
         view = { width: shot.width, height: shot.height };
         viewNative = { width: shot.nativeWidth, height: shot.nativeHeight };
+        shareView({
+          width: shot.width,
+          height: shot.height,
+          nativeWidth: shot.nativeWidth,
+          nativeHeight: shot.nativeHeight,
+        });
+        shareView({
+          width: shot.width,
+          height: shot.height,
+          nativeWidth: shot.nativeWidth,
+          nativeHeight: shot.nativeHeight,
+        });
         const downscaled = shot.width !== shot.nativeWidth || shot.height !== shot.nativeHeight;
         log.debug('screenshot', { bytes: shot.image.length, ...shot, image: undefined });
         const sent =
