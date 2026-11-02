@@ -11,7 +11,7 @@
 
 import WebSocket from 'ws';
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
-import { assertTvHost } from './lgtv.js';
+import { assertTvHost, TV_SESSION_IDLE_MS, tvSessionIdleMs } from './lgtv.js';
 import { sendWakeOnLan } from './wol.js';
 
 const APP_NAME_B64 = Buffer.from('Asistenta').toString('base64');
@@ -62,6 +62,8 @@ export interface SamsungSocket {
   on(event: 'close', cb: () => void): void;
   send(data: string): void;
   close(): void;
+  /** 1 = abierto (ws). Ausente en sockets de prueba: se da por abierto. */
+  readyState?: number;
 }
 
 export type SamsungSocketFactory = (url: string) => SamsungSocket;
@@ -87,6 +89,11 @@ export interface SamsungDeps {
   wake?: (mac: string, host: string) => Promise<unknown>;
   connectTimeoutMs?: number;
   graceMs?: number;
+  /**
+   * Conexión reutilizada entre órdenes (daemon): sin ella cada orden abre el
+   * WebSocket (TLS + «ms.channel.connect»), manda y espera 300 ms para cerrar.
+   */
+  pool?: SamsungSessionPool | null;
 }
 
 export function samsungUrl(conn: SamsungConn): string {
@@ -114,15 +121,11 @@ function parse(data: unknown): { event?: string; data?: { token?: unknown } } | 
   }
 }
 
-/**
- * Abre el canal, espera «ms.channel.connect» (con token si la tele lo da),
- * manda los mensajes y cierra. Devuelve el token visto (si hubo).
- */
-export async function samsungSend(
+/** Abre el canal y espera «ms.channel.connect». Devuelve el socket y el token visto (si hubo). */
+async function openSamsung(
   conn: SamsungConn,
-  messages: readonly object[],
-  deps: SamsungDeps = {},
-): Promise<string | undefined> {
+  deps: SamsungDeps,
+): Promise<{ ws: SamsungSocket; token: string | undefined }> {
   const url = samsungUrl(conn);
   const ws = (deps.socketFactory ?? defaultFactory)(url);
   const timeoutMs = deps.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
@@ -175,6 +178,19 @@ export async function samsungSend(
       }
     });
   });
+  return { ws, token };
+}
+
+/**
+ * Abre el canal, espera «ms.channel.connect» (con token si la tele lo da),
+ * manda los mensajes y cierra. Devuelve el token visto (si hubo).
+ */
+export async function samsungSend(
+  conn: SamsungConn,
+  messages: readonly object[],
+  deps: SamsungDeps = {},
+): Promise<string | undefined> {
+  const { ws, token } = await openSamsung(conn, deps);
   for (const m of messages) ws.send(JSON.stringify(m));
   await new Promise((r) => setTimeout(r, deps.graceMs ?? SEND_GRACE_MS));
   try {
@@ -184,6 +200,120 @@ export async function samsungSend(
   }
   if (token && token !== conn.token) await deps.onToken?.(token);
   return token;
+}
+
+interface SamsungSession {
+  ws: SamsungSocket;
+  closed: boolean;
+  idleTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Conexión con cada Samsung abierta entre órdenes, como TvSessionPool (#1891)
+ * para la LG. Antes cada orden pagaba la apertura (TLS + espera de
+ * «ms.channel.connect», ~0,3–0,8 s en casa) más 300 ms fijos antes de cerrar.
+ *
+ * - Se cierra sola tras `idleMs` sin usarse (PA_TV_SESSION_IDLE_MS, el mismo
+ *   que la LG; 0 = sin sesión persistente).
+ * - Si la tele la cierra (apagado, reposo, otra app) se tira y la siguiente
+ *   orden abre otra; un socket que ya no está abierto nunca se usa para mandar
+ *   (las teclas de Samsung no tienen acuse: se perderían en silencio).
+ */
+export class SamsungSessionPool {
+  private readonly sessions = new Map<string, Promise<SamsungSession>>();
+  private readonly idleMs: number;
+
+  constructor(opts: { idleMs?: number } = {}) {
+    this.idleMs = opts.idleMs ?? TV_SESSION_IDLE_MS;
+  }
+
+  size(): number {
+    return this.sessions.size;
+  }
+
+  closeAll(): void {
+    for (const [key, entry] of this.sessions) {
+      this.sessions.delete(key);
+      entry.then(
+        (s) => this.drop(s),
+        () => undefined,
+      );
+    }
+  }
+
+  private drop(s: SamsungSession, key?: string): void {
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    if (key) {
+      const entry = this.sessions.get(key);
+      entry?.then(
+        (cur) => {
+          if (cur === s && this.sessions.get(key) === entry) this.sessions.delete(key);
+        },
+        () => undefined,
+      );
+    }
+    if (!s.closed) {
+      s.closed = true;
+      try {
+        s.ws.close();
+      } catch {
+        // ya cerrado
+      }
+    }
+  }
+
+  private open(conn: SamsungConn, deps: SamsungDeps, key: string): Promise<SamsungSession> {
+    const entry = (async () => {
+      const { ws, token } = await openSamsung(conn, deps);
+      const s: SamsungSession = { ws, closed: false };
+      const gone = () => {
+        s.closed = true;
+        this.drop(s, key);
+      };
+      ws.on('close', gone);
+      ws.on('error', gone);
+      if (token && token !== conn.token) await deps.onToken?.(token);
+      return s;
+    })();
+    this.sessions.set(key, entry);
+    entry.catch(() => {
+      if (this.sessions.get(key) === entry) this.sessions.delete(key);
+    });
+    return entry;
+  }
+
+  private usable(s: SamsungSession): boolean {
+    return !s.closed && (s.ws.readyState === undefined || s.ws.readyState === 1);
+  }
+
+  /** Manda los mensajes por la conexión abierta (o una nueva si no hay o ya no vale). */
+  async send(
+    conn: SamsungConn,
+    messages: readonly object[],
+    deps: SamsungDeps = {},
+  ): Promise<void> {
+    const key = samsungUrl(conn);
+    let s = await (this.sessions.get(key) ?? this.open(conn, deps, key));
+    if (!this.usable(s)) {
+      this.drop(s, key);
+      s = await this.open(conn, deps, key);
+    }
+    for (const m of messages) s.ws.send(JSON.stringify(m));
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    s.idleTimer = setTimeout(() => this.drop(s, key), this.idleMs);
+    s.idleTimer.unref?.();
+  }
+}
+
+let sharedSamsung: SamsungSessionPool | null | undefined;
+
+/** El pool del daemon (null si PA_TV_SESSION_IDLE_MS=0). `pa tv` no lo usa: abre y cierra. */
+export function sharedSamsungPool(): SamsungSessionPool | null {
+  if (sharedSamsung === undefined) {
+    const idleMs = tvSessionIdleMs();
+    sharedSamsung = idleMs > 0 ? new SamsungSessionPool({ idleMs }) : null;
+  }
+  return sharedSamsung;
 }
 
 export function samsungKey(key: string): object {
@@ -237,7 +367,10 @@ export async function samsungDeviceInfo(
 }
 
 export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriver {
-  const send = (messages: object[]) => samsungSend(conn, messages, deps).then(() => undefined);
+  const send = (messages: object[]) =>
+    deps.pool
+      ? deps.pool.send(conn, messages, deps)
+      : samsungSend(conn, messages, deps).then(() => undefined);
   const press = (key: string) => send([samsungKey(key)]);
   return {
     brand: 'Samsung',
