@@ -5,12 +5,11 @@
  * Si no hay nada reconocible, mantiene el crudo y apunta a las otras vías.
  */
 import { describe, expect, it } from 'vitest';
+import { createTvTool, type TvToolDeps } from '../src/tools/tv.js';
 import {
   collectTvSearchItems,
-  createTvTool,
   formatTvSearchResults,
-  type TvToolDeps,
-} from '../src/tools/tv.js';
+} from '../src/tv/search-results.js';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(200, 7)]);
 
@@ -70,6 +69,61 @@ describe('collectTvSearchItems', () => {
     expect(collectTvSearchItems({ returnValue: true, results: [] })).toEqual([]);
     expect(collectTvSearchItems('cualquier cosa')).toEqual([]);
     expect(collectTvSearchItems(null)).toEqual([]);
+  });
+});
+
+describe('forma real de unifiedsearch (docs webOS LS2)', () => {
+  // Respuesta documentada de luna-send com.webos.service.unifiedsearch/search:
+  // el título vive en display.title y lo lanzable en el hermano intent
+  // (name = appId, o uri = app://<appId>/<ruta>).
+  const REAL = {
+    results: [
+      {
+        items: [
+          {
+            intent: {
+              action: 'view',
+              uri: 'app://com.webos.app.avn.settings/Settings/Profiles',
+            },
+            display: { title: 'Profiles', icon: '/usr/palm/x.png' },
+          },
+        ],
+        categoryId: 'com.webos.app.avn.settings',
+      },
+      {
+        items: [
+          {
+            intent: { name: 'com.webos.app.androidauto' },
+            display: { title: 'Android Auto Projection' },
+          },
+        ],
+        categoryId: 'sam.apps',
+      },
+    ],
+    returnValue: true,
+  };
+
+  it('saca título de display y appId/target del intent hermano', () => {
+    expect(collectTvSearchItems(REAL)).toEqual([
+      {
+        title: 'Profiles',
+        appId: 'com.webos.app.avn.settings',
+        id: undefined,
+        target: 'app://com.webos.app.avn.settings/Settings/Profiles',
+      },
+      {
+        title: 'Android Auto Projection',
+        appId: 'com.webos.app.androidauto',
+        id: undefined,
+        target: undefined,
+      },
+    ]);
+  });
+
+  it('la lista formateada lleva los appId listos para launch', () => {
+    const out = formatTvSearchResults('pro', REAL);
+    expect(out).toContain('1. Profiles (appId=com.webos.app.avn.settings)');
+    expect(out).toContain('2. Android Auto Projection (appId=com.webos.app.androidauto)');
   });
 });
 
