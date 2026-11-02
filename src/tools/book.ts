@@ -133,6 +133,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
     dl: { bytes: Buffer; kind: 'epub' | 'pdf' },
     scanned = false,
     deliverTo?: string,
+    signal?: AbortSignal,
   ): Promise<ReturnType<typeof ok>> {
     const notes: string[] = [];
     let bytes = dl.bytes;
@@ -164,6 +165,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
       const r = await sendToKindle(
         { ...deps.kindle, requireApproval: deps.kindle.requireApproval },
         { title, bytes, kind },
+        signal,
       );
       out.push(
         {
@@ -232,7 +234,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
     ].join(' '),
     parameters: Params,
     executionMode: 'sequential',
-    execute: async (_id, args) => {
+    execute: async (_id, args, signal) => {
       switch (args.action) {
         case 'search': {
           const q = (args.query ?? '').trim();
@@ -305,6 +307,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
           const approved = await deps.kindle.requireApproval(
             'book:set_kindle',
             `Guardar ${address} como tu dirección de Kindle`,
+            signal,
           );
           if (!approved) return ok('No guardada: no lo has aprobado.', { saved: false });
           await deps.saveKindleAddress(address);
@@ -325,7 +328,13 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
             const st = await deps.secret.status();
             if (!st.ok) throw new Error(`Biblioteca Secreta no disponible: ${st.reason}`);
             const got = await deps.secret.download(id.slice('secret:'.length));
-            return deliver(got.title, { bytes: got.bytes, kind: 'epub' }, false, args.deliver);
+            return deliver(
+              got.title,
+              { bytes: got.bytes, kind: 'epub' },
+              false,
+              args.deliver,
+              signal,
+            );
           }
           const hit = await lookup(id);
           const file = pickFile(hit.files);
@@ -335,6 +344,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
             await downloadBook(file.url, deps.fetcher),
             file.scanned,
             args.deliver,
+            signal,
           );
         }
 
@@ -350,6 +360,7 @@ export function createBookTool(deps: BookToolDeps): AgentTool<typeof Params> {
             await downloadBook(url, deps.fetcher, undefined, { direct: true }),
             false,
             args.deliver,
+            signal,
           );
         }
 
