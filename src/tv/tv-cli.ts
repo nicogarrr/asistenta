@@ -350,7 +350,11 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       } catch {
         mac = null;
       }
-      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
+      const { vaultSet, vaultSetMany } = await import('../vault.js');
+      // Registro EFECTIVO ANTES de tocar las claves sueltas: si la tele
+      // activa era de antes del registro, queda migrada aqui abajo (momento
+      // de escritura real). Despues de vaultSetMany ya no se podria leer.
+      const effective = await loadKnownTvs();
       await vaultSetMany({
         [TV_HOST_KEY]: host,
         [TV_CLIENT_KEY]: clientKey,
@@ -359,14 +363,14 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         ...(mac ? { [TV_MAC_KEY]: mac } : {}),
       });
       // Registro multi-tele: esta queda guardada y pasa a ser la activa.
-      const prev = findTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), host);
+      const prev = findTv(effective, host);
       const name = prev?.name ?? picked?.name;
       const model = prev?.model ?? picked?.model;
       const uuid = prev?.uuid ?? picked?.uuid;
       await vaultSet(
         TV_REGISTRY_KEY,
         registryToJson(
-          upsertTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+          upsertTv(effective, {
             host,
             ...(name ? { name } : {}),
             ...(model ? { model } : {}),
@@ -426,12 +430,12 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       if (!info) return 1;
       // Validacion real contra el modelo detectado: que responda lo que usamos.
       const validation = await braviaValidateMethods(host, psk.trim());
-      const { vaultGet, vaultSet, vaultSetMany } = await import('../vault.js');
+      const { vaultSet, vaultSetMany } = await import('../vault.js');
       await vaultSet(sonyPskKey(host), psk.trim());
       await vaultSet(
         TV_REGISTRY_KEY,
         registryToJson(
-          upsertTv(parseRegistry(await vaultGet(TV_REGISTRY_KEY)), {
+          upsertTv(await loadKnownTvs(), {
             host,
             brand: 'sony',
             clientKey: '',
@@ -540,7 +544,7 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
         );
       }
       const found = await discoverWebOsTvs({ probeGlasshouse: false });
-      const known = parseRegistry(await vaultGet(TV_REGISTRY_KEY));
+      const known = await loadKnownTvs();
       const active = await vaultGet(TV_HOST_KEY);
       if (found.length === 0) {
         process.stdout.write('No veo ninguna tele encendida en esta red.\n');

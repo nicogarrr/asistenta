@@ -288,6 +288,31 @@ describe('ensureActiveTv', () => {
     expect(r.switchedTo?.host).toBe('10.0.0.9');
   });
 
+  it('tele de antes del registro (claves sueltas): la reconoce por MAC y la migra al cambiar', async () => {
+    nowVal += 120_000;
+    // LG emparejada antes de que existiera tv:tvs; su IP cambio por DHCP.
+    const v = vault({
+      'tv:host': '192.168.1.237',
+      'tv:activeBrand': 'lg',
+      'tv:clientKey': 'k-salon',
+      'tv:secure': '1',
+      'tv:mac': 'a8:23:fe:01:02:03',
+    });
+    const r = await ensureActiveTv({
+      ...v,
+      tcpOpen: dead,
+      discover: async () => [found('192.168.1.50', 'lg', 'uuid-nueva')],
+      macOf: async () => 'A8:23:FE:01:02:03',
+      now: () => nowVal,
+    });
+    expect(r.switchedTo?.host).toBe('192.168.1.50');
+    const w = v.writes[0] ?? {};
+    expect(w['tv:clientKey']).toBe('k-salon');
+    // Y la migracion queda escrita en el registro (momento de escritura real).
+    const reg = JSON.parse(w['tv:tvs'] ?? '[]') as KnownTv[];
+    expect(reg.some((t) => t.host === '192.168.1.50' && t.clientKey === 'k-salon')).toBe(true);
+  });
+
   it('casa por MAC desde la tabla de vecinos cuando el uuid no esta guardado', async () => {
     nowVal += 120_000;
     const sinUuid: KnownTv = { ...lgTv };
