@@ -11,7 +11,7 @@ import { log } from '../log.js';
  * mano con PA_FESTIVOS_LOCALES.
  */
 
-const API = 'https://date.nager.at/api/v3/PublicHolidays';
+export const FESTIVOS_API = 'https://date.nager.at/api/v3/PublicHolidays';
 const CACHE_MS = 12 * 3_600_000;
 const DAY_MS = 86_400_000;
 
@@ -163,7 +163,7 @@ export function createFestivosTool(deps: FestivosDeps = {}): AgentTool<ReturnTyp
   const yearBody = async (year: number): Promise<unknown> => {
     const hit = cache.get(year);
     if (hit && now().getTime() - hit.at < CACHE_MS) return hit.body;
-    const res = await fetchFn(`${API}/${year}/ES`, {
+    const res = await fetchFn(`${FESTIVOS_API}/${year}/ES`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(deps.timeoutMs ?? 10_000),
     });
