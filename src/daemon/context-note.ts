@@ -15,7 +15,7 @@ import type { SessionStore } from '../memory/sessions.js';
 import type { MemorySnapshot } from '../memory/snapshot.js';
 import type { WorkstreamStore } from '../memory/workstreams.js';
 import { type MemoryStore, memoryScopesFor } from '../memory.js';
-import { describeBusy, interruptedTasks, openBusyItems } from '../ocupada.js';
+import { clearInterrupted, describeBusy, interruptedTasks, openBusyItems } from '../ocupada.js';
 import { renderPersonality } from '../personality.js';
 import type { ProjectContextStore } from '../project-context.js';
 import { skillsForContext } from '../skills/builtin.js';
@@ -57,6 +57,7 @@ export function buildContextNote(
   request?: string,
   ownerView = false,
   projects?: ProjectContextStore,
+  opts: { consumeInterrupted?: boolean } = {},
 ): string {
   const parts: string[] = [];
   // El perfil del dueño (v2 y PERFIL.md legado) es suyo: solo entra en el prompt de
@@ -134,6 +135,10 @@ export function buildContextNote(
       lines.push(
         `El último reinicio CORTÓ: ${describeBusy(cut)}. Ya no sigue en marcha: dilo tal cual, no digas que no hay nada a medias, y si te pide seguir retómalo sin repreguntar lo que ya autorizó.`,
       );
+      // Se dice una vez, en el primer turno con el dueño delante: antes nadie vaciaba la
+      // lista y horas después, ya retomada y acabada, cada turno seguía diciendo «CORTÓ».
+      // Un tick de objetivo no la consume (el dueño no la habría visto).
+      if (opts.consumeInterrupted) clearInterrupted();
     }
     if (lines.length) parts.push(`<tareas>\n${lines.join('\n')}\n</tareas>`);
   }
