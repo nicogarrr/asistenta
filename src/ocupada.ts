@@ -37,6 +37,22 @@ export function clearInterrupted(): void {
   interrupted = [];
 }
 
+/**
+ * Tras un /stop: lo que sigue abierto 5 s después de abortar y se abrió antes del /stop es un
+ * contador pegado (un turno cuyo hijo no murió). Se cierra para que no frene la actualización.
+ */
+export function releaseBusyOpenedBefore(cutoff: number): number {
+  let n = 0;
+  for (const item of [...open]) {
+    if (Date.parse(item.since) > cutoff) continue;
+    open.delete(item);
+    counts[item.kind] = Math.max(0, counts[item.kind] - 1);
+    n += 1;
+  }
+  if (n > 0) write();
+  return n;
+}
+
 /** Turnos y permisos abiertos en este proceso ahora mismo. */
 export function openBusyItems(): BusyItem[] {
   return [...open];

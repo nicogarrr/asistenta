@@ -10,9 +10,7 @@
 import { SUSPECT_BLANK_BYTES, type TvToolDeps } from '../tools/tv.js';
 import { describeTvStatus } from './status.js';
 
-export type ScreenTvResult =
-  | { kind: 'photo'; image: Buffer }
-  | { kind: 'text'; text: string };
+export type ScreenTvResult = { kind: 'photo'; image: Buffer } | { kind: 'text'; text: string };
 
 export function screenTvBlankText(statusLine: string | null): string {
   const detalle = statusLine ? ` ${statusLine}` : '';
@@ -30,8 +28,6 @@ export async function screenTvCapture(
   if (shot.image.length >= SUSPECT_BLANK_BYTES) {
     return { kind: 'photo', image: shot.image };
   }
-  const st = await deps
-    .status?.()
-    .catch(() => null);
+  const st = await deps.status?.().catch(() => null);
   return { kind: 'text', text: screenTvBlankText(st ? describeTvStatus(st) : null) };
 }
