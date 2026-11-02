@@ -331,6 +331,19 @@ export function createTvTool(deps: TvToolDeps): AgentTool<ReturnType<typeof Para
       'Es una lectura puntual no atomica: no mide mejoras ni certifica que una app se pueda borrar.',
       'Un dato no disponible NO significa cero, tele apagada ni lista de apps vacia.',
       'action=apps lista los ids y titulos instalados (los nuestras tienen id tipo org.webosbrew.hbchannel).',
+      '',
+      'LA TELE DE NICO (webOS rooteada): el Home NO es el de LG. Tiene el "Home de Nico"',
+      '(app tld.my.customhome, hecho por nosotros) que sustituye al launcher; un watcher',
+      '(homehook) lo reabre si el Home de LG pasa al frente, asi que la tecla HOME lleva a',
+      'SU Home, no al de LG. Su pantalla: arriba "Para ti" (recomendaciones TMDB; OK abre',
+      'la app del proveedor), abajo un dock de iconos (OK abre, Back pregunta si salir al',
+      'Home de LG, OK largo reordena). Para abrir una app NO navegues el Home a ciegas:',
+      'usa action=launch con el id, que es directo y no depende de donde este el foco.',
+      'Ids verificados en SU tele: Netflix=netflix, Movistar Plus+=com.telefonica.app.nux,',
+      'Nuvio TV=space.nuvio.webos, YouTube AdFree=org.webosbrew.youtube.adfree (su YouTube,',
+      'sin anuncios), IBO Player=iboplayer.lg, Moonlight=com.limelight.webos,',
+      'Asistenta=com.tvweb.dashboard. com.webos.app.home es el Home de LG (casi nunca lo',
+      'querra; si sale, el homehook lo tapa solo al instante).',
       'action=launch arranca una app, action=key pulsa el mando, action=toast muestra un aviso,',
       'action=power apaga o enciende (si esta apagada del todo y hay MAC guardada, por red).',
       'action=type escribe texto en el campo enfocado (buscadores); key con names es una rafaga de teclas.',
@@ -522,7 +535,8 @@ async function runTvAction(
     case 'guide': {
       // Qué echan en Movistar Plus+: fuente pública, la tele no se entera.
       const query = (args.text ?? '').trim();
-      if (!query) throw new Error('action=guide necesita text: el partido, peli o programa a buscar.');
+      if (!query)
+        throw new Error('action=guide necesita text: el partido, peli o programa a buscar.');
       if (!deps.guide) {
         throw new Error(
           'Esta instalación no tiene la guía de Movistar Plus+: pregunta qué quieren ver y busca el canal a mano.',
