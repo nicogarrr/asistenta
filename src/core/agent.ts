@@ -164,6 +164,8 @@ export function describeToolStart(tool: string, args: unknown): string {
         return 'pulsando donde toca';
       case 'drag':
         return 'arrastrando';
+      case 'scroll':
+        return 'moviendo la rueda del ratón';
       case 'type':
         return 'escribiendo lo que pediste';
       case 'key':

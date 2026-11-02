@@ -199,6 +199,30 @@ ${sequence}
 `);
   }
 
+  /**
+   * Rueda del ratón sobre un punto: `notches` positivos bajan, negativos suben (una
+   * muesca = 120, lo que manda una rueda de verdad). Se coloca el cursor primero porque
+   * Windows entrega la rueda a la ventana que está debajo del puntero.
+   */
+  async scroll(x: number, y: number, notches: number): Promise<void> {
+    const n = Math.max(-WHEEL_MAX_NOTCHES, Math.min(WHEEL_MAX_NOTCHES, Math.trunc(notches)));
+    if (n === 0) return;
+    const delta = -120 * Math.sign(n);
+    const steps = Array.from(
+      { length: Math.abs(n) },
+      () =>
+        `[M]::mouse_event(0x0800,0,0,[uint32]${delta >>> 0},[IntPtr]::Zero); Start-Sleep -Milliseconds 30`,
+    ).join('\n');
+    await this.#physicalPs(`
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Windows.Forms
+${ADD_TYPE_MOUSE}
+if (-not [PaDesktop]::SetCursorPos(${x}, ${y})) { throw 'No se pudo mover el cursor físico.' }
+Start-Sleep -Milliseconds 40
+${steps}
+`);
+  }
+
   async move(x: number, y: number): Promise<void> {
     await this.#physicalPs(`
 $ErrorActionPreference='Stop'
@@ -373,6 +397,9 @@ Add-Type -AssemblyName System.Windows.Forms
     return this.runPowerShell(script);
   }
 }
+
+/** Tope de muescas por acción de rueda: más es casi siempre un error del modelo. */
+export const WHEEL_MAX_NOTCHES = 25;
 
 const ADD_TYPE_MOUSE = `Add-Type @'
 using System;using System.Runtime.InteropServices;
