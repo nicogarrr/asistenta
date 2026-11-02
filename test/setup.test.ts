@@ -168,3 +168,23 @@ it('unsafe ID rejects the entire proposal', async () => {
   expect(await setupCommand([], deps)).toBe(1);
   expect(committed).toBeUndefined();
 });
+it('IDs de Telegram con coma final o espacios no abortan el asistente y se guardan limpios', async () => {
+  answers = [
+    'sí',
+    'sí',
+    '12345:abcdefghijklmnopqrstuv',
+    'sí',
+    ' 123, 456,',
+    'sí',
+    'synthetic-key',
+    'sí',
+  ];
+  expect(await setupCommand([], deps)).toBe(0);
+  expect(committed?.['telegram:allowedUserIds']).toBe('123,456');
+  expect(output).not.toContain('Formato de campo no válido');
+});
+it('IDs de Telegram solo con comas siguen sin valer', async () => {
+  answers = ['sí', 'sí', '12345:abcdefghijklmnopqrstuv', 'sí', ', ,'];
+  expect(await setupCommand([], deps)).toBe(1);
+  expect(committed).toBeUndefined();
+});
