@@ -77,6 +77,15 @@ export function unknownSpecialistNotice(name: string): string {
 }
 
 /**
+ * El hijo terminó sin decir nada (texto vacío y sin error). Un resultado vacío no es
+ * un «hecho»: el modelo lo lee así y no puede contar que la tarea salió bien.
+ */
+export function emptyResultNotice(specialistTitle?: string): string {
+  const who = specialistTitle ? `El especialista ${specialistTitle}` : 'El subagente';
+  return `${who} terminó sin devolver ninguna respuesta, así que no sabes qué hizo. No lo des por hecho: compruébalo tú o díselo al usuario.`;
+}
+
+/**
  * Crea la tool `delegate` sobre un pool ya configurado. `depthOf` devuelve la
  * profundidad del agente actual (el padre); el pool calcula la del hijo.
  */
@@ -125,7 +134,10 @@ export function createDelegateTool(
 
       // El modelo debe ver el fallo como texto util, no un contenido vacio; el
       // detalle estructurado queda para quien consuma el resultado.
-      const body = result.error ?? result.text;
+      // Sin error pero sin texto: se dice como fallo (y sin línea «🧩 Lo hizo…»).
+      const empty = result.error === undefined && result.text.trim() === '';
+      const error = empty ? emptyResultNotice(specialist?.title) : result.error;
+      const body = error ?? result.text;
       // Un nombre que no existe no debe pasar desapercibido: el modelo lo lee aquí
       // (y no solo en details) para no volver a pedirlo ni creer que lo hizo el bueno.
       const text =
@@ -135,7 +147,7 @@ export function createDelegateTool(
       const details: DelegateDetails = { depth: result.depth };
       if (specialist) details.specialist = specialist.name;
       else if (args.specialist !== undefined) details.unknownSpecialist = args.specialist;
-      if (result.error) details.error = result.error;
+      if (error) details.error = error;
 
       return {
         content: [{ type: 'text', text }],
