@@ -449,6 +449,22 @@ export function renderPage(): string {
     .ctx-umbral.cerca span { background: #f59e0b; }
     .ctx-hilo details { font-size: 13px; color: var(--suave); }
     .ctx-hilo details p { margin: 4px 0 0; word-break: break-word; }
+    .tarjeta.ancha { grid-column: 1 / -1; }
+    .mapa-info { margin: 0 0 8px; font-size: 14px; }
+    .mapa-lienzo { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; max-height: 72vh; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 12px; touch-action: manipulation; }
+    .mapa-lienzo line { stroke-opacity: 0.55; }
+    .mapa-lienzo .nodo { stroke: #0b0f14; stroke-width: 2; cursor: pointer; }
+    .mapa-lienzo .toque { fill: transparent; cursor: pointer; }
+    .mapa-lienzo .apagado { opacity: 0.12; }
+    .mapa-lienzo .elegido .nodo { stroke: #ffffff; stroke-width: 6; }
+    .mapa-lienzo line.resaltado { stroke-opacity: 1; stroke-width: 4; }
+    .mapa-leyenda { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--suave); }
+    .mapa-leyenda .raya { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+    .mapa-resultados { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+    .mapa-resultados button, .mapa-detalle button { font-size: 13px; text-align: left; max-width: 100%; white-space: normal; }
+    .mapa-detalle { margin-top: 10px; border: 1px solid var(--borde); border-radius: 12px; padding: 10px 12px; background: var(--panel-2); }
+    .mapa-detalle .texto { margin: 0 0 4px; font-size: 15px; }
+    .mapa-detalle ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
     @media (prefers-reduced-motion: reduce) {
       * { transition: none !important; }
     }
@@ -620,6 +636,22 @@ export function renderPage(): string {
           </div>
         </header>
         <div id="panel-memoria" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
+      <article class="tarjeta ancha" aria-labelledby="titulo-mapa">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-mapa">Mapa de memoria</h2>
+          <div class="controles">
+            <label class="buscador" for="buscar-mapa">
+              Buscar
+              <input id="buscar-mapa" type="search" placeholder="Texto o etiqueta…" autocomplete="off" spellcheck="false" />
+            </label>
+            <button class="mini" type="button" data-refrescar="mapa" aria-label="Refrescar Mapa de memoria">Refrescar</button>
+          </div>
+        </header>
+        <div id="panel-mapa" class="tarjeta-cuerpo sin-tope">
           <p class="muted">Cargando…</p>
         </div>
       </article>
@@ -1661,6 +1693,287 @@ ${renderFormatScript()}
         return true;
       }
 
+      var SVG_NS = 'http://www.w3.org/2000/svg';
+      var COLORES_MAPA = ['#7dd3fc', '#a78bfa', '#34d399', '#f59e0b', '#f472b6', '#facc15', '#60a5fa', '#fb923c'];
+      var COLOR_ENLACE = { enlace: '#f59e0b', reemplaza: '#f472b6', etiqueta: '#7dd3fc', mencion: '#64748b' };
+      var NOMBRE_ENLACE = { enlace: 'enlace [[…]]', reemplaza: 'reemplaza a otro', etiqueta: 'misma etiqueta', mencion: 'nombran lo mismo' };
+      var LADO_MAPA = 1000;
+      var mapa = { datos: null, grupos: [], lineas: [], vecinos: [], elegido: -1 };
+
+      function colorDeNodo(nodo) {
+        var etiqueta = nodo && nodo.etiquetas && nodo.etiquetas[0];
+        if (!etiqueta) return '#93a1b3';
+        var h = 0;
+        for (var i = 0; i < etiqueta.length; i += 1) h = (h * 31 + etiqueta.charCodeAt(i)) >>> 0;
+        return COLORES_MAPA[h % COLORES_MAPA.length];
+      }
+
+      function sinTildes(texto) {
+        return String(texto || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
+      }
+
+      // Disposición por fuerzas (Fruchterman-Reingold) en el propio navegador, sin librerías:
+      // los nodos se repelen, los enlaces atraen y una gravedad suave los centra.
+      function disponerMapa(n, enlaces) {
+        var x = new Float64Array(n);
+        var y = new Float64Array(n);
+        var dx = new Float64Array(n);
+        var dy = new Float64Array(n);
+        var centro = LADO_MAPA / 2;
+        var k = (LADO_MAPA / Math.sqrt(Math.max(n, 1))) * 0.45;
+        for (var i = 0; i < n; i += 1) {
+          var angulo = i * 2.399963;
+          var radio = 18 * Math.sqrt(i + 1);
+          x[i] = centro + radio * Math.cos(angulo);
+          y[i] = centro + radio * Math.sin(angulo);
+        }
+        var alcance = 9 * k * k;
+        var grados = new Float64Array(n).fill(1);
+        enlaces.forEach(function (l) { grados[l.a] += 1; grados[l.b] += 1; });
+        for (var g = 0; g < n; g += 1) grados[g] = Math.sqrt(grados[g]);
+        var temperatura = LADO_MAPA / 8;
+        var vueltas = n > 200 ? 150 : 250;
+        for (var v = 0; v < vueltas; v += 1) {
+          dx.fill(0);
+          dy.fill(0);
+          for (var a = 0; a < n; a += 1) {
+            for (var b = a + 1; b < n; b += 1) {
+              var ex = x[a] - x[b];
+              var ey = y[a] - y[b];
+              var d2 = ex * ex + ey * ey || 0.01;
+              // Solo empujan los cercanos: si no, todo acaba apretado contra el borde.
+              if (d2 > alcance) continue;
+              var f = (k * k) / d2;
+              dx[a] += ex * f; dy[a] += ey * f;
+              dx[b] -= ex * f; dy[b] -= ey * f;
+            }
+          }
+          for (var e = 0; e < enlaces.length; e += 1) {
+            var l = enlaces[e];
+            var lx = x[l.a] - x[l.b];
+            var ly = y[l.a] - y[l.b];
+            var dist = Math.sqrt(lx * lx + ly * ly) || 0.01;
+            // Con muchos enlaces (una etiqueta común) la atracción se reparte: si no, el
+            // grupo entero se aplasta en un punto.
+            var fuerza = (dist / k) * (0.5 + 0.1 * Math.min(Number(l.peso) || 1, 6));
+            dx[l.a] -= (lx * fuerza) / grados[l.a]; dy[l.a] -= (ly * fuerza) / grados[l.a];
+            dx[l.b] += (lx * fuerza) / grados[l.b]; dy[l.b] += (ly * fuerza) / grados[l.b];
+          }
+          for (var c = 0; c < n; c += 1) {
+            // Un recuerdo sin enlaces tira más hacia el centro: si no, acaba en una esquina.
+            var gravedad = grados[c] <= 1 ? 0.12 : 0.04;
+            dx[c] += (centro - x[c]) * gravedad;
+            dy[c] += (centro - y[c]) * gravedad;
+            var largo = Math.sqrt(dx[c] * dx[c] + dy[c] * dy[c]);
+            if (largo > 0) {
+              var paso = Math.min(largo, temperatura);
+              x[c] += (dx[c] / largo) * paso;
+              y[c] += (dy[c] / largo) * paso;
+            }
+            // Dentro del marco: un recuerdo suelto no se va lejos y deja el resto diminuto.
+            x[c] = Math.min(LADO_MAPA - 20, Math.max(20, x[c]));
+            y[c] = Math.min(LADO_MAPA - 20, Math.max(20, y[c]));
+          }
+          temperatura = Math.max(1, temperatura * 0.97);
+        }
+        var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (var m = 0; m < n; m += 1) {
+          minX = Math.min(minX, x[m]); maxX = Math.max(maxX, x[m]);
+          minY = Math.min(minY, y[m]); maxY = Math.max(maxY, y[m]);
+        }
+        var margen = 40;
+        var escala = Math.min(
+          (LADO_MAPA - 2 * margen) / Math.max(maxX - minX, 1),
+          (LADO_MAPA - 2 * margen) / Math.max(maxY - minY, 1)
+        );
+        var puntos = [];
+        for (var p = 0; p < n; p += 1) {
+          puntos.push({
+            x: n === 1 ? centro : margen + (x[p] - minX) * escala + ((LADO_MAPA - 2 * margen) - (maxX - minX) * escala) / 2,
+            y: n === 1 ? centro : margen + (y[p] - minY) * escala + ((LADO_MAPA - 2 * margen) - (maxY - minY) * escala) / 2
+          });
+        }
+        return puntos;
+      }
+
+      function elementoSvg(etiqueta, atributos) {
+        var el = document.createElementNS(SVG_NS, etiqueta);
+        Object.keys(atributos || {}).forEach(function (clave) { el.setAttribute(clave, String(atributos[clave])); });
+        return el;
+      }
+
+      function textoCorto(texto, n) {
+        var t = String(texto || '');
+        return t.length > n ? t.slice(0, n - 1) + '…' : t;
+      }
+
+      function pintarMapa(contenedor, datos) {
+        contenedor.replaceChildren();
+        var nodos = datos && Array.isArray(datos.nodos) ? datos.nodos : [];
+        var enlaces = datos && Array.isArray(datos.enlaces) ? datos.enlaces : [];
+        enlaces = enlaces.filter(function (l) {
+          return l && l.a >= 0 && l.b >= 0 && l.a < nodos.length && l.b < nodos.length;
+        });
+        mapa = { datos: { nodos: nodos, enlaces: enlaces }, grupos: [], lineas: [], vecinos: [], elegido: -1 };
+        if (!nodos.length) {
+          contenedor.appendChild(nodo('p', 'muted', 'No hay recuerdos en este ámbito todavía. Prueba otro en la tarjeta Memoria.'));
+          return;
+        }
+        var info = nodos.length + (nodos.length === 1 ? ' recuerdo' : ' recuerdos') + ' · ' +
+          enlaces.length + (enlaces.length === 1 ? ' enlace' : ' enlaces');
+        if (datos.recortado) info += ' · Mostrando los ' + nodos.length + ' más recientes de ' + datos.total + '.';
+        contenedor.appendChild(nodo('p', 'mapa-info', info));
+        if (Number(datos.ocultos) > 0) {
+          contenedor.appendChild(
+            nodo('p', 'muted', datos.ocultos + (datos.ocultos === 1 ? ' recuerdo no se muestra' : ' recuerdos no se muestran') + ' por parecer una contraseña o una clave.')
+          );
+        }
+        var puntos = disponerMapa(nodos.length, enlaces);
+        var svg = elementoSvg('svg', {
+          viewBox: '0 0 ' + LADO_MAPA + ' ' + LADO_MAPA,
+          class: 'mapa-lienzo',
+          role: 'img',
+          'aria-label': 'Mapa de ' + info
+        });
+        var capaLineas = elementoSvg('g', {});
+        var capaNodos = elementoSvg('g', {});
+        nodos.forEach(function () { mapa.vecinos.push([]); });
+        enlaces.forEach(function (l, i) {
+          var linea = elementoSvg('line', {
+            x1: puntos[l.a].x.toFixed(1), y1: puntos[l.a].y.toFixed(1),
+            x2: puntos[l.b].x.toFixed(1), y2: puntos[l.b].y.toFixed(1),
+            stroke: COLOR_ENLACE[l.tipo] || '#64748b',
+            'stroke-width': Math.min(1 + (Number(l.peso) || 1) * 0.5, 4)
+          });
+          capaLineas.appendChild(linea);
+          mapa.lineas.push(linea);
+          mapa.vecinos[l.a].push(i);
+          mapa.vecinos[l.b].push(i);
+        });
+        nodos.forEach(function (n, i) {
+          var grupo = elementoSvg('g', {});
+          var radio = 9 + Math.min(Number(n.grado) || 0, 6) * 2;
+          grupo.appendChild(elementoSvg('circle', { class: 'toque', cx: puntos[i].x.toFixed(1), cy: puntos[i].y.toFixed(1), r: Math.max(radio, 26) }));
+          var circulo = elementoSvg('circle', {
+            class: 'nodo', cx: puntos[i].x.toFixed(1), cy: puntos[i].y.toFixed(1), r: radio, fill: colorDeNodo(n)
+          });
+          grupo.appendChild(circulo);
+          var titulo = elementoSvg('title', {});
+          titulo.textContent = textoCorto(n.texto, 120);
+          grupo.appendChild(titulo);
+          grupo.addEventListener('click', function () { elegirNodoMapa(i); });
+          capaNodos.appendChild(grupo);
+          mapa.grupos.push(grupo);
+        });
+        svg.appendChild(capaLineas);
+        svg.appendChild(capaNodos);
+        contenedor.appendChild(svg);
+        var leyenda = nodo('ul', 'mapa-leyenda');
+        ['etiqueta', 'enlace', 'mencion', 'reemplaza'].forEach(function (tipo) {
+          var li = nodo('li');
+          var raya = nodo('span', 'raya');
+          raya.style.background = COLOR_ENLACE[tipo];
+          li.appendChild(raya);
+          li.appendChild(document.createTextNode(NOMBRE_ENLACE[tipo]));
+          leyenda.appendChild(li);
+        });
+        contenedor.appendChild(leyenda);
+        contenedor.appendChild(nodo('p', 'muted', 'Toca un punto o busca arriba para abrir un recuerdo. El color es su primera etiqueta.'));
+        var resultados = nodo('div', 'mapa-resultados');
+        resultados.id = 'mapa-resultados';
+        contenedor.appendChild(resultados);
+        var detalle = nodo('div', 'mapa-detalle');
+        detalle.id = 'mapa-detalle';
+        detalle.hidden = true;
+        detalle.setAttribute('aria-live', 'polite');
+        contenedor.appendChild(detalle);
+        filtrarMapa();
+      }
+
+      function botonRecuerdo(i, extra) {
+        var n = mapa.datos.nodos[i];
+        var boton = nodo('button', 'mini', textoCorto(n.texto, 70) + (extra ? ' · ' + extra : ''));
+        boton.type = 'button';
+        boton.addEventListener('click', function () { elegirNodoMapa(i); });
+        return boton;
+      }
+
+      function filtrarMapa() {
+        if (!mapa.datos) return;
+        var campo = document.getElementById('buscar-mapa');
+        var consulta = sinTildes(campo ? campo.value.trim() : '');
+        var resultados = document.getElementById('mapa-resultados');
+        var coinciden = [];
+        mapa.datos.nodos.forEach(function (n, i) {
+          var si = !consulta ||
+            sinTildes(n.texto).indexOf(consulta) >= 0 ||
+            (n.etiquetas || []).some(function (t) { return sinTildes(t).indexOf(consulta) >= 0; });
+          if (consulta && si) coinciden.push(i);
+          mapa.grupos[i].classList.toggle('apagado', !si);
+        });
+        mapa.datos.enlaces.forEach(function (l, i) {
+          var visible = !consulta || (coinciden.indexOf(l.a) >= 0 && coinciden.indexOf(l.b) >= 0);
+          mapa.lineas[i].classList.toggle('apagado', !visible);
+        });
+        if (!resultados) return;
+        resultados.replaceChildren();
+        if (!consulta) return;
+        resultados.appendChild(
+          nodo('p', 'muted', coinciden.length ? coinciden.length + (coinciden.length === 1 ? ' coincidencia' : ' coincidencias') : 'Sin coincidencias.')
+        );
+        coinciden.slice(0, 10).forEach(function (i) { resultados.appendChild(botonRecuerdo(i)); });
+      }
+
+      function elegirNodoMapa(i) {
+        if (!mapa.datos || !mapa.datos.nodos[i]) return;
+        if (mapa.elegido >= 0 && mapa.grupos[mapa.elegido]) mapa.grupos[mapa.elegido].classList.remove('elegido');
+        mapa.lineas.forEach(function (l) { l.classList.remove('resaltado'); });
+        mapa.elegido = i;
+        mapa.grupos[i].classList.add('elegido');
+        var n = mapa.datos.nodos[i];
+        var detalle = document.getElementById('mapa-detalle');
+        detalle.replaceChildren();
+        detalle.hidden = false;
+        detalle.appendChild(nodo('p', 'texto', n.texto));
+        var meta = [n.fecha].concat((n.etiquetas || []).map(function (t) { return '#' + t; })).filter(Boolean).join(' · ');
+        if (meta) detalle.appendChild(nodo('p', 'muted', meta));
+        var relacionados = mapa.vecinos[i] || [];
+        if (!relacionados.length) {
+          detalle.appendChild(nodo('p', 'muted', 'No está unido a otros recuerdos.'));
+        } else {
+          detalle.appendChild(nodo('p', 'muted', 'Relacionado con (' + relacionados.length + '):'));
+          var lista = nodo('ul');
+          relacionados.forEach(function (e) {
+            var l = mapa.datos.enlaces[e];
+            mapa.lineas[e].classList.add('resaltado');
+            var otro = l.a === i ? l.b : l.a;
+            var li = nodo('li');
+            li.appendChild(botonRecuerdo(otro, l.motivo));
+            lista.appendChild(li);
+          });
+          detalle.appendChild(lista);
+        }
+      }
+
+      var consultaMapa = 0;
+      async function cargarMapa() {
+        var contenedor = document.getElementById('panel-mapa');
+        var ambito = document.getElementById('ambito-memoria').value.trim();
+        var ruta = '/api/mapa-memoria' + (ambito ? '?scope=' + encodeURIComponent(ambito) : '');
+        var esta = ++consultaMapa;
+        pintarCarga(contenedor);
+        try {
+          var datos = await pedir(ruta);
+          if (esta !== consultaMapa) return true;
+          pintarMapa(contenedor, datos);
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (esta !== consultaMapa) return true;
+          pintarError(contenedor, error, cargarMapa); return false;
+        }
+        return true;
+      }
+
       async function cargarAuditoria() {
         var contenedor = document.getElementById('panel-auditoria');
         pintarCarga(contenedor);
@@ -1864,6 +2177,7 @@ ${renderFormatScript()}
         contexto: cargarContexto,
         sesiones: cargarSesiones,
         memoria: cargarMemoria,
+        mapa: cargarMapa,
         auditoria: cargarAuditoria,
         aprobaciones: cargarAprobaciones
       };
@@ -1883,6 +2197,7 @@ ${renderFormatScript()}
           cargarContexto(),
           cargarSesiones(),
           cargarMemoria(),
+          cargarMapa(),
           cargarAmbitos(),
           cargarAuditoria(),
           cargarAprobaciones(),
@@ -1931,7 +2246,11 @@ ${renderFormatScript()}
       document.getElementById('ambito-memoria').addEventListener('change', function () {
         window.clearTimeout(temporizadorMemoria);
         cargarMemoria();
+        cargarMapa();
       });
+
+      // Buscar en el mapa no vuelve a pedir nada: resalta lo que ya está dibujado.
+      document.getElementById('buscar-mapa').addEventListener('input', filtrarMapa);
 
       // Ámbitos conocidos (chats con memoria) en vez de escribir «telegram:dm:…» a mano.
       async function cargarAmbitos() {
