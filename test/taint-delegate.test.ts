@@ -25,22 +25,23 @@ function gate() {
 const WRITE = call('write', { path: 'C:\\Users\\nico\\notas.txt', content: 'hola' });
 
 describe('un subagente que busca en la web cuenta como lectura externa', () => {
-  it('tras delegar una búsqueda web, escribir pregunta aunque haya «Siempre»', async () => {
+  it('tras delegar una búsqueda web, escribir un fichero normal sigue cubierto por el «Siempre»', async () => {
+    // Regla de Nico (2-nov-2026): la marca ya no reapregunta los pasos normales
+    // de una tarea suya; solo lo sensible (dinero, credenciales, terceros...).
     const { g, asked } = gate();
     await g.check(S, call('delegate', { task: 'busca opiniones del portátil X' }));
     await g.check(S, WRITE);
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/subagente/);
+    expect(asked).toHaveLength(0);
   });
 
-  it('explorer con fetch explícito también cuenta', async () => {
+  it('explorer con fetch explícito tampoco reapregunta una escritura normal', async () => {
     const { g, asked } = gate();
     await g.check(
       S,
       call('delegate', { task: 'lee https://x.example', role: 'explorer', tools: ['fetch'] }),
     );
     await g.check(S, WRITE);
-    expect(asked).toHaveLength(1);
+    expect(asked).toHaveLength(0);
   });
 
   it('un planner o un explorer solo con ficheros locales no cuenta', async () => {

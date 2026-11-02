@@ -471,7 +471,10 @@ describe('checkout in the gate', () => {
 });
 
 describe('Gate: repeat after an unsettled call', () => {
-  const call = { tool: 'shell', args: { command: 'echo hi' }, actor: 'local' } as const;
+  // Con `write` (sin ventana de tarea): shell ya no sirve para probar el memo,
+  // porque desde la regla «la tarea que él pidió no repregunta» (2-nov-2026)
+  // los comandos no destructivos se cubren entre sí durante la ventana.
+  const call = { tool: 'write', args: { path: 'notas.txt', content: 'hi' }, actor: 'local' } as const;
   const make = () => {
     let asked = 0;
     const gate = new Gate({
@@ -504,7 +507,7 @@ describe('Gate: repeat after an unsettled call', () => {
     await gate.check('s', call);
     gate.settle('s', call, false);
     expect((await gate.check('s', call)).reason).toContain('previously approved');
-    const other = { ...call, args: { command: 'echo other' } };
+    const other = { ...call, args: { path: 'notas.txt', content: 'other' } };
     await gate.check('s', other);
     expect(asked()).toBe(2);
   });
