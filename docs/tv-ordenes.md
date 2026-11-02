@@ -5,6 +5,8 @@ Todo pasa por la herramienta `tv` (lo usa el agente; tú se lo pides en Telegram
 ## Órdenes naturales (`action=command`)
 Deterministas, sin modelo. Ejemplos:
 
+En un mensaje normal (escrito o nota de voz) se hacen al momento, sin pasar por el modelo, cuando nombran la tele («baja el volumen de la tele») o una tele por su nombre («pon Netflix en el salón»), y también durante 3 min tras otra orden de tele («abajo», «atrás», «sube el volumen»), salvo un «ok/vale/sí» suelto, abrir algo que no es app de tele o si nombra el PC. Con hora o condición, o cualquier otra cosa, contesta el modelo como siempre.
+
 | Dices | Hace |
 |---|---|
 | «apaga la tele» / «enciende la tele» / «apágala» / «enciéndela» / «apaga el televisor» | `power` (ver encendido por red) |

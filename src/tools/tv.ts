@@ -260,8 +260,20 @@ const KEY_ALIASES: Record<string, string> = {
  */
 let tvMutationQueue: Promise<void> = Promise.resolve();
 
+let lastTvOrderAt: number | null = null;
+
+/** Hora (ms) de la última orden a la tele que salió bien, por cualquier vía (modelo, /tv, atajo). */
+export function tvLastOrderAt(): number | null {
+  return lastTvOrderAt;
+}
+
 function enqueueTvMutation<T>(fn: () => Promise<T>): Promise<T> {
-  const run = tvMutationQueue.then(fn, fn);
+  const timed = async (): Promise<T> => {
+    const out = await fn();
+    lastTvOrderAt = Date.now();
+    return out;
+  };
+  const run = tvMutationQueue.then(timed, timed);
   tvMutationQueue = run.then(
     () => undefined,
     () => undefined,

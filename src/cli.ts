@@ -560,12 +560,14 @@ import { createSkillsTool } from './tools/skills.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createTasksTool } from './tools/tasks.js';
 import { createTraficoTool, TraficoVistosStore } from './tools/trafico.js';
-import { createTvTool } from './tools/tv.js';
+import { createTvTool, tvLastOrderAt } from './tools/tv.js';
 import { createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
+import { tvFastPathIntent } from './tv/fast-path.js';
 import { tvRequest } from './tv/lgtv.js';
+import { describeTvIntent, tvIntentNotice } from './tv/natural.js';
 import { staleGuardedCaster, staleTvOrderNotice } from './tv/stale-order.js';
 import {
   createTvPressGuard,
@@ -5831,6 +5833,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       .join(' ')
       .trim();
   };
+  /**
+   * Orden de tele clara en un mensaje normal (texto o nota de voz del dueño):
+   * al momento por la misma vía que /tv, sin vueltas al modelo. Lo que no es
+   * claramente de la tele sigue al modelo como siempre (src/tv/fast-path.ts).
+   */
+  const tvFastPath = async (inbound: Inbound, text: string): Promise<boolean> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId) || inbound.forwardedFrom) return false;
+    if (inbound.photoFileId || inbound.documentFileId || inbound.albumAudios?.length) return false;
+    const base = { text, now: Date.now(), lastTvOrderAt: tvLastOrderAt() };
+    let intent = tvFastPathIntent(base);
+    if (!intent && text.length <= 80) {
+      // «pon Netflix en el salón»: los nombres de las teles solo se leen si hace falta.
+      const { loadKnownTvs } = await import('./tv/known-tvs.js');
+      const tvNames = (await loadKnownTvs().catch(() => []))
+        .map((t) => t.name ?? '')
+        .filter(Boolean);
+      if (tvNames.length) intent = tvFastPathIntent({ ...base, tvNames });
+    }
+    if (!intent || staleTvOrderNotice(inbound.sentAt, inbound.receivedAt)) return false;
+    log.info('tv: orden al momento sin modelo', { action: intent.action });
+    // Directo a la tool (no por tvChatCommand): ella quita el nombre de la tele
+    // («en el salón») antes de entender la orden, igual que con el modelo.
+    let reply: string;
+    try {
+      const out = (await runTvOrder(text)).trim();
+      const notice = tvIntentNotice(intent);
+      reply = out ? (notice ? `${out}\n${notice}` : out) : `Hecho: ${describeTvIntent(intent)}.`;
+    } catch (err) {
+      reply = `No he podido ${describeTvIntent(intent)}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    await say(inbound, reply, { quote: true });
+    return true;
+  };
   const cmdTv = async (inbound: Inbound, args: string): Promise<void> => {
     const isOwner = isOwnerDm(inbound, vigilanteOwnerId);
     const stale = args.trim() ? staleTvOrderNotice(inbound.sentAt, inbound.receivedAt) : null;
@@ -7172,6 +7207,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             // losing only its long-term index must not kill the turn.
             log.warn('transcript index failed', { err });
           }
+          // Nota de voz con una orden clara de tele: al momento, sin modelo.
+          if (!opts.external && !inbound.albumAudios?.length) {
+            try {
+              if (await tvFastPath(inbound, heard.text)) return;
+            } catch (err) {
+              log.warn('tv: atajo de voz fallido; sigue el modelo', { err: String(err) });
+            }
+          }
         } catch (err) {
           if (receipt.id) progressIds.push(receipt.id);
           await tell(inbound, failedReply('No he entendido la nota de voz', err), { quote: true });
@@ -8469,6 +8512,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             return;
           }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
+          // «baja el volumen de la tele», y navegando «abajo», «atrás»: al momento, sin modelo.
+          if (inbound.text && (await tvFastPath(inbound, inbound.text))) return;
 
           // «Aprende a…», «añádete que…»: el dueño pide una función hablando (solo texto suyo).
           const plainText =
