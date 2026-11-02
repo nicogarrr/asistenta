@@ -48,6 +48,21 @@ export function altavozVoiceReplyEnabled(env: NodeJS.ProcessEnv = process.env): 
   return env.PA_ALTAVOZ_VOZ?.trim() === '1';
 }
 
+/**
+ * ¿La respuesta suena donde sonó la nota? PA_ALTAVOZ_VOZ=1 (apagado por defecto), o —
+ * en modo tele con el audio de la tele activado — por coherencia con el modo: si tu voz
+ * entra por la tele, la respuesta sale por la tele (gratis: voz local del PC); el texto
+ * queda en el chat como registro. Nico, 2 nov 2026: una respuesta solo en el chat tras
+ * sonar su nota en la tele «no queda claro».
+ */
+export function altavozVozOn(
+  mode: AltavozMode,
+  teleOn: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return altavozVoiceReplyEnabled(env) || (mode === 'tele' && teleOn);
+}
+
 export interface AltavozReplyDeps extends Omit<AltavozInboundDeps, 'download'> {
   /** PA_ALTAVOZ_VOZ (apagado por defecto). */
   enabled: boolean;

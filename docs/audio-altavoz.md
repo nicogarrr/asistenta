@@ -40,7 +40,10 @@ sueltan y te aviso. Un audio con un comando como pie (por ejemplo `/play`) no se
 tuya llegó a la tele hace menos de 2 minutos, `/stop` también la para allí; pasado ese tiempo la
 tele no se toca (puede que ya estés viendo otra cosa).
 
-### La respuesta en voz alta (`PA_ALTAVOZ_VOZ=1`, apagado por defecto)
+### La respuesta en voz alta
+En modo `tele` con el audio activado, la respuesta suena en la tele por coherencia (tu
+voz entró por ahí): gratis, con la voz local del PC; el texto queda en el chat como
+registro. En modo `pc` hace falta `PA_ALTAVOZ_VOZ=1` (apagado por defecto).
 Con el altavoz en `pc` o `tele`, la respuesta del asistente a tu nota de voz también se
 dice en el mismo sitio, detrás de la nota. El texto llega primero a Telegram y nunca
 espera a la voz; si la voz falla, no hay aviso (ya tienes el texto). Solo tus notas, en

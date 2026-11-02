@@ -3,6 +3,7 @@ import { createAltavozPlayer } from '../src/audio/altavoz.js';
 import {
   type AltavozInbound,
   altavozVoiceReplyEnabled,
+  altavozVozOn,
   routeReplyToAltavoz,
 } from '../src/audio/altavoz-inbound.js';
 
@@ -68,6 +69,12 @@ function rig(
 
 describe('PA_ALTAVOZ_VOZ', () => {
   it('apagado por defecto; solo «1» lo enciende', () => {
+    expect(altavozVozOn('tele', true)).toBe(true);
+    expect(altavozVozOn('tele', false)).toBe(false);
+    expect(altavozVozOn('pc', true)).toBe(false);
+    expect(altavozVozOn('off', true)).toBe(false);
+    expect(altavozVozOn('pc', false, { PA_ALTAVOZ_VOZ: '1' })).toBe(true);
+    expect(altavozVozOn('tele', false, { PA_ALTAVOZ_VOZ: '1' })).toBe(true);
     expect(altavozVoiceReplyEnabled({})).toBe(false);
     expect(altavozVoiceReplyEnabled({ PA_ALTAVOZ_VOZ: '0' })).toBe(false);
     expect(altavozVoiceReplyEnabled({ PA_ALTAVOZ_VOZ: 'si' })).toBe(false);

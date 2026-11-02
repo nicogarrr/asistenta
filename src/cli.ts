@@ -63,7 +63,7 @@ import { buildAgenda, calendarDaysFor } from './agenda/unified.js';
 import { estimateDueAt, hasDateSignal } from './alerts/due.js';
 import { FollowupTracker, ownerDmFollowups, ownerDmKeyFor } from './alerts/followups.js';
 import {
-  altavozVoiceReplyEnabled,
+  altavozVozOn,
   routeInboundToAltavoz,
   routeReplyToAltavoz,
 } from './audio/altavoz-inbound.js';
@@ -3058,7 +3058,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // PA_ALTAVOZ_VOZ=1: la respuesta también suena donde sonó la nota (PC/tele), tras
     // el texto y sin esperarla. Reutiliza la voz ya hecha para Telegram si la hay.
     routeReplyToAltavoz(inbound, text, {
-      enabled: altavozVoiceReplyEnabled(),
+      // En modo tele con el audio activo suena por coherencia (sin PA_ALTAVOZ_VOZ).
+      enabled: altavozVozOn(
+        altavoz.get(chatKey(inbound)),
+        audioTeleOn(store.kvGet(AUDIO_TELE_KV_KEY)),
+      ),
       mode: altavoz.get(chatKey(inbound)),
       desktop,
       ownerUserId: vigilanteOwnerId,
