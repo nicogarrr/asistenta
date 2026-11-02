@@ -536,8 +536,8 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         if (!check.ok) return reply(`Horario no válido: ${check.error}`, true);
         const tooOften = checkRepeating(args.schedule);
         if (tooOften) return reply(tooOften, true);
+        const first = nextRunOf(args.schedule.trim(), new Date(now()));
         if (until !== undefined) {
-          const first = nextRunOf(args.schedule.trim(), new Date(now()));
           if (!first || localDay(first) > until) {
             return reply(`No sonaría ninguna vez antes de que acabe el ${until}.`, true);
           }
@@ -551,9 +551,13 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
           schedule: args.schedule.trim(),
         });
         deps.sync();
-        return reply(
-          `Recordatorio programado (repite ${args.schedule.trim()}${end}): ${text}. Próximo: ${check.next}.`,
-        );
+        // Las mismas palabras que action=list y /recordatorios («cada lunes a las 08:30»,
+        // «lun 02/11 08:30»): con el cron crudo el modelo le leía «30 8 * * 1» al dueño.
+        const said = scheduleEs(args.schedule.trim()) ?? `repite ${args.schedule.trim()}`;
+        const next = first
+          ? `${fechaCortaEs(first)} (${dentroDeEs(first.getTime() - now(), now())})`
+          : check.next;
+        return reply(`Recordatorio programado (${said}${end}): ${text}. Próximo: ${next}.`);
       }
 
       let when: Date;
