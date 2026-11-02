@@ -178,6 +178,11 @@ export interface ChildSpec {
   specialist?: SpecialistSpec;
   /** Solo especialistas con efectos: pregunta al humano por cada accion. */
   approve?: SpecialistApprove;
+  /**
+   * Chat del hilo que delega (chatKey): las marcas de «ocupada» del hijo son de ese chat, y
+   * /stop en otro chat no las libera.
+   */
+  owner?: string;
 }
 
 export interface ChildHandle {
@@ -221,6 +226,11 @@ function contextApprove(context: unknown): SpecialistApprove | undefined {
   return c && typeof c.approve === 'function' ? (c.approve as SpecialistApprove) : undefined;
 }
 
+function contextOwner(context: unknown): string | undefined {
+  const c = context as { owner?: unknown } | null | undefined;
+  return c && typeof c.owner === 'string' && c.owner !== '' ? c.owner : undefined;
+}
+
 function readBudget(budget: unknown): SubagentBudget | undefined {
   const b = budget as Partial<SubagentBudget> | null | undefined;
   if (!b || typeof b.maxToolCalls !== 'number' || !b.signal) return undefined;
@@ -262,6 +272,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
       }
       if (budget.signal.aborted) return { text: '', error: 'Subagente abortado antes de empezar.' };
       const parentTools = contextTools(request.context) ?? options.parentTools;
+      const owner = contextOwner(request.context);
       let child: ChildHandle;
       let prompt: string;
       if (specialist) {
@@ -284,6 +295,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
           signal: budget.signal,
           specialist,
           ...(specialist.effectful && approve ? { approve } : {}),
+          ...(owner ? { owner } : {}),
         });
       } else {
         const genericRole = role as SubagentRole;
@@ -298,6 +310,7 @@ export function createSubagentDeps(options: SubagentRunnerOptions): SubagentDeps
           toolset,
           maxToolCalls: budget.maxToolCalls,
           signal: budget.signal,
+          ...(owner ? { owner } : {}),
         });
       }
       // La fabrica pudo tardar mas que el timeout: si ya se aborto, no se ejecuta.

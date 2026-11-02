@@ -167,6 +167,8 @@ export function createEffectfulChildGate(
 export interface ChildAgent {
   run(prompt: string): Promise<AgentRunResult>;
   abort(scope?: 'internal' | 'external'): void;
+  /** Chat dueño de sus marcas de «ocupada» (PersonalAgent.busyOwner). */
+  busyOwner?: string | undefined;
 }
 
 export type CreateChildAgent = (
@@ -210,6 +212,8 @@ export function createChildFactory(
       desktop: false,
       iterationBudget: { max: config.maxToolCalls },
     });
+    // Sus turnos y permisos son del chat que delegó: /stop en otro chat no los suelta.
+    if (spec.owner) agent.busyOwner = spec.owner;
     return {
       run: async (prompt) => {
         const r = await agent.run(prompt);
@@ -238,6 +242,7 @@ export function createDelegateWiring(options: DelegateWiringOptions): {
     threadTools: () => readonly AgentTool[],
     approve?: SpecialistApprove,
     background?: (job: BackgroundJob) => boolean,
+    owner?: string,
   ) => AgentTool;
 } {
   const deps = createSubagentDeps({
@@ -251,11 +256,13 @@ export function createDelegateWiring(options: DelegateWiringOptions): {
     threadTools: () => readonly AgentTool[],
     approve?: SpecialistApprove,
     background?: (job: BackgroundJob) => boolean,
+    owner?: string,
   ) =>
     createDelegateTool(pool, () => 0, {
       parentTools: threadTools,
       ...(approve ? { approve } : {}),
       ...(background ? { background } : {}),
+      ...(owner ? { owner } : {}),
     }) as unknown as AgentTool;
   return { tool, pool, forThread };
 }

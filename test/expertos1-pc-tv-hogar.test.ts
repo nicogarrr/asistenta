@@ -364,7 +364,7 @@ describe('cableado real en cli.ts', () => {
     const block = source.slice(start, source.indexOf('const gateFor = (', start));
     // En Telegram, askOncePerTurn (Permitir/Denegar); en el panel, su tarjeta (expertos-3).
     expect(block).toMatch(
-      /delegateTool\(\s*config,\s*\(\) => threadFinal,\s*createSpecialistAsk\(\{[^}]*viaChannel: \(question, signal\) => askOncePerTurn\(thread, question, signal\),[^}]*\}\),?\s*(\(job\) => startBackgroundDelegate\(thread, job\),?\s*)?\)/,
+      /delegateTool\(\s*config,\s*\(\) => threadFinal,\s*createSpecialistAsk\(\{[^}]*viaChannel: \(question, signal\) => askOncePerTurn\(thread, question, signal\),[^}]*\}\),?\s*(\(job\) => startBackgroundDelegate\(thread, job\),?\s*)?(\/\/[^\n]*\n\s*)?(thread\.chatKey,?\s*)?\)/,
     );
   });
 });

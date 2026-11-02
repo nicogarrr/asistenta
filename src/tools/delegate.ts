@@ -130,6 +130,8 @@ export function createDelegateTool(
      * se puede (tope del hilo, turno del panel) y entonces se hace esperando.
      */
     background?: (job: BackgroundJob) => boolean;
+    /** Chat del hilo (chatKey): dueño de las marcas de «ocupada» de sus hijos (/stop). */
+    owner?: string;
   },
 ): AgentTool<ReturnType<typeof DelegateParams>, DelegateDetails> {
   return {
@@ -151,6 +153,7 @@ export function createDelegateTool(
       // efectos pregunta al humano y eso no puede quedarse colgado fuera del turno.
       if (args.background === true && args.specialist === undefined && thread?.background) {
         const parentTools = thread.parentTools;
+        const owner = thread.owner;
         const started = thread.background({
           task: args.task,
           run: async (jobSignal) => {
@@ -161,7 +164,7 @@ export function createDelegateTool(
               ...(args.tools ? { tools: args.tools } : {}),
               signal: jobSignal,
               // Sin approve: el hijo no hereda aprobaciones ni puede pedirlas.
-              context: { parentTools },
+              context: { parentTools, ...(owner ? { owner } : {}) },
             });
             if (result.error !== undefined) throw new Error(result.error);
             if (result.text.trim() === '') throw new Error(emptyResultNotice(undefined));
@@ -201,6 +204,7 @@ export function createDelegateTool(
               context: {
                 parentTools: thread.parentTools,
                 ...(approve ? { approve } : {}),
+                ...(thread.owner ? { owner: thread.owner } : {}),
               },
             }
           : {}),
