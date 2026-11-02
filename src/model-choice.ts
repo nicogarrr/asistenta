@@ -6,7 +6,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { writeFileReplacing } from './fs-tmp.js';
+import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
 export type ModeloAction =
   | { kind: 'show' }
@@ -75,6 +75,9 @@ export class ModelChoiceStore {
       for (const [k, v] of Object.entries(raw)) if (typeof v === 'string' && v !== '') out[k] = v;
       return out;
     } catch {
+      // Un fichero roto se aparta: si no, el próximo `set` de un chat borraría
+      // la elección de modelo de TODOS los demás chats sin dejar rastro.
+      setAsideCorrupt(this.#file);
       return {};
     }
   }

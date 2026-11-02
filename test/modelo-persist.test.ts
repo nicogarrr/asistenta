@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { formatModelos, ModelChoiceStore } from '../src/model-choice.js';
 import { STATE_ENTRIES } from '../src/state-files.js';
@@ -34,6 +34,20 @@ describe('/modelo: la elección sobrevive a un reinicio', () => {
     writeFileSync(file, JSON.stringify({ 'x#main': 5, 'y#main': 'ok' }));
     expect(new ModelChoiceStore(file).get('x#main')).toBeUndefined();
     expect(new ModelChoiceStore(file).get('y#main')).toBe('ok');
+  });
+
+  it('un fichero corrupto se aparta con su contenido y un set posterior no lo pisa', () => {
+    const file = join(dir, 'corrupto.json');
+    writeFileSync(file, '{no es json');
+    expect(new ModelChoiceStore(file).get('x#main')).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+    const aside = readdirSync(dirname(file)).filter((f) => f.startsWith('corrupto.json.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dirname(file), aside[0] as string), 'utf8')).toBe('{no es json');
+    // Y el siguiente `set` escribe un fichero nuevo sin tocar la copia apartada.
+    new ModelChoiceStore(file).set('x#main', 'alt-model');
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ 'x#main': 'alt-model' });
+    expect(readFileSync(join(dirname(file), aside[0] as string), 'utf8')).toBe('{no es json');
   });
 
   it('está en el registro de estado (entra en la copia) y la lista lo dice', () => {

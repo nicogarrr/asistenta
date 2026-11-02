@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeFileReplacing } from '../fs-tmp.js';
+import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 import { STATE_DIR } from '../paths.js';
 import { addressOf, CATEGORY_LABEL, type MailCategory } from './triage.js';
 
@@ -46,6 +46,9 @@ export function loadRules(file = defaultRulesFile()): MailRule[] {
       ? (data as MailRule[]).filter((r) => r && typeof r.id === 'number')
       : [];
   } catch {
+    // Un fichero roto se aparta antes de devolver «sin reglas»: si no, la
+    // próxima escritura (añadir o borrar una regla) borraría TODAS las demás.
+    setAsideCorrupt(file);
     return [];
   }
 }

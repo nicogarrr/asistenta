@@ -7,7 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeFileReplacing } from '../fs-tmp.js';
+import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
 import { STATE_DIR } from '../paths.js';
 import { sliceSafe } from '../text.js';
 import { MOVE_TARGET_LABEL, type MoveTarget } from './move.js';
@@ -45,6 +45,9 @@ export function loadBatches(file = defaultBatchFile()): CleanupBatch[] {
     const data = JSON.parse(readFileSync(file, 'utf8')) as unknown;
     return Array.isArray(data) ? (data as CleanupBatch[]).filter((b) => b?.id) : [];
   } catch {
+    // Un fichero roto se aparta: si no, la próxima escritura borraría los lotes
+    // pendientes de vista previa sin dejar rastro.
+    setAsideCorrupt(file);
     return [];
   }
 }

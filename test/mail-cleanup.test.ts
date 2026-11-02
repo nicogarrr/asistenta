@@ -1,9 +1,9 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { formatApproval } from '../src/approval-text.js';
-import { saveBatch } from '../src/mail/cleanup.js';
+import { loadBatches, saveBatch } from '../src/mail/cleanup.js';
 import { CLEANUP_FOLDER, type ImapMover } from '../src/mail/move.js';
 import { Gate } from '../src/permissions.js';
 import { createMailRulesTool } from '../src/tools/mail-rules.js';
@@ -65,6 +65,18 @@ function setup(r = rows) {
 }
 
 const loteOf = (text: string) => /lote ([0-9a-f]+)/.exec(text)?.[1] ?? '';
+
+describe('fichero de lotes corrupto', () => {
+  it('se aparta con su contenido y la escritura siguiente no pierde rastro', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'mailcln-')), 'lotes.json');
+    writeFileSync(file, '{roto', 'utf8');
+    expect(loadBatches(file)).toEqual([]);
+    expect(existsSync(file)).toBe(false);
+    const aside = readdirSync(dirname(file)).filter((f) => f.includes('.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dirname(file), aside[0] as string), 'utf8')).toBe('{roto');
+  });
+});
 
 describe('limpiar correo: vista previa y lote aprobado', () => {
   it('la vista previa cuenta por remitente con ejemplos y no mueve nada', async () => {
