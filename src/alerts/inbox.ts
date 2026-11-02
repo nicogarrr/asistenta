@@ -20,10 +20,11 @@
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { log } from '../log.js';
+import { createServer } from '../node-http.js';
 import { isPrivateRemote } from '../tv/button-listener.js';
 
 export const ALERT_INBOX_PORT = 8766;

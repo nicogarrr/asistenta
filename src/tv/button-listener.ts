@@ -38,8 +38,9 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { log } from '../log.js';
+import { createServer } from '../node-http.js';
 
 /** Puerto que exige `install-magic-mapper.sh` en su preflight. */
 export const TV_BUTTON_PORT = 8765;

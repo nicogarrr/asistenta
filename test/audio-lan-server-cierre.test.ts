@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const servers: Server[] = [];
-vi.mock('node:http', async (orig) => {
-  const m = await orig<typeof import('node:http')>();
+vi.mock('../src/node-http.js', async (orig) => {
+  const m = await orig<typeof import('../src/node-http.js')>();
   return {
     ...m,
     createServer: ((...a: Parameters<typeof m.createServer>) => {

@@ -13,10 +13,11 @@
 
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { envFileText } from '../env-text.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
+import { createServer } from '../node-http.js';
 import { configFromEnv, LoginFlow } from './userbot.js';
 
 const ENV_PATH = process.env.BOOKS_ENV_PATH ?? '.env';

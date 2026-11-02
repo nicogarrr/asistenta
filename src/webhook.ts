@@ -12,7 +12,8 @@
  *   curl -X POST -H "Authorization: Bearer $PA_WEBHOOK_TOKEN" http://127.0.0.1:8787/hook/resumen
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createServer } from './node-http.js';
 
 export const WEBHOOK_HOST = '127.0.0.1';
 export const WEBHOOK_MIN_TOKEN = 24;

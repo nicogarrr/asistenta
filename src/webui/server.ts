@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { log } from '../log.js';
+import { createServer } from '../node-http.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 

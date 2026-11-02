@@ -8,8 +8,8 @@
  * escribe en el log ni sale a ningún sitio que no sea Google.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { createServer } from '../node-http.js';
 
 export const GOOGLE_KEYS = {
   clientId: 'google:clientId',
