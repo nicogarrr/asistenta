@@ -9,7 +9,7 @@ import type { Routine, Store } from '../db.js';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { OneTapIds } from '../one-tap-ids.js';
 import { nextScheduleRun, validateSchedule } from '../routines.js';
-import { foldAccents } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 
 /**
  * Reminders as a tool: "recuérdame dentro de 3 horas que apague el horno",
@@ -354,7 +354,7 @@ function nextRunOf(schedule: string, from: Date): Date | null {
 }
 
 function nameFor(prefix: string, text: string, suffix = ''): string {
-  return `${prefix} ${text.replace(/\s+/g, ' ').slice(0, 60)}${suffix}`.trim();
+  return `${prefix} ${sliceSafe(text.replace(/\s+/g, ' '), 60)}${suffix}`.trim();
 }
 
 /** Cuánto vale un botón «✅ Hecho» / «⏰ +1h» de un aviso. */

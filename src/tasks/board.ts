@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MINUTES_AFTER, MINUTES_BEFORE, minuteSaid } from '../cron/scheduler.js';
 import { setAsideCorrupt, writeFileReplacing } from '../fs-tmp.js';
+import { sliceSafe } from '../text.js';
 
 /**
  * Tablero semanal de tareas: «apúntame para el jueves llamar al banco», «¿qué tengo esta
@@ -425,7 +426,7 @@ export class TaskBoard {
     const task: BoardTask = {
       id: data.nextId,
       scope: chatScope(scope),
-      title: title.trim().slice(0, 200),
+      title: sliceSafe(title.trim(), 200),
       day,
       ...(time ? { time } : {}),
       ...(repeat ? { repeat } : {}),
@@ -515,7 +516,7 @@ export class TaskBoard {
 
   rename(id: number, title: string): BoardTask | undefined {
     return this.#update(id, (t) => {
-      t.title = title.trim().slice(0, 200);
+      t.title = sliceSafe(title.trim(), 200);
     });
   }
 
