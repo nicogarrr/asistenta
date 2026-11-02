@@ -486,7 +486,58 @@ export class TelegramChannel implements ChannelAdapter {
         .catch(() => {});
     }
 
+    // Un texto que pasa de 4096 caracteres lo parte el propio Telegram en varios
+    // mensajes seguidos; antes cada trozo era un turno y el primero contestaba a
+    // medio texto. Un texto casi al límite espera un momento a su continuación.
+    const key = `${inbound.chatId}:${inbound.threadId ?? ''}:${inbound.userId}`;
+    const held = this.#splitHeld.get(key);
+    const plain =
+      !inbound.photoFileId &&
+      !inbound.audioFileId &&
+      !inbound.documentFileId &&
+      !unseen &&
+      !inbound.text.startsWith('/');
+    if (held) {
+      clearTimeout(held.timer);
+      this.#splitHeld.delete(key);
+      if (plain) {
+        held.inbound.text = `${held.inbound.text}\n${inbound.text}`;
+        if (inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
+          this.#holdSplit(key, held.inbound, handlers);
+          return;
+        }
+        await handlers.onMessage(held.inbound);
+        return;
+      }
+      await handlers.onMessage(held.inbound);
+    }
+    if (plain && inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
+      this.#holdSplit(key, inbound, handlers);
+      return;
+    }
+
     await handlers.onMessage(inbound);
+  }
+
+  /** Textos largos a la espera de su continuación (chat:tema:usuario). */
+  readonly #splitHeld = new Map<
+    string,
+    { inbound: Inbound; timer: ReturnType<typeof setTimeout> }
+  >();
+
+  #holdSplit(key: string, inbound: Inbound, handlers: ChannelHandlers): void {
+    const timer = setTimeout(() => this.#flushSplit(key, handlers), SPLIT_TEXT_WAIT_MS);
+    this.#splitHeld.set(key, { inbound, timer });
+  }
+
+  #flushSplit(key: string, handlers: ChannelHandlers): void {
+    const held = this.#splitHeld.get(key);
+    if (!held) return;
+    clearTimeout(held.timer);
+    this.#splitHeld.delete(key);
+    void Promise.resolve(handlers.onMessage(held.inbound)).catch((err: unknown) => {
+      handlers.log('error', 'held message failed', { error: String(err) });
+    });
   }
 
   /** Mensajes ya avisados como editados (chat:id), para avisar una sola vez. */
@@ -1587,6 +1638,9 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   async stop(strict = false): Promise<void> {
+    // Un texto largo retenido a la espera de su continuación no se pierde al parar.
+    const handlers = this.#handlers;
+    if (handlers) for (const key of [...this.#splitHeld.keys()]) this.#flushSplit(key, handlers);
     this.#stopped = true;
     this.#ready = false;
     if (this.#retryTimer) {
@@ -2252,6 +2306,11 @@ export function tooBigForBotDownload(sizeBytes: number | undefined): string | un
   const mb = Math.ceil(sizeBytes / 1_000_000);
   return `Pesa ${mb} MB y pasa de 20 MB, el límite de descarga de los bots de Telegram.`;
 }
+
+/** Desde aquí un texto puede ser el primer trozo de uno que Telegram partió (4096). */
+export const SPLIT_TEXT_MIN_CHARS = 3500;
+/** Lo que se espera a la continuación de un texto partido. */
+const SPLIT_TEXT_WAIT_MS = 1500;
 
 /** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
 export const EDITED_MESSAGE_NOTE =
