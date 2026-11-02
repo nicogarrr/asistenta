@@ -63,6 +63,18 @@ function specialistLine(): string {
 }
 
 /**
+ * Aviso para el modelo cuando pide un especialista que no existe: lo hizo el
+ * subagente genérico (solo herramientas de lectura) y estos son los nombres válidos.
+ */
+export function unknownSpecialistNotice(name: string): string {
+  const shown = name
+    .replace(/[\s«»]+/g, ' ')
+    .trim()
+    .slice(0, 40);
+  return `Aviso: no existe el especialista «${shown}» (los que hay: ${specialistNames().join(', ')}). Esta tarea la hizo un subagente genérico, solo con herramientas de lectura; para la próxima usa uno de esos nombres.`;
+}
+
+/**
  * Crea la tool `delegate` sobre un pool ya configurado. `depthOf` devuelve la
  * profundidad del agente actual (el padre); el pool calcula la del hijo.
  */
@@ -111,7 +123,13 @@ export function createDelegateTool(
 
       // El modelo debe ver el fallo como texto util, no un contenido vacio; el
       // detalle estructurado queda para quien consuma el resultado.
-      const text = result.error ?? result.text;
+      const body = result.error ?? result.text;
+      // Un nombre que no existe no debe pasar desapercibido: el modelo lo lee aquí
+      // (y no solo en details) para no volver a pedirlo ni creer que lo hizo el bueno.
+      const text =
+        !specialist && args.specialist !== undefined
+          ? `${unknownSpecialistNotice(args.specialist)}\n\n${body}`
+          : body;
       const details: DelegateDetails = { depth: result.depth };
       if (specialist) details.specialist = specialist.name;
       else if (args.specialist !== undefined) details.unknownSpecialist = args.specialist;
