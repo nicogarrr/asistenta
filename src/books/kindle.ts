@@ -53,7 +53,7 @@ export interface KindleDeps {
     account: MailAccount,
     req: SendRequest & { attachments?: Array<{ filename: string; content: Buffer }> },
   ) => Promise<SendResult>;
-  requireApproval: (action: string, summary: string) => Promise<boolean>;
+  requireApproval: (action: string, summary: string, signal?: AbortSignal) => Promise<boolean>;
 }
 
 export type KindleOutcome =
@@ -66,6 +66,8 @@ export type KindleOutcome =
 export async function sendToKindle(
   deps: KindleDeps,
   book: { title: string; bytes: Buffer; kind: 'epub' | 'pdf' },
+  /** La señal del turno: con /stop o el turno cortado la pregunta se retira (denegada). */
+  signal?: AbortSignal,
 ): Promise<KindleOutcome> {
   const to = (await deps.getAddress())?.trim() ?? '';
   if (!to || !isKindleAddress(to)) return { status: 'no-address' };
@@ -74,6 +76,7 @@ export async function sendToKindle(
   const approved = await deps.requireApproval(
     'book:kindle',
     `Enviar "${approvalTitle(book.title)}" (${book.kind.toUpperCase()}) a tu Kindle ${to}, desde ${account.address}`,
+    signal,
   );
   if (!approved) return { status: 'declined' };
   const result = await deps.send(account, {

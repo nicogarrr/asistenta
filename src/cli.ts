@@ -2396,14 +2396,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           getAddress: async () => (await vaultGet(KINDLE_VAULT_KEY)) ?? null,
           loadAccount: loadMailAccount,
           send: sendMail,
-          requireApproval: async (_action, summary) => {
-            const choice = await telegram.offerApproval(
-              randomUUID(),
-              chatIdOf(thread.chatKey),
-              `¿${summary}?`,
-            );
-            return choice.approved;
-          },
+          // Como las compras: marca «esperando aprobación» y la señal del turno retira
+          // la pregunta con /stop o el turno cortado (solo deniega antes).
+          requireApproval: (_action, summary, signal) =>
+            askOncePerTurn(thread, `¿${summary}?`, signal),
         },
       }),
       createDownloadTool({
