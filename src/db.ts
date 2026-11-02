@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { log } from './log.js';
 import { paths } from './paths.js';
 import { loadDatabaseSync } from './sqlite.js';
 
@@ -182,14 +183,25 @@ CREATE TABLE IF NOT EXISTS kv (
 );
 `;
 
-function mapTrigger(row: Record<string, string | number | null>): RoutineTrigger {
+function mapTrigger(row: Record<string, string | number | null>): RoutineTrigger | null {
+  // Una fila con args ilegibles no puede parar el motor: «a failing trigger is
+  // logged and counted, the rest still fire» también vale para leer la tabla.
+  let args: Record<string, string> | null = null;
+  if (row.args) {
+    try {
+      args = JSON.parse(String(row.args)) as Record<string, string>;
+    } catch {
+      log.warn('trigger con args ilegibles; se omite', { id: String(row.id) });
+      return null;
+    }
+  }
   return {
     id: String(row.id),
     scope: String(row.scope),
     routine: String(row.routine),
     event: String(row.event),
     match: String(row.match),
-    args: row.args ? (JSON.parse(String(row.args)) as Record<string, string>) : null,
+    args,
     enabled: Number(row.enabled) === 1,
     cooldownSeconds: Number(row.cooldown_seconds),
     lastFiredAt: row.last_fired_at ? String(row.last_fired_at) : null,
@@ -493,7 +505,7 @@ export class Store {
             .all(scope)
         : this.#db.prepare('SELECT * FROM routine_triggers ORDER BY scope, created_at').all()
     ) as Array<Record<string, string | number | null>>;
-    return rows.map(mapTrigger);
+    return rows.map(mapTrigger).filter((t) => t !== null);
   }
 
   deleteTrigger(id: string): boolean {

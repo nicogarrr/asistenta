@@ -52,6 +52,20 @@ it('two stages only for relevant event, dedup across concurrent offers and resta
     expect.objectContaining({ payload: '' }),
   );
 });
+it('una fila con payload corrupto se marca ignorada y no frena a las demás', async () => {
+  const s = setup();
+  s.db
+    .prepare("INSERT INTO attention_events (key,payload,created) VALUES ('roto','{corrupto',?)")
+    .run(event.at);
+  await s.queue.offer([event]);
+  // El evento bueno se procesó entero (screen + review + aviso).
+  expect(s.send).toHaveBeenCalledTimes(1);
+  // La fila corrupta quedó apartada como las ignoradas, sin reintentos.
+  expect(s.db.prepare("SELECT state FROM attention_events WHERE key='roto'").get()).toEqual({
+    state: 'ignored',
+  });
+});
+
 it('irrelevant screen never wakes review', async () => {
   const judge = vi.fn(async () => JSON.stringify({ relevant: false, score: 1 }));
   const s = setup({ judge });

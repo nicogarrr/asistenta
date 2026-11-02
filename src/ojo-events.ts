@@ -1,6 +1,7 @@
 /** Event relevance pipeline. No tools, account mutations or third-party recipients. */
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { log } from './log.js';
 import { DEFAULT_QUIET_HOURS, inQuietHours } from './ojo.js';
 
 export interface AttentionEvent {
@@ -183,7 +184,17 @@ export class AttentionQueue {
         this.count('notice', now - pace.cooldownMs)
       )
         return;
-      const event = JSON.parse(row.payload) as AttentionEvent;
+      let event: AttentionEvent;
+      try {
+        event = JSON.parse(row.payload) as AttentionEvent;
+      } catch {
+        // Una fila corrupta no puede frenar las demás: se aparta como las ignoradas.
+        log.warn('evento de atención ilegible; se marca ignorado', { key: row.key });
+        db.prepare("UPDATE attention_events SET state='ignored', payload='' WHERE key=?").run(
+          row.key,
+        );
+        continue;
+      }
       const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(25_000)]);
       // Reserve BEFORE each call: errors and timeouts consume quota too.
       db.prepare('INSERT INTO attention_budget VALUES (?,?)').run(now, 'call');
