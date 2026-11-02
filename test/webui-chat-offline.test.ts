@@ -35,7 +35,8 @@ describe('panel: chat sin conexión', () => {
     }).catch((e) => e);
     expect(red).toMatchObject({
       sinConexion: true,
-      message: expect.stringMatching(/No se pudo conectar/),
+      // 2 nov: dice qué pasa y cómo arreglarlo (webui-no-en-marcha.test.ts).
+      message: expect.stringMatching(/Asistenta no está en marcha: reiníciala/),
     });
     const servidor = await hacer(async () => ({
       ok: false,
