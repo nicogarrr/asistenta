@@ -205,6 +205,17 @@ export interface ChannelHandlers {
     data: string;
   }): Promise<string>;
   /**
+   * Botón «🔄 Buscar actualización ahora» (callback `upd:buscar`, ver
+   * src/autoupdate-boton.ts). `notice` va en el aviso del botón; `reply`, si hay, como
+   * mensaje al chat. Va por su propio camino: nunca resuelve ni consume una aprobación.
+   */
+  onUpdateButton?(press: {
+    channel: string;
+    chatId: string;
+    userId: string;
+    data: string;
+  }): Promise<{ notice: string; reply?: string }>;
+  /**
    * Botón de un área de /funciones (callback `fn:<área>`, ver src/funciones.ts).
    * Devuelve el texto del área y sus botones; el adaptador edita el mensaje.
    * Va por su propio camino: nunca resuelve ni consume una aprobación.

@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   renameSync,
   rmSync,
@@ -27,10 +28,17 @@ import {
   autoupdateIntervalMin,
   type CmdResult,
   lockHeld,
+  type Outcome,
   readAutoupdateState,
   runAutoupdate,
   writeAutoupdateState,
 } from './autoupdate.js';
+import {
+  UPDATE_NOT_WINDOWS,
+  type UpdateButton,
+  updateButtons,
+  updateOffText,
+} from './autoupdate-boton.js';
 import { stopDaemon } from './daemon-control.js';
 import { daemonStatus } from './daemon-status.js';
 import { readBusy } from './ocupada.js';
@@ -110,6 +118,7 @@ export async function startDaemonTask(): Promise<boolean> {
 export async function sendOwnerTelegram(
   text: string,
   deps = { unlock: unlockVault, get: vaultGet, fetch: globalThis.fetch },
+  buttons: UpdateButton[] = [],
 ): Promise<boolean> {
   try {
     await deps.unlock();
@@ -129,7 +138,17 @@ export async function sendOwnerTelegram(
       method: 'POST',
       signal: AbortSignal.timeout(8000),
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: owner, text }),
+      body: JSON.stringify({
+        chat_id: owner,
+        text,
+        ...(buttons.length
+          ? {
+              reply_markup: {
+                inline_keyboard: [buttons.map((b) => ({ text: b.label, callback_data: b.action }))],
+              },
+            }
+          : {}),
+      }),
     });
     const data: unknown = await response.json();
     return (
@@ -164,7 +183,11 @@ export function readLogTail(file: string, max = 64 * 1024): string | null {
   }
 }
 
-export function realAutoupdateDeps(repo: string, stateDir: string): AutoupdateDeps {
+export function realAutoupdateDeps(
+  repo: string,
+  stateDir: string,
+  send: typeof sendOwnerTelegram = sendOwnerTelegram,
+): AutoupdateDeps {
   const run = async (exe: string, args: string[], timeout = 120_000): Promise<CmdResult> => {
     const r = await runExe(exe, args, timeout, repo);
     const code = r.error ? Number((r.error as { code?: unknown }).code) || 1 : 0;
@@ -192,8 +215,9 @@ export function realAutoupdateDeps(repo: string, stateDir: string): AutoupdateDe
       renameSync(prev, dist);
     },
     dropBackup: () => rmSync(prev, { recursive: true, force: true }),
+    // Todo aviso (actualizada, fallo, a medias) lleva «🔄 Buscar actualización ahora».
     notify: async (text) => {
-      await sendOwnerTelegram(text);
+      await send(text, undefined, updateButtons());
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
@@ -265,18 +289,99 @@ export function maybeLaunchAutoupdate(
 
 /** Orden mal escrita: qué hace cada una, sin la notación «uso: a|b». */
 /** Fuera de Windows: cómo actualizar a mano, no solo «no se puede». */
-export const AUTOUPDATE_NOT_WINDOWS =
-  'La autoactualización solo funciona en Windows. Aquí actualízala a mano en la carpeta de Asistenta: git pull, npm ci y npm run build, y luego pa restart.';
+export const AUTOUPDATE_NOT_WINDOWS = UPDATE_NOT_WINDOWS;
 
 export const AUTOUPDATE_USAGE =
   'No conozco esa orden. Usa: pa autoupdate status (cómo está), pa autoupdate now (actualizar ya), pa autoupdate off (que no se actualice sola) o pa autoupdate on (que vuelva a hacerlo).';
 
+/** Lo que contesta el botón cuando la revisión no mandó ya su propio aviso. */
+export function buttonOutcomeText(
+  out: Outcome,
+  opts: { version?: string; offText?: string | null } = {},
+): string {
+  if (out.kind === 'al-dia') {
+    const commit = /\(([0-9a-f]{7,})\)/.exec(out.text)?.[1];
+    const which = [opts.version, commit && (opts.version ? `(${commit})` : commit)]
+      .filter(Boolean)
+      .join(' ');
+    return `✅ Ya tienes la última versión${which ? `: ${which}` : ''}. No hay nada nuevo.`;
+  }
+  if (out.kind === 'actualizada') return `✅ Actualizada: ${withPeriod(out.text)}`;
+  if (out.kind === 'aplazada') {
+    return `⏸️ Todavía no me actualizo: ${withPeriod(out.text)} Vuelve a pulsar el botón cuando acabe.`;
+  }
+  if (opts.offText && out.text === 'autoactualización apagada') return opts.offText;
+  return `⚠️ No me he actualizado: ${withPeriod(out.text)}`;
+}
+
+/** La versión de package.json, o undefined si no se puede leer. */
+function packageVersion(repo: string): string | undefined {
+  try {
+    const v = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version;
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `pa autoupdate boton`, lo que lanza el botón de Telegram: la revisión de `now` y una
+ * respuesta en el chat siempre (al día con la versión, «me actualizo» antes de parar,
+ * y el error o el motivo si no se actualiza). El aviso de éxito o de fallo es el de
+ * siempre; si la revisión ya avisó, no se repite.
+ */
+async function autoupdateButtonRun(
+  stateDir: string,
+  deps: AutoupdateDeps,
+  env: NodeJS.ProcessEnv,
+  version: string | undefined,
+): Promise<Outcome> {
+  let notified = false;
+  const tracked: AutoupdateDeps = {
+    ...deps,
+    notify: async (text) => {
+      notified = true;
+      await deps.notify(text);
+    },
+  };
+  let out: Outcome;
+  try {
+    out = await runAutoupdate(stateDir, tracked, {
+      force: true,
+      env,
+      onUpdating: ({ from, to, changes }) =>
+        deps.notify(
+          `🔄 Hay una versión nueva (${from.slice(0, 7)} → ${to.slice(0, 7)}, ${changes} ${changes === 1 ? 'cambio' : 'cambios'}). Me actualizo ahora: me cierro un momento y te aviso aquí cuando vuelva.`,
+        ),
+    });
+  } catch (err) {
+    out = {
+      kind: 'error',
+      text: `algo falló al buscar (${String((err as Error)?.message ?? err)})`,
+    };
+  }
+  if (!notified) {
+    await deps
+      .notify(buttonOutcomeText(out, { version, offText: updateOffText(stateDir, env) }))
+      .catch(() => {});
+  }
+  return out;
+}
+
 export async function autoupdateCommand(
   args: string[],
-  opts: { stateDir: string; repo: string; deps?: AutoupdateDeps; env?: NodeJS.ProcessEnv },
+  opts: {
+    stateDir: string;
+    repo: string;
+    deps?: AutoupdateDeps;
+    env?: NodeJS.ProcessEnv;
+    /** Solo tests: la versión que diría package.json. */
+    version?: string;
+  },
 ): Promise<number> {
   const action = args[0] ?? 'status';
-  if (args.length > 1 || !['status', 'now', 'off', 'on', 'aplicar'].includes(action)) {
+  // `aplicar` (vigilante) y `boton` (Telegram) son internas: no salen en la ayuda.
+  if (args.length > 1 || !['status', 'now', 'off', 'on', 'aplicar', 'boton'].includes(action)) {
     process.stderr.write(`${AUTOUPDATE_USAGE}\n`);
     return 2;
   }
@@ -284,19 +389,16 @@ export async function autoupdateCommand(
   if (action === 'off' || action === 'on') {
     writeAutoupdateState(stateDir, { ...readAutoupdateState(stateDir), off: action === 'off' });
   }
-  if (action === 'now' || action === 'aplicar') {
+  if (action === 'now' || action === 'aplicar' || action === 'boton') {
     if (process.platform !== 'win32' && !opts.deps) {
       process.stderr.write(`${AUTOUPDATE_NOT_WINDOWS}\n`);
       return 2;
     }
-    const out = await runAutoupdate(
-      stateDir,
-      opts.deps ?? realAutoupdateDeps(opts.repo, stateDir),
-      {
-        force: action === 'now',
-        env,
-      },
-    );
+    const deps = opts.deps ?? realAutoupdateDeps(opts.repo, stateDir);
+    const out =
+      action === 'boton'
+        ? await autoupdateButtonRun(stateDir, deps, env, opts.version ?? packageVersion(opts.repo))
+        : await runAutoupdate(stateDir, deps, { force: action === 'now', env });
     process.stdout.write(`Autoactualización: ${out.text}\n`);
     return out.kind === 'revertida' || out.kind === 'error' ? 1 : 0;
   }

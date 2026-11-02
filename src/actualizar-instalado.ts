@@ -73,6 +73,8 @@ export interface InstaladoDeps {
   tmpDir: string;
   launch: (exe: string, args: string[]) => void;
   out: (text: string) => void;
+  /** Respuesta al botón de Telegram (`pa autoupdate boton`): al chat del dueño. */
+  notify?: (text: string) => Promise<void>;
 }
 
 async function get(deps: InstaladoDeps, url: string, max: number, json = false): Promise<Buffer> {
@@ -168,7 +170,8 @@ export async function instaladoAutoupdateCommand(
   deps: Partial<InstaladoDeps> = {},
 ): Promise<number | null> {
   const action = args[0] ?? 'status';
-  if (args.length > 1 || !['status', 'now', 'off', 'on', 'aplicar'].includes(action)) return null;
+  if (args.length > 1 || !['status', 'now', 'off', 'on', 'aplicar', 'boton'].includes(action))
+    return null;
   let current = deps.current;
   if (!current) {
     try {
@@ -189,6 +192,26 @@ export async function instaladoAutoupdateCommand(
     out: deps.out ?? ((t) => process.stdout.write(`${t}\n`)),
   };
   if (action === 'now') return instalarUltima(full);
+  if (action === 'boton') {
+    // El botón de Telegram: lo mismo que `now`, y lo que diga va también al chat.
+    const said: string[] = [];
+    const code = await instalarUltima({
+      ...full,
+      out: (t) => {
+        said.push(t);
+        full.out(t);
+      },
+    });
+    const notify =
+      deps.notify ??
+      (async (t: string) => {
+        const { sendOwnerTelegram } = await import('./autoupdate-cli.js');
+        const { updateButtons } = await import('./autoupdate-boton.js');
+        await sendOwnerTelegram(t, undefined, updateButtons());
+      });
+    if (said.length) await notify(said.join('\n')).catch(() => {});
+    return code;
+  }
   // `aplicar` lo lanza la autoactualización periódica: aquí nunca instala sin que lo pidas.
   full.out(STATUS(current));
   return 0;

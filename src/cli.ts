@@ -39,7 +39,7 @@ import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
 import { fileFallbackText, foldAccents, sliceSafe } from './text.js';
 import { startWebhookServer, webhookConfig } from './webhook.js';
 import './envfile.js';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   copyFileSync,
@@ -3200,6 +3200,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
+  // «🔄 Buscar actualización ahora»: uno por daemon (recuerda la búsqueda en marcha).
+  let updateButtonPress:
+    | ReturnType<typeof import('./autoupdate-boton.js').createUpdateButton>
+    | undefined;
   // Chat privado del dueño (DM de Telegram verificado). Vigilante y resumen diario se
   // mandan ahí, así que solo leen los seguimientos de ese chat, no los de los grupos.
   const ownerDmFollowupKey = (): string | undefined => {
@@ -5907,7 +5911,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       pageWatches: pageWatches.list(inbound.chatId).length,
       droppedReminders: readDroppedReminders(join(paths.state, 'dropped-reminders.jsonl')),
     });
-    await say(inbound, marksWithTitles(text, isStatusTitle), { quote: true, format: 'marks' });
+    const { updateButtons } = await import('./autoupdate-boton.js');
+    await say(inbound, marksWithTitles(text, isStatusTitle), {
+      quote: true,
+      format: 'marks',
+      buttons: isOwnerDm(inbound, vigilanteOwnerId) ? updateButtons() : undefined,
+    });
   };
 
   /** What the user said they would do, in the tracker's own Spanish summary. */
@@ -8125,7 +8134,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       names: ['actualizacion'],
       run: async (inbound) => {
         const { autoupdateStatusLine } = await import('./autoupdate-cli.js');
-        await say(inbound, autoupdateStatusLine(paths.state));
+        const { updateButtons } = await import('./autoupdate-boton.js');
+        await say(inbound, autoupdateStatusLine(paths.state), {
+          buttons: isOwnerDm(inbound, vigilanteOwnerId) ? updateButtons() : undefined,
+        });
       },
     },
     { names: ['reintentar'], run: (inbound) => cmdReintentar(inbound) },
@@ -8260,6 +8272,28 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           findArea(press.data.slice(FUNCIONES_CALLBACK_PREFIX.length))?.id,
         ),
       };
+    },
+    onUpdateButton: async (press) => {
+      const { createUpdateButton } = await import('./autoupdate-boton.js');
+      const { autostartRepo } = await import('./autostart.js');
+      updateButtonPress ??= createUpdateButton({
+        stateDir: paths.state,
+        platform: process.platform,
+        env: process.env,
+        now: Date.now,
+        // Aparte y desligado: la actualización para este daemon y lo vuelve a arrancar.
+        launch: (onExit) => {
+          const child = spawn(
+            process.execPath,
+            [join(autostartRepo(), 'dist', 'cli.js'), 'autoupdate', 'boton'],
+            { detached: true, stdio: 'ignore', windowsHide: true },
+          );
+          child.once('exit', onExit);
+          child.once('error', onExit);
+          child.unref();
+        },
+      });
+      return updateButtonPress({ data: press.data, isOwner: isOwnerDm(press, vigilanteOwnerId) });
     },
     onTvButton: (press) =>
       tvButtonCommand(press.data, {

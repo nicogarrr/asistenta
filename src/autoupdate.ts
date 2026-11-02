@@ -378,7 +378,13 @@ async function finishInterrupted(
 export async function runAutoupdate(
   stateDir: string,
   deps: AutoupdateDeps,
-  opts: { force?: boolean; env?: NodeJS.ProcessEnv; healthTimeoutMs?: number } = {},
+  opts: {
+    force?: boolean;
+    env?: NodeJS.ProcessEnv;
+    healthTimeoutMs?: number;
+    /** Justo antes de parar Asistenta para instalar una versión nueva (el botón lo avisa). */
+    onUpdating?: (info: { from: string; to: string; changes: number }) => Promise<void>;
+  } = {},
 ): Promise<Outcome> {
   const state = readAutoupdateState(stateDir);
   const prevCheck = state.lastCheckAt;
@@ -464,6 +470,7 @@ export async function runAutoupdate(
     const lockChanged = lockDiff.code !== 0 || lockDiff.out.trim() !== '';
     const health = opts.healthTimeoutMs ?? autoupdateHealthMs(opts.env);
 
+    await opts.onUpdating?.({ from: old, to: remote, changes: subjects.length }).catch(() => {});
     deps.backupDist();
     try {
       await deps.stopDaemon();
