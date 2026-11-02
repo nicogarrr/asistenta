@@ -688,6 +688,7 @@ import {
 } from './cli-messages.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
+  BORRAR_SUB,
   commandRoutineTag,
   inChatScope,
   nextRunLabel,
@@ -4212,7 +4213,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
     const sub = (subRaw ?? '').toLowerCase();
     const rest = restParts.join(' ');
-    if (sub === 'del' || sub === 'borra' || sub === 'rm') {
+    if (BORRAR_SUB.test(sub)) {
       const n = Number(rest.trim());
       const scoped = store.listTriggers().filter((t) => inChatScope(t.scope, chatKey_));
       const victim = Number.isInteger(n) && n >= 1 ? scoped[n - 1] : undefined;
