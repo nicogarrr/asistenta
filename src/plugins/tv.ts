@@ -29,7 +29,7 @@ import {
 import { tvPower } from '../tv/power.js';
 import type { KnownTv } from '../tv/registry.js';
 import { rokuDriver } from '../tv/roku.js';
-import { samsungDriver } from '../tv/samsung.js';
+import { samsungDriver, sharedSamsungPool } from '../tv/samsung.js';
 import { deepLaunchPayload } from '../tv/search-recipes.js';
 import { readTvStatus } from '../tv/status.js';
 import {
@@ -248,7 +248,12 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
           ? rokuDriver(other.host)
           : samsungDriver(
               { host: other.host, token: other.clientKey, secure: other.secure === '1' },
-              { mac: other.mac, onToken: (key) => saveTvClientKey(other.host, key) },
+              {
+                mac: other.mac,
+                onToken: (key) => saveTvClientKey(other.host, key),
+                // Daemon: la conexión se queda abierta entre órdenes (como la LG, #1891).
+                pool: opts.keepAlive ? sharedSamsungPool() : null,
+              },
             );
       return {
         text: found.text,
