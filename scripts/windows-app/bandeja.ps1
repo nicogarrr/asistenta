@@ -103,6 +103,7 @@ $icono.Text = 'Asistenta'
 $icono.Visible = $true
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $script:enMarcha = $false
+$script:esperando = $false
 $script:color = 'rojo'
 
 function Update-Estado {
@@ -129,14 +130,26 @@ $abrir.add_Click({
 # segundos (modelo, Telegram, correo…). Sin esta espera activa el punto se
 # quedaba rojo un buen rato aunque el botón SÍ hubiera funcionado, y parecía
 # que «Reiniciar» y «Reanudar» no hacían nada (Nico, 2-nov-2026).
+# Espera sin congelar la bandeja: el clic corre en el hilo de la interfaz y un
+# Start-Sleep de segundos dejaba el menú y el punto quietos hasta 90 s (no se
+# podía ni Salir). Se atienden los eventos cada 200 ms, como en la espera de
+# «Configurar Asistenta», y un segundo clic mientras espera no abre otra espera.
 function Wait-Encendida([int] $Segundos = 90) {
-    $fin = (Get-Date).AddSeconds($Segundos)
-    while ((Get-Date) -lt $fin) {
-        Update-Estado
-        if ($script:enMarcha) { return $true }
-        Start-Sleep -Seconds 4
-    }
-    return $false
+    if ($script:esperando) { return $false }
+    $script:esperando = $true
+    try {
+        $fin = (Get-Date).AddSeconds($Segundos)
+        while ((Get-Date) -lt $fin -and $icono.Visible) {
+            Update-Estado
+            if ($script:enMarcha) { return $true }
+            $paso = (Get-Date).AddSeconds(4)
+            while ((Get-Date) -lt $paso -and $icono.Visible) {
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Sleep -Milliseconds 200
+            }
+        }
+        return $false
+    } finally { $script:esperando = $false }
 }
 $pausa = $menu.Items.Add('Pausar / Reanudar')
 $pausa.add_Click({
