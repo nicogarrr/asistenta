@@ -39,6 +39,17 @@ UninstPage custom un.PaginaDatos un.SalirDatos
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "Spanish"
 Section "Asistenta"
+  ; Una sola Asistenta: cierra todas las que haya en marcha (esta, la carpeta de git, una
+  ; copia que se quedó viva). Solo procesos de Asistenta: node con dist\cli.js o dist\pa.js
+  ; serve/iniciar y sus lanzadores run-hidden/run-stack.ps1 (src/instancias.ts).
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\instancias.mjs" "@@STAGE@@/app/dist/instancias.js"
+  ${If} ${FileExists} "$INSTDIR\node\node.exe"
+    nsExec::Exec '"$INSTDIR\node\node.exe" "$PLUGINSDIR\instancias.mjs" cerrar'
+  ${Else}
+    nsExec::Exec 'node.exe "$PLUGINSDIR\instancias.mjs" cerrar'
+  ${EndIf}
+  Pop $0
   ; Encendida, Windows no deja sobrescribir sus archivos: primero se apaga.
   ${If} ${FileExists} "$INSTDIR\app\dist\cli.js"
     SetOutPath "$INSTDIR\app"

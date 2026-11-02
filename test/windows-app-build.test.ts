@@ -135,6 +135,7 @@ describe('instalador .exe: script NSIS', () => {
     mkdirSync(join(stage, 'app', 'dist'), { recursive: true });
     mkdirSync(join(stage, 'node'));
     writeFileSync(join(stage, 'app', 'dist', 'cli.js'), '');
+    writeFileSync(join(stage, 'app', 'dist', 'instancias.js'), '');
     writeFileSync(join(stage, 'node', 'node.exe'), '');
     const png = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',

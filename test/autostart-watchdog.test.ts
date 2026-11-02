@@ -140,7 +140,12 @@ describe('pa autostart con el vigilante (todo simulado)', () => {
       },
     );
     expect(
-      await autostartCommand(['install'], { stateDir: tmp(), cliJs: 'C:\\a\\dist\\cli.js' }),
+      await autostartCommand(['install'], {
+        stateDir: tmp(),
+        cliJs: 'C:\\a\\dist\\cli.js',
+        // Sin otras Asistentas que cerrar (eso va en autoupd-instancias.test.ts).
+        closeInstances: async () => null,
+      }),
     ).toBe(0);
     const c = calls();
     expect(c[0]?.[0]).toBe('powershell.exe');

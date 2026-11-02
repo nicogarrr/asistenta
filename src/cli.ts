@@ -1106,6 +1106,14 @@ async function doctorCommand(): Promise<number> {
   );
   if (vaultExists()) lines.push(...(await telegramDoctorLines(vaultGet, doctorFetch())));
   lines.push(timeZoneDoctorLine());
+  {
+    const { asistentaInstances, instanceChecksEnabled, instancesDoctorLine, listProcesses } =
+      await import('./instancias.js');
+    if (instanceChecksEnabled()) {
+      const extra = instancesDoctorLine(asistentaInstances(await listProcesses()).daemons.length);
+      if (extra) lines.push(extra);
+    }
+  }
   if (desktopEnabled()) {
     lines.push(
       `shell           ${hasPwsh() ? 'PowerShell 7' : 'PowerShell 5.1 (funciona; con PowerShell 7 va mejor)'}`,
@@ -1627,6 +1635,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   }
 
   assertNotRunning(paths.state, 'agent');
+  {
+    // Una sola Asistenta en el PC: otra de otra carpeta (el .exe, la de git) contestaría
+    // también a cada mensaje de Telegram (instancias.ts).
+    const { instanceChecksEnabled, otherInstanceReason } = await import('./instancias.js');
+    const other = instanceChecksEnabled() ? await otherInstanceReason() : null;
+    if (other) throw new Error(other);
+  }
   control?.beginResources();
   const store = new Store();
   store.sweepExpired();

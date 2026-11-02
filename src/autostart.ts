@@ -29,6 +29,14 @@ import {
   sendOwnerTelegram,
 } from './autoupdate-cli.js';
 import { BOOT_NOTICE_FILE, formatBootNoticeResult, readBootNoticeResult } from './boot-notice.js';
+import {
+  asistentaInstances,
+  type CloseDeps,
+  closeAllInstances,
+  closeOutcomeText,
+  instanceChecksEnabled,
+  realCloseDeps,
+} from './instancias.js';
 
 import { logFile } from './log.js';
 import { paths } from './paths.js';
@@ -100,6 +108,22 @@ export interface AutostartOptions {
   daemonState?: () => DaemonRunState;
   /** Lanza `pa autoupdate aplicar` aparte; por defecto, un proceso desligado. */
   launchAutoupdate?: (exe: string, args: string[]) => void;
+  /** Cierra las Asistentas que sobran antes de instalar; por defecto, las de verdad. */
+  closeInstances?: (all: boolean) => Promise<string | null>;
+}
+
+/**
+ * Antes de `pa autostart install`: con --start cierra todas (la tarea arranca la buena);
+ * sin él, solo si hay más de una en marcha. Solo procesos de Asistenta (instancias.ts).
+ */
+export async function closeInstancesForInstall(
+  all: boolean,
+  deps: CloseDeps = realCloseDeps(),
+): Promise<string | null> {
+  if (!all && asistentaInstances(await deps.list(), deps.exclude, deps.isOurs).daemons.length <= 1)
+    return null;
+  const outcome = await closeAllInstances(deps);
+  return outcome.found === 0 && outcome.killed.length === 0 ? null : closeOutcomeText(outcome);
 }
 
 export const WATCHDOG_REPAIR_FIRST =
@@ -304,6 +328,19 @@ export async function autostartCommand(
     const aviso = readBootNoticeResult(join(stateDir, BOOT_NOTICE_FILE));
     process.stdout.write(`${formatBootNoticeResult(aviso)}\n`);
   }
+  // Una sola Asistenta: dos daemons con el mismo bot responden dos veces y se pisan.
+  // Si ha cerrado alguna, la deja arrancada (como --start): si no, se quedaba sin ninguna.
+  let start = args.includes('--start');
+  if (action === 'install' && !args.includes('--what-if')) {
+    const close =
+      opts.closeInstances ??
+      (instanceChecksEnabled() ? closeInstancesForInstall : async () => null);
+    const closed = await close(start);
+    if (closed) {
+      process.stdout.write(`${closed}\n`);
+      start = true;
+    }
+  }
   const repo = autostartRepo();
   const flags = [
     '-NoProfile',
@@ -321,7 +358,7 @@ export async function autostartCommand(
   ];
   // Switch is a literal PowerShell argument, not shell text. The installer defaults local LLM on.
   if (args.includes('--no-local-llm')) flags.push('-DisableLocalLlm');
-  if (args.includes('--start')) flags.push('-Start');
+  if (start) flags.push('-Start');
   if (args.includes('--what-if')) flags.push('-WhatIf');
   const whatIf = args.includes('--what-if');
   if (action === 'uninstall' && !whatIf) {
@@ -344,7 +381,7 @@ export async function autostartCommand(
   }
   // --start la deja encendida a propósito: igual que `pa iniciar`, quita la marca de
   // `pa stop` para que el vigilante vuelva a levantarla si se cae antes de reiniciar.
-  if (action === 'install' && !whatIf && args.includes('--start')) {
+  if (action === 'install' && !whatIf && start) {
     clearStoppedOnPurpose(stateDir);
   }
   if (action === 'install' && !whatIf && watchdogEnabled()) {
