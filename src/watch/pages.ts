@@ -30,6 +30,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { sliceSafe } from '../text.js';
 import {
   extractReading,
   hostOf,
@@ -360,7 +361,7 @@ export class PageWatchStore {
     keyword = '',
     opts: { targetCents?: number | null; dropPct?: number | null } = {},
   ): PageWatch {
-    const kw = keyword.trim().slice(0, 60);
+    const kw = sliceSafe(keyword.trim(), 60);
     const existing = this.list(scope).find((w) => w.url === url && w.keyword === kw);
     if (existing) {
       // Misma página + misma palabra = la misma vigilancia. Si el usuario pasa un
@@ -387,7 +388,7 @@ export class PageWatchStore {
         id,
         scope,
         url,
-        label.slice(0, 80),
+        sliceSafe(label, 80),
         this.now(),
         kw,
         opts.targetCents ?? null,

@@ -2,6 +2,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { PRICE_WATCH_REMOVE_HINT } from '../palabras-vigilancia.js';
+import { sliceSafe } from '../text.js';
 import { eur, type PageWatch, type PageWatchStore } from '../watch/pages.js';
 
 /**
@@ -134,10 +135,12 @@ export function createPriceWatchTool(
         }
         dropPct = p;
       }
-      const label = String(args.label ?? '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 80);
+      const label = sliceSafe(
+        String(args.label ?? '')
+          .replace(/\s+/g, ' ')
+          .trim(),
+        80,
+      );
       try {
         const w = deps.watches.add(scope, url, label, String(args.keyword ?? ''), {
           targetCents,
