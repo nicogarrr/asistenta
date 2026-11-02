@@ -161,6 +161,11 @@ export function parseDemoEvents(raw: readonly unknown[]): DemoEvent[] {
 const failed = (text: string) => text.startsWith('error:');
 
 /** Grabaciones web en curso, una por conversación. */
+
+/** La confirmación de /learn web al guardar: cuántos selectores y campos secretos. */
+export function playbookSavedText(domain: string, selectores: number, secretos: number): string {
+  return `Playbook de ${domain} guardado: ${selectores} ${selectores === 1 ? 'selector' : 'selectores'} y ${secretos} ${secretos === 1 ? 'campo secreto' : 'campos secretos'} (solo el nombre de la clave). Los valores que escribiste no se guardan.`;
+}
 /** Tiempo máximo de una grabación web antes de caducar. */
 export const DEMO_TTL_MS = 30 * 60_000;
 
@@ -293,6 +298,6 @@ export class WebDemoRecorder {
       return 'El playbook no se guarda: su contenido coincide con un valor del vault.';
     }
     deps.store.save(pb);
-    return `Playbook de ${pb.domain} guardado: ${pb.selectores.length} selectores y ${pb.login.length} campos secretos (solo el nombre de la clave). Los valores que escribiste no se guardan.`;
+    return playbookSavedText(pb.domain, pb.selectores.length, pb.login.length);
   }
 }
