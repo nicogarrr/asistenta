@@ -1,4 +1,5 @@
-import type { UsageReport, UsageReportTotals } from './usage.js';
+import type { GoQuota } from './go-quota.js';
+import type { ContextEstimate, UsageReport, UsageReportTotals } from './usage.js';
 
 /**
  * Texto de /consumo: tokens y coste estimado por dia y por modelo, mas el
@@ -30,7 +31,8 @@ function shortDay(day: string): string {
 
 function line(t: UsageReportTotals): string {
   const calls = t.calls === 1 ? '1 llamada' : `${formatTokens(t.calls)} llamadas`;
-  return `${calls} · ${formatTokens(t.totalTokens)} tokens · ${formatEur(t.costMicros)}`;
+  const cache = t.cacheReadTokens > 0 ? ` (caché ${formatTokens(t.cacheReadTokens)})` : '';
+  return `${calls} · ${formatTokens(t.totalTokens)} tokens${cache} · ${formatEur(t.costMicros)}`;
 }
 
 export interface UsageFormatOptions {
@@ -92,9 +94,33 @@ export function formatUsageReport(report: UsageReport, opts: UsageFormatOptions 
     }
   }
 
+  if (report.contextAvg) out.push('', formatContextAvg(report.contextAvg));
+
   out.push('');
-  out.push('Coste estimado con la tabla de precios configurada; 0 € no garantiza que sea gratis.');
+  out.push(
+    'Tokens medidos por el proveedor; coste estimado con la tabla de precios configurada (0 € no garantiza que sea gratis).',
+  );
   return out.join('\n');
+}
+
+/** Media de composición del contexto por turno: estimación heurística, etiquetada. */
+export function formatContextAvg(avg: ContextEstimate & { turns: number }): string {
+  const turnos = avg.turns === 1 ? '1 turno' : `${formatTokens(avg.turns)} turnos`;
+  return (
+    `Contexto por turno (${turnos}, estimado): sistema ${formatTokens(avg.system)} · ` +
+    `memoria ${formatTokens(avg.memory)} · historial ${formatTokens(avg.history)} · ` +
+    `herramientas ${formatTokens(avg.tools)}`
+  );
+}
+
+/** Cuota del plan OpenCode Go: porcentajes consumidos de cada ventana. */
+export function formatGoQuota(quota: GoQuota): string | null {
+  const parts: string[] = [];
+  if (quota.rolling) parts.push(`horas ${quota.rolling.percent} %`);
+  if (quota.weekly) parts.push(`semana ${quota.weekly.percent} %`);
+  if (quota.monthly) parts.push(`mes ${quota.monthly.percent} %`);
+  if (parts.length === 0) return null;
+  return `Cuota OpenCode Go: ${parts.join(' · ')}`;
 }
 
 /**

@@ -12,10 +12,12 @@ import { extractDoneSummary, isTerminalToolName } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
 import { IterationBudget } from './budget.js';
 import { FileWriteTracker } from './filewrites.js';
+import type { ContextComposition } from './history.js';
 import {
   compactHistory,
   compactionFor,
   compactTokensFromEnv,
+  contextComposition,
   DEFAULT_COMPACTION,
   estimateAll,
   extractionPrompt,
@@ -963,6 +965,21 @@ export class PersonalAgent {
       const i = this.#baseTools.findIndex((t) => t.name === name);
       if (i >= 0) this.#baseTools.splice(i, 1);
     }
+  }
+
+  /**
+   * Composición estimada del contexto tal como saldría en el próximo turno:
+   * prompt base, memoria/rutinas (notas system), historial y herramientas.
+   * Estimación heurística para /uso; los tokens reales los da el proveedor.
+   */
+  contextEstimate(): ContextComposition {
+    const state = this.#agent.state;
+    return contextComposition(
+      state.messages,
+      (m) => this.#contextNotes.has(m),
+      state.systemPrompt ?? '',
+      state.tools ?? [],
+    );
   }
 
   attachContext(note: string): void {

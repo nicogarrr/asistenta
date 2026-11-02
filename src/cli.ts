@@ -393,8 +393,9 @@ import {
   fireCommandRoutine,
   isCommandRoutine,
 } from './command-routine.js';
+import { fetchGoQuota } from './core/go-quota.js';
 import { dailyBudgetExceeded, recordUsage, usageReport } from './core/usage.js';
-import { formatUsageReport, parseUsageDays } from './core/usage-format.js';
+import { formatGoQuota, formatUsageReport, parseUsageDays } from './core/usage-format.js';
 import { envHashDoctorLine } from './doctor-env-hash.js';
 import { envUnknownKeysDoctorLine } from './doctor-env-keys.js';
 import { envLinesDoctorLine } from './doctor-env-lines.js';
@@ -5676,7 +5677,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const text = formatUsageReport(usageReport(days), { budgetEur: config.dailyBudgetEur });
-    await say(inbound, text, { quote: true });
+    // Cuota del plan Go (solo endpoints OpenCode): porcentajes, nunca claves.
+    const quota = await fetchGoQuota(config.baseUrl, {
+      headers: isOpenCodeEndpoint(config.baseUrl) ? goHeaders('daemon') : {},
+    });
+    const quotaLine = quota ? formatGoQuota(quota) : null;
+    await say(inbound, quotaLine ? `${text}\n${quotaLine}` : text, { quote: true });
   };
 
   /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
@@ -7067,6 +7073,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         inputTokens: result.inputTokens ?? 0,
         outputTokens: result.outputTokens ?? 0,
         kind: 'turn',
+        context: thread.agent.contextEstimate(),
       });
       if (config.dailyBudgetEur > 0 && dailyBudgetExceeded(config.dailyBudgetEur)) {
         const budgetDay = localDay();

@@ -110,6 +110,46 @@ export function estimateTokens(m: AgentMessage): number {
   return Math.ceil(chars / 4) + images * 1500;
 }
 
+/** Composición estimada del contexto de un turno, en tokens (heurística 4 chars/token). */
+export interface ContextComposition {
+  system: number;
+  memory: number;
+  history: number;
+  tools: number;
+}
+
+/**
+ * Reparte el contexto en sus cuatro partes: el prompt base, las notas de
+ * memoria/rutinas/fecha (mensajes system que `isNote` reconoce), el resto del
+ * historial y los esquemas de herramientas. Es una ESTIMACIÓN para el
+ * inspector /uso: el número real de entrada lo da el proveedor.
+ */
+export function contextComposition(
+  messages: readonly AgentMessage[],
+  isNote: (m: AgentMessage) => boolean,
+  systemPrompt: string,
+  tools: readonly unknown[],
+): ContextComposition {
+  let memory = 0;
+  let history = 0;
+  for (const m of messages) {
+    if (isNote(m)) memory += estimateTokens(m);
+    else history += estimateTokens(m);
+  }
+  let toolChars = 0;
+  try {
+    toolChars = JSON.stringify(tools).length;
+  } catch {
+    toolChars = 0;
+  }
+  return {
+    system: Math.ceil(systemPrompt.length / 4),
+    memory,
+    history,
+    tools: Math.ceil(toolChars / 4),
+  };
+}
+
 export function estimateAll(messages: readonly AgentMessage[]): number {
   return messages.reduce((n, m) => n + estimateTokens(m), 0);
 }
