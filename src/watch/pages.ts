@@ -446,7 +446,9 @@ export class PageWatchStore {
   }
 
   remove(scope: string, idOrPrefix: string): boolean {
-    const w = this.list(scope).find((x) => x.id === idOrPrefix || x.id.startsWith(idOrPrefix));
+    // Un trozo del código que vale para dos no quita ninguna: antes se quitaba la
+    // primera que empezara así, quizá otra que la que Nico quería.
+    const w = byIdOrPrefix(this.list(scope), idOrPrefix);
     if (!w) return false;
     this.db.prepare('UPDATE page_watches SET active = 0 WHERE id = ?').run(w.id);
     return true;
@@ -789,6 +791,29 @@ export function watchFromAnswer<T extends Pick<PageWatch, 'id' | 'label' | 'url'
   if (byId) return byId;
   const hits = list.filter((w) => w.label && foldSaid(w.label).includes(said));
   return hits.length === 1 ? (hits[0] as T) : null;
+}
+
+/** El código entero, o un trozo que solo vale para una vigilancia. */
+function byIdOrPrefix<T extends Pick<PageWatch, 'id'>>(list: readonly T[], said: string): T | null {
+  const id = said.trim().toLowerCase();
+  if (!id) return null;
+  const exact = list.find((w) => w.id.toLowerCase() === id);
+  if (exact) return exact;
+  const hits = list.filter((w) => w.id.toLowerCase().startsWith(id));
+  return hits.length === 1 ? (hits[0] as T) : null;
+}
+
+/**
+ * «/dejar_de_vigilar tele», «/precio ps5», «la de la PS5» o el código (entero o un
+ * trozo que no se confunde): qué vigilancia se nombra. Antes los comandos solo miraban
+ * el código y «tele» daba «No encuentro esa vigilancia», aunque como respuesta a la
+ * pregunta sí valía.
+ */
+export function watchNamed<T extends Pick<PageWatch, 'id' | 'label' | 'url'>>(
+  list: readonly T[],
+  said: string,
+): T | null {
+  return byIdOrPrefix(list, said) ?? watchFromAnswer(list, said);
 }
 
 function foldSaid(s: string): string {
