@@ -21,13 +21,28 @@
  * quien las usa SIEMPRE devuelve la captura de después para comprobarlo.
  */
 export type TvSearchRecipe =
-  | { kind: 'params'; appId: string; app: string; params: Record<string, string> }
+  | {
+      kind: 'params';
+      appId: string;
+      app: string;
+      params: Record<string, string>;
+      /** Id del vídeo cuando lo pedido es un enlace de YouTube: se pone, no se busca. */
+      video?: string;
+    }
   | { kind: 'contentId'; appId: string; app: string; contentId: string }
   | { kind: 'keyboard'; appId: string; app: string; hint: string };
 
 const YOUTUBE_IDS = new Set(['youtube.leanback.v4', 'org.webosbrew.youtube.adfree']);
 const YT_TV = 'https://www.youtube.com/tv';
 const MOVISTAR_ID = 'com.telefonica.app.nux';
+
+const YT_VIDEO_ID =
+  /(?:youtu\.be\/|[?&]v=|^v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/;
+
+/** Id de vídeo de YouTube en lo pedido (enlace o «v=ID»), o null si es texto. */
+export function youtubeVideoId(query: string): string | null {
+  return YT_VIDEO_ID.exec(query.trim())?.[1] ?? null;
+}
 
 /** ¿Es una de las apps de YouTube de la tele (oficial o AdFree)? */
 export function isYoutubeApp(appId: string): boolean {
@@ -39,10 +54,16 @@ export function appSearchRecipe(appId: string, query: string): TvSearchRecipe | 
   const q = query.trim().slice(0, 200);
   if (!q) return null;
   if (isYoutubeApp(appId)) {
+    const app = appId === 'youtube.leanback.v4' ? 'YouTube' : 'YouTube AdFree';
+    // «pon en YouTube https://youtu.be/ID»: el vídeo exacto («v=ID», el mismo
+    // contentTarget que el deeplink), no una búsqueda del texto del enlace.
+    const video = youtubeVideoId(q);
+    if (video)
+      return { kind: 'params', appId, app, params: { contentTarget: `v=${video}` }, video };
     return {
       kind: 'params',
       appId,
-      app: appId === 'youtube.leanback.v4' ? 'YouTube' : 'YouTube AdFree',
+      app,
       params: { contentTarget: `${YT_TV}#/search?q=${encodeURIComponent(q)}` },
     };
   }

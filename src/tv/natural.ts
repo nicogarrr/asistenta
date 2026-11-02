@@ -18,6 +18,7 @@
  *   "modo cine (con Netflix)"  -> scene cine
  */
 import { APP_ALIASES, APP_NAMES, normalizeTvText } from './apps.js';
+import { youtubeVideoId } from './search-recipes.js';
 
 export type TvIntent =
   | { action: 'power'; on: boolean }
@@ -359,13 +360,33 @@ export function searchTextAsWritten(original: string, query: string): string {
     .toLowerCase();
 }
 
+const URL_IN_TEXT = /https?:\/\/\S+/;
+/** «pon https://youtu.be/ID [en la tele]», «reproduce este vídeo <enlace>»: el enlace es de YouTube. */
+const PLAY_YT_LINK =
+  /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:video|enlace|link)|(?:en|por) (?:la tele|la tv|la television|youtube|you tube)))*$/;
+
 export function parseTvCommand(text: string): TvIntent | null {
-  const intent = parseTvCommandNorm(text);
+  const link = URL_IN_TEXT.exec(text)?.[0];
+  // Con un enlace, el resto de la orden se lee sin él: así un enlace largo
+  // (…&list=…&t=90s) no pasa del tope de texto ni se lee como hora.
+  const intent = link
+    ? withLinkIntent(parseTvCommandNorm(text.replace(link, ' enlacedelvideo ')), text, link)
+    : parseTvCommandNorm(text);
   if (intent?.action !== 'search') return intent;
   // «pon en YouTube https://youtu.be/ID»: el enlace tal cual (el id distingue mayúsculas).
-  const link = /https?:\/\/\S+/.exec(text)?.[0];
-  if (link && intent.text.startsWith('http')) return { ...intent, text: link };
+  if (link && intent.text === link) return intent;
   return { ...intent, text: searchTextAsWritten(text, intent.text) };
+}
+
+function withLinkIntent(intent: TvIntent | null, text: string, link: string): TvIntent | null {
+  if (intent?.action === 'search' && intent.text === 'enlacedelvideo') {
+    return { ...intent, text: link };
+  }
+  if (intent || !youtubeVideoId(link)) return intent;
+  const rest = normalizeOrder(text.replace(link, ' '));
+  return PLAY_YT_LINK.test(rest)
+    ? { action: 'search', text: link, appId: 'youtube.leanback.v4' }
+    : null;
 }
 
 function parseTvCommandNorm(text: string): TvIntent | null {
