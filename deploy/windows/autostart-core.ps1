@@ -47,7 +47,9 @@ function Invoke-BoundedProgram {
         if(-not $p.Start()){throw 'No se pudo iniciar el auxiliar.'}
         $out=$p.StandardOutput.ReadToEndAsync();$err=$p.StandardError.ReadToEndAsync()
         if(-not $p.WaitForExit($Seconds*1000)){$p.Kill();$p.WaitForExit();throw 'Auxiliar agotó el plazo.'}
-        return @{Code=$p.ExitCode;Output=$out.GetAwaiter().GetResult()}
+        # Plazo también aquí: un hijo que hereda la tubería la deja abierta tras salir el auxiliar.
+        $text='';try{if($out.Wait(5000)){$text=$out.Result}}catch{}
+        return @{Code=$p.ExitCode;Output=$text}
     }finally{$p.Dispose()}
 }
 # Preset efectivo del modelo con las mismas reglas que Asistenta y el instalador

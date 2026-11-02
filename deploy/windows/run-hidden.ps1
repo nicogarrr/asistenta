@@ -99,8 +99,12 @@ try {
             if($decision.Action -in @('report','blocked') -and -not $reported){& $notify $(if($decision.Action -eq 'blocked'){'blocked'}else{'heartbeat'});$reported=$true}
         }
     } else { $process.WaitForExit() }
-    $outCopy.GetAwaiter().GetResult()
-    $errCopy.GetAwaiter().GetResult()
+    # Bounded wait for the stdout/stderr copies: processes node leaves running (the real
+    # Chrome over CDP, a detached `pa autoupdate aplicar`) inherit the pipe and never close
+    # it. Unbounded, this script never ended, the task stayed Running with no node, and
+    # neither Task Scheduler nor the watchdog could start it again (IgnoreNew).
+    try{[void]$outCopy.Wait(5000)}catch{}
+    try{[void]$errCopy.Wait(5000)}catch{}
     $exitCode = $process.ExitCode
     if($watchdogRestart){$exitCode=1}
 }

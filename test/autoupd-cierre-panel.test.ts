@@ -48,14 +48,19 @@ function exited(child: ChildProcess, ms: number): Promise<boolean> {
 
 describe('autoactualización: relanzar y comprobar que la versión nueva arranca', () => {
   it('relanza por la tarea del daemon, el mismo camino que el vigilante', () => {
-    expect(startDaemonTaskArgs()).toEqual([
+    const args = startDaemonTaskArgs();
+    expect(args.slice(0, 5)).toEqual([
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy',
       'Bypass',
       '-Command',
-      `Get-ScheduledTask -TaskName '${DAEMON_TASK_NAME}' -ErrorAction Stop | Start-ScheduledTask`,
     ]);
+    // Por su nombre, y si la tarea quedó «En ejecución» sin daemon se para antes (bugs22).
+    expect(args[5]).toContain(
+      `Get-ScheduledTask -TaskName '${DAEMON_TASK_NAME}' -ErrorAction Stop`,
+    );
+    expect(args[5]).toMatch(/\$t \| Start-ScheduledTask$/);
   });
 
   it('la tarea abre dist\\pa.js serve (o dist\\cli.js en una compilación vieja) y apunta «inicio de serve» antes', () => {
