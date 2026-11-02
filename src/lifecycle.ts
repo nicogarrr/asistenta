@@ -400,7 +400,7 @@ export function errorDetail(err: unknown): { name: string; message: string; stac
   return { name: 'NonError', message: scrubLogValue(String(err)).slice(0, 300) };
 }
 
-export const LAST_EXIT_FILE = 'ultimo-cierre.json';
+export const LAST_EXIT_FILE = 'ultimo-cierre.estado';
 
 /** Por qué y cuándo se cerró el daemon: lo lee /estado en el arranque siguiente. */
 export function writeLastExit(
