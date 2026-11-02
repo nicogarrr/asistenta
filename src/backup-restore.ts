@@ -117,7 +117,10 @@ export function restoreBackup(opts: {
 /** `pa backup` (lista) y `pa backup restaurar <AAAA-MM-DD|ultima>`. */
 export async function backupCommand(args: string[]): Promise<number> {
   const { paths } = await import('./paths.js');
-  const root = join(paths.state, 'backups');
+  // La misma carpeta donde el daemon deja las copias (cli.ts: destDir = PA_BACKUP_DIR).
+  // Antes se miraba siempre <estado>/backups: con las copias en otro disco, «pa backup»
+  // decía «No hay copias todavía» y no había forma de restaurar.
+  const root = process.env.PA_BACKUP_DIR || join(paths.state, 'backups');
   const [sub, date] = args;
   if (!sub || sub === 'lista' || sub === 'list') {
     const list = listBackups(root);
@@ -151,7 +154,7 @@ export async function backupCommand(args: string[]): Promise<number> {
     return 1;
   }
   try {
-    const r = restoreBackup({ stateDir: paths.state, date });
+    const r = restoreBackup({ stateDir: paths.state, date, destDir: root });
     process.stdout.write(
       `Restaurada la copia ${r.from}: ${r.restored.join(', ')}.\n` +
         (r.skipped.length ? `No restaurado (no va en la copia): ${r.skipped.join(', ')}.\n` : '') +
