@@ -93,6 +93,6 @@ describe('nota de voz reenviada', () => {
 
   it('el turno usa la marca del reenvío al construir el texto de la nota de voz', () => {
     const src = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
-    expect(src).toContain('prompt = voiceNotePrompt(heard, inbound.forwardedFrom);');
+    expect(src).toContain('prompt = voiceNotePrompt(heard, inbound.forwardedFrom, text);');
   });
 });
