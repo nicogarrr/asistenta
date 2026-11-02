@@ -2259,7 +2259,8 @@ export const EDITED_MESSAGE_NOTE =
 
 /**
  * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
- * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta):
+ * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta,
+ * dado, historia):
  * los mensajes de servicio de un grupo (alguien entra, se fija un mensaje) siguen
  * sin respuesta.
  */
@@ -2272,6 +2273,8 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('contact' in msg)
     return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
   if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
+  if ('dice' in msg) return 'Aún no juego a los dados. Si quieres algo, escríbemelo.';
+  if ('story' in msg) return 'Aún no puedo ver historias. Cuéntame qué hay o mándame una captura.';
   return null;
 }
 

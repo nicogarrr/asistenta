@@ -91,6 +91,17 @@ describe('mensajes que Asistenta aún no sabe leer', () => {
     expect(replies).toHaveLength(0);
   });
 
+  it('un dado y una historia reenviada también avisan', async () => {
+    const dice = await receive({ dice: { emoji: '🎲', value: 4 } });
+    expect(dice.got).toHaveLength(0);
+    expect(dice.replies).toEqual(['Aún no juego a los dados. Si quieres algo, escríbemelo.']);
+    const story = await receive({ story: { chat: { id: 3, type: 'channel' }, id: 9 } });
+    expect(story.got).toHaveLength(0);
+    expect(story.replies).toEqual([
+      'Aún no puedo ver historias. Cuéntame qué hay o mándame una captura.',
+    ]);
+  });
+
   it('un mensaje de servicio de grupo no recibe respuesta', async () => {
     const { got, replies } = await receive({ new_chat_members: [{ id: 9 }] });
     expect(got).toHaveLength(0);
