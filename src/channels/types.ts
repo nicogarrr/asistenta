@@ -15,6 +15,15 @@
  *    lets a hot reload swap the agent without dropping the transport, and dropping
  *    a WhatsApp session is how you get logged out.
  */
+
+/** Un documento más de un álbum: ids y metadatos, los bytes se piden en el turno. */
+export interface AlbumDocument {
+  fileId: string;
+  mimeType?: string;
+  name?: string;
+  sizeBytes?: number;
+}
+
 export interface Inbound {
   channel: string;
   /** Stable per-channel account id, so one process can serve several. */
@@ -59,6 +68,11 @@ export interface Inbound {
   documentName?: string;
   /** Tamaño del documento que declara Telegram, en bytes (si lo da). */
   documentSizeBytes?: number;
+  /**
+   * Resto de documentos de un álbum (varios ficheros enviados de una vez, mismo
+   * media_group_id): se leen en el mismo turno que `documentFileId`.
+   */
+  albumDocuments?: AlbumDocument[];
   /** Set by the adapter after its own auth check. */
   authorised: boolean;
   replyToMessageId?: string;
