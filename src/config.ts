@@ -194,9 +194,14 @@ export function loadConfig(): Config {
       );
     }
   }
-  // Preset de proveedor: OpenCode Zen free es el default; 'openrouter' conmuta
-  // todos los defaults a OpenRouter (PA_PROVIDER/PA_MODEL/PA_BASE_URL siguen
-  // pudiendo anular cada valor por encima del preset elegido).
+  // Preset de proveedor: OpenCode Go (suscripcion de Nico) con DeepSeek V4.1
+  // Flash es el default (decision de Nico, 2-nov-2026: «DeepSeek V4 flash
+  // normal, el de open code y no local»). Medido 2026-11-02: deepseek-v4.1-flash
+  // responde en /zen/go/v1 con coste 0 (billing_source=go); /zen/v1 exige
+  // balance Zen («Insufficient account funds») y Nico no tiene.
+  // 'openrouter' conmuta todos los defaults a OpenRouter
+  // (PA_PROVIDER/PA_MODEL/PA_BASE_URL siguen pudiendo anular cada valor por
+  // encima del preset elegido).
   const providerPreset = str('PA_PROVIDER_PRESET')?.toLowerCase() ?? 'opencode';
   if (!['opencode', 'openrouter', 'opencode-local'].includes(providerPreset)) {
     throw new Error(
@@ -224,8 +229,8 @@ export function loadConfig(): Config {
           }
         : {
             provider: 'opencode-go',
-            model: 'space-bunny-free',
-            baseUrl: 'https://opencode.ai/zen/v1',
+            model: 'deepseek-v4.1-flash',
+            baseUrl: 'https://opencode.ai/zen/go/v1',
             variant: undefined as string | undefined,
           };
   cached = {

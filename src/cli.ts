@@ -277,6 +277,7 @@ import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
 import { Gate, runPermisosCommand } from './permissions.js';
+import { migrateLocalPresetPin } from './preset-migration.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import {
   parseWideArgs,
@@ -782,6 +783,11 @@ export async function main(argv: string[]): Promise<number> {
   // `pa recordatorios`… calculaban «hoy» y las próximas horas de croner en
   // la zona del sistema. `serve` vuelve a llamarlo y avisa si la zona no es válida.
   applyConfiguredTimeZone();
+
+  // Migración única: un .env con PA_PROVIDER_PRESET=opencode-local pasa solo a
+  // OpenCode Go (decisión de Nico, 2-nov-2026). Ver src/preset-migration.ts.
+  const presetNote = migrateLocalPresetPin();
+  if (presetNote) process.stderr.write(`${presetNote}\n`);
 
   switch (command) {
     case 'setup': {

@@ -41,7 +41,7 @@ export interface ModelConfigLike {
 }
 
 const OPENCODE_CAPS: ModelCaps = {
-  id: 'space-bunny-free',
+  id: 'deepseek-v4.1-flash',
   contextWindow: 1_048_576,
   maxOutput: 32_000,
   inputPerMTok: 0,
