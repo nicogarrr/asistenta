@@ -128,6 +128,11 @@ export interface TvClientDeps {
   /** Timeout de apertura del socket por intento (por defecto 5 s). */
   connectTimeoutMs?: number;
   /**
+   * Pausa entre teclas de una ráfaga (tvKeys); por defecto
+   * PA_TV_KEY_GAP_MS o TV_KEY_GAP_MS. La tele pierde pulsaciones pegadas.
+   */
+  keyGapMs?: number;
+  /**
    * La tele ya no reconoce la client-key guardada (reinicio de fabrica, app
    * borrada…) y ha mostrado el aviso de emparejamiento: si Nico lo acepta,
    * la tele entrega una client-key NUEVA. Este callback la recibe para
@@ -733,6 +738,144 @@ export async function tvKey(
       if (!settled) fail(new Error('la tele cerro el socket de input antes de tiempo'));
     });
   });
+}
+
+/** Pausa por defecto entre teclas de una ráfaga: la tele pierde pulsaciones pegadas. */
+export const TV_KEY_GAP_MS = 150;
+
+/** Tope de una ráfaga: navegar un menú son decenas de teclas, no cientos. */
+export const TV_MAX_KEY_BATCH = 40;
+
+/** Pausa entre teclas de una ráfaga: dep > PA_TV_KEY_GAP_MS > 150 ms, acotada 0-2000. */
+export function tvKeyGapMs(deps: Pick<TvClientDeps, 'keyGapMs'> = {}): number {
+  const v = deps.keyGapMs;
+  if (v !== undefined && Number.isFinite(v)) return Math.min(2_000, Math.max(0, Math.round(v)));
+  return envMs('PA_TV_KEY_GAP_MS', TV_KEY_GAP_MS, 0, 2_000);
+}
+
+/**
+ * Una ráfaga de teclas por UN socket de input. Antes, navegar un menú (buscar
+ * un partido en Movistar Plus, una peli en Netflix) abría DOS conexiones por
+ * pulsación (SSAP + input) y entre turno y turno del modelo la tele se pasaba
+ * segundos quieta: por eso «la noto muy lenta». Ahora la secuencia entera sale
+ * por una sola conexión, con una pausa corta entre teclas para que la tele no
+ * pierda ninguna.
+ *
+ * Misma disciplina que tvKey: las teclas se validan TODAS contra la whitelist
+ * antes de abrir nada (una ráfaga con una ilegal no toca la tele), el
+ * socketPath se exige del mismo host y esquema conocido, y el éxito se
+ * reporta solo tras abrir, enviar la última y dar el margen de consumo.
+ */
+export async function tvKeys(
+  host: string,
+  clientKey: string,
+  names: string[],
+  deps: TvClientDeps = {},
+): Promise<void> {
+  if (!Array.isArray(names) || names.length === 0) {
+    throw new Error('Ráfaga de teclas vacía.');
+  }
+  if (names.length > TV_MAX_KEY_BATCH) {
+    throw new Error(`Ráfaga demasiado larga: ${names.length} teclas (máx ${TV_MAX_KEY_BATCH}).`);
+  }
+  const keyNames = names.map((n) => String(n).trim().toUpperCase());
+  for (const k of keyNames) {
+    if (!TV_KEY_NAMES.has(k)) {
+      throw new Error(`Tecla no valida: ${sanitizeTvText(k, [clientKey])}`);
+    }
+  }
+  if (keyNames.length === 1) {
+    await tvKey(host, clientKey, keyNames[0] as string, deps);
+    return;
+  }
+  const safeHost = assertTvHost(host, deps.allowNonLanHost ?? false);
+  const res = await tvRequest(
+    safeHost,
+    clientKey,
+    'com.webos.service.networkinput/getPointerInputSocket',
+    {},
+    deps,
+  );
+  const socketUrl = parseTvUrl((res as { socketPath?: unknown }).socketPath, safeHost, [
+    'ws:',
+    'wss:',
+  ]);
+  if (!socketUrl) throw new Error('La tele devolvio un socket de input no valido.');
+  const { timeoutMs, graceMs } = tvKeyTimings(deps);
+  const gapMs = tvKeyGapMs(deps);
+  const openInput: TvInputSocketFactory =
+    deps.inputFactory ?? ((url) => new WebSocket(url, { rejectUnauthorized: false }));
+  await new Promise<void>((resolve, reject) => {
+    const ws = openInput(socketUrl);
+    let settled = false;
+    let step: ReturnType<typeof setTimeout> | undefined;
+    // El timeout total crece con la ráfaga: 5 s de apertura + pausas + consumo.
+    const totalMs = timeoutMs + gapMs * (keyNames.length - 1) + graceMs;
+    const timer = setTimeout(() => {
+      fail(new Error('timeout enviando la ráfaga de teclas'));
+    }, totalMs);
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (step) clearTimeout(step);
+      ws.close();
+      reject(err);
+    };
+    let i = 0;
+    const sendNext = (): void => {
+      if (settled) return;
+      try {
+        ws.send(`type:button\nname:${keyNames[i]}\n\n`);
+      } catch {
+        fail(new Error('no se pudo enviar la ráfaga de teclas'));
+        return;
+      }
+      i += 1;
+      if (i < keyNames.length) {
+        step = setTimeout(sendNext, gapMs);
+        return;
+      }
+      // Última enviada: margen de consumo y cierre, como tvKey.
+      step = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        ws.close();
+        resolve();
+      }, graceMs);
+    };
+    ws.on('open', sendNext);
+    ws.on('error', () => fail(new Error('no se pudo enviar la ráfaga de teclas')));
+    ws.on('close', () => {
+      if (!settled) fail(new Error('la tele cerro el socket de input antes de tiempo'));
+    });
+  });
+}
+
+/** Longitud máxima de un texto para el teclado de la tele (buscadores, formularios). */
+export const TV_TYPE_TEXT_MAX = 200;
+
+/**
+ * Escribe el texto ENTERO en el campo enfocado de la tele (SSAP IME
+ * insertText): buscar «ceuta sporting» ya no son 14 pulsaciones sobre el
+ * teclado en pantalla, con sus 14 pares de conexiones y sus 14 turnos de
+ * modelo. La tele contesta error si no hay un campo de texto activo; ese
+ * error llega saneado al agente, que puede abrir el buscador y reintentar.
+ * Saltos de línea y controles fuera: una tecla ENTER es action=key.
+ */
+export async function tvTypeText(
+  host: string,
+  clientKey: string,
+  text: string,
+  deps: TvClientDeps = {},
+): Promise<void> {
+  const clean = String(text).replace(CONTROL_CHARS, '').trim();
+  if (!clean) throw new Error('Texto vacío: nada que escribir en la tele.');
+  if (clean.length > TV_TYPE_TEXT_MAX) {
+    throw new Error(`Texto demasiado largo para la tele (máx ${TV_TYPE_TEXT_MAX} caracteres).`);
+  }
+  await tvRequest(host, clientKey, 'com.webos.service.ime/insertText', { text: clean }, deps);
 }
 
 const MAX_SHOT_BYTES = 12 * 1024 * 1024;
