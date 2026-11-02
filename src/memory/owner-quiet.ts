@@ -11,10 +11,9 @@ import { SAID_PREFIX } from './owner-facts.js';
 const DONT =
   'no me (?:escribas|(?:mandes|envies)(?: nada| mensajes)?|hables|avises|despiertes|molestes)';
 const HOUR = String.raw`(?:la|las) (\d{1,2})(?:(?::|\.)(\d{2})| y (?:media|cuarto))?`;
-const BEFORE = new RegExp(`${DONT} antes de ${HOUR}(?: de la (manana|tarde|noche))?`);
-const AFTER = new RegExp(
-  `${DONT} (?:despues de|a partir de|mas tarde de) ${HOUR}(?: de la (manana|tarde|noche))?`,
-);
+const PART = '(?: de la (manana|tarde|noche|madrugada))?';
+const BEFORE = new RegExp(`${DONT} antes de ${HOUR}${PART}`);
+const AFTER = new RegExp(`${DONT} (?:despues de|a partir de|mas tarde de) ${HOUR}${PART}`);
 
 /** Silencio de más horas que esto no es una preferencia de horario: se ignora. */
 export const MAX_QUIET_SPAN_HOURS = 16;
@@ -23,6 +22,11 @@ function hour24(raw: string, part: string | undefined, kind: 'before' | 'after')
   let h = Number(raw);
   if (!Number.isInteger(h) || h < 0 || h > 24) return null;
   if (h === 24) h = 0;
+  // «las 12 de la noche» es la medianoche, y «después de las 12» habla de la noche: antes
+  // quedaban a mediodía, el silencio salía de más de 16 h y se descartaba entero.
+  if (h === 12 && (part === 'noche' || (part === undefined && kind === 'after'))) return 0;
+  // «de la madrugada» no suma 12: «después de la 1 de la madrugada» es la 01:00.
+  if (part === 'madrugada') return h === 12 ? 0 : h;
   if (part === 'tarde' || part === 'noche') {
     if (h >= 1 && h <= 11) h += 12;
   } else if (part !== 'manana' && kind === 'after' && h >= 1 && h <= 11) {
