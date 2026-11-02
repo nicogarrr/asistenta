@@ -537,6 +537,11 @@ export class PersonalAgent {
   #approvalsWaiting = 0;
   /** Cierra la marca de «aprobación esperando» que lee la autoactualización. */
   #approvalBusyEnd: (() => void) | undefined;
+  /**
+   * Chat del hilo (chatKey) para las marcas de «ocupada»: /stop en un chat solo libera las
+   * suyas, no las de un turno o permiso de otro chat que sigue en marcha. Lo pone el daemon.
+   */
+  busyOwner: string | undefined;
   /** Set when something outside the run (e.g. /stop) aborts it. */
   #externalAbort = false;
   /** Señal del run en curso: corta esperas (reintentos) en cuanto se aborta. */
@@ -629,7 +634,7 @@ export class PersonalAgent {
   setAwaitingApproval(waiting: boolean): void {
     if (waiting) {
       if (this.#approvalsWaiting === 0)
-        this.#approvalBusyEnd = busyBegin('aprobaciones', 'permiso');
+        this.#approvalBusyEnd = busyBegin('aprobaciones', 'permiso', this.busyOwner);
       this.#approvalsWaiting += 1;
       return;
     }
@@ -1122,7 +1127,7 @@ export class PersonalAgent {
     hooks?: RunHooks,
   ): Promise<AgentRunResult> {
     // Mientras dura el turno, la autoactualización no reinicia el daemon.
-    const endBusy = busyBegin('turnos', prompt.replace(/\s+/g, ' ').trim());
+    const endBusy = busyBegin('turnos', prompt.replace(/\s+/g, ' ').trim(), this.busyOwner);
     try {
       return await this.#runTurn(prompt, images, hooks);
     } finally {
