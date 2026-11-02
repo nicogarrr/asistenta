@@ -658,7 +658,11 @@ Uso:
   pa cuentas listar|copiar <web>|borrar <web>|cambiar <web>|exportar keepass|bitwarden <fichero>  cuentas guardadas (sin contraseñas)
   pa books setup          conectar tu Telegram para la entrega de libros (pagina local, una vez)
   pa vigilancias [--json]  qué está vigilando: páginas, precios, rutinas y disparadores (solo lectura)
-  pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez)
+  pa tv setup <ip>        emparejar la LG webOS (acepta el aviso en la tele, una vez; sin IP la busca)
+  pa tv buscar            buscar las teles de la wifi (LG y Sony) y reencontrar las que cambiaron de IP
+  pa tv teles             listar las teles emparejadas (la activa, marcada)
+  pa tv usar <ip|nombre>  cambiar la tele activa sin volver a emparejar
+  pa tv nombre <ip> <x>   ponerle nombre a una tele («salón») para nombrarla en las órdenes
   pa tv orden "<texto>"   dar una orden en palabras (p. ej. "apaga la tele", "volumen a 15")
   pa tv mac <MAC>|auto    guardar la MAC de la tele para poder encenderla (auto: la busca en la red)
   pa tv wake              encender la tele por la red (Wake-on-LAN; necesita pa tv mac)
