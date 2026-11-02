@@ -17,8 +17,18 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
-import { Api, TelegramClient } from 'teleproto';
-import { StringSession } from 'teleproto/sessions/index.js';
+import type { TelegramClient } from 'teleproto';
+import type { StringSession } from 'teleproto/sessions/index.js';
+
+/** teleproto (MTProto) tarda ~150 ms en cargarse: solo se carga al usar el userbot, no al arrancar. */
+async function teleproto() {
+  const [{ Api, TelegramClient }, { StringSession }] = await Promise.all([
+    import('teleproto'),
+    import('teleproto/sessions/index.js'),
+  ]);
+  return { Api, TelegramClient, StringSession };
+}
+
 import { uniqueTmpPath } from '../fs-tmp.js';
 
 export interface UserbotConfig {
@@ -42,9 +52,9 @@ export function configFromEnv(
   return { apiId: Number(apiIdRaw), apiHash, sessionPath };
 }
 
-function loadSession(path: string): StringSession {
-  if (existsSync(path)) return new StringSession(readFileSync(path, 'utf8').trim());
-  return new StringSession('');
+function loadSession(path: string, Session: typeof StringSession): StringSession {
+  if (existsSync(path)) return new Session(readFileSync(path, 'utf8').trim());
+  return new Session('');
 }
 
 function saveSession(path: string, session: StringSession): void {
@@ -80,8 +90,9 @@ export class LoginFlow {
 
   private async ensureClient(): Promise<TelegramClient> {
     if (!this.client) {
+      const { TelegramClient, StringSession } = await teleproto();
       this.client = new TelegramClient(
-        loadSession(this.config.sessionPath),
+        loadSession(this.config.sessionPath, StringSession),
         this.config.apiId,
         this.config.apiHash,
         { connectionRetries: 3 },
@@ -94,6 +105,7 @@ export class LoginFlow {
   async requestCode(phoneNumber: string): Promise<void> {
     try {
       const client = await this.ensureClient();
+      const { Api } = await teleproto();
       const result = await client.invoke(
         new Api.auth.SendCode({
           phoneNumber,
@@ -124,6 +136,7 @@ export class LoginFlow {
     // conexion se cierra siempre. Reintentar = pedir un codigo nuevo.
     try {
       const client = await this.ensureClient();
+      const { Api } = await teleproto();
       try {
         await client.invoke(
           new Api.auth.SignIn({
@@ -161,9 +174,15 @@ export class LoginFlow {
 
 /** Cliente ya logueado (sesion persistida) para el pipeline de libros. */
 export async function createUserbot(config: UserbotConfig): Promise<TelegramClient> {
-  const client = new TelegramClient(loadSession(config.sessionPath), config.apiId, config.apiHash, {
-    connectionRetries: 3,
-  });
+  const { TelegramClient, StringSession } = await teleproto();
+  const client = new TelegramClient(
+    loadSession(config.sessionPath, StringSession),
+    config.apiId,
+    config.apiHash,
+    {
+      connectionRetries: 3,
+    },
+  );
   await client.connect();
   if (!(await client.checkAuthorization())) {
     await client.disconnect();
