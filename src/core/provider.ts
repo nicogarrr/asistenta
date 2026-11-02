@@ -245,6 +245,18 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   return { models, model, streamFn, modelFor, fallbackFor, modelById };
 }
 
+/**
+ * Comprueba que hay clave del modelo SIN abrir nada (ni red ni modelos). `pa chat`
+ * la llama antes de reservar recursos: si falta, sale al instante con el mensaje
+ * de siempre en vez de retener la consola 15 s (la retención fail-closed de
+ * controlled-daemon solo tiene sentido cuando ya se abrió algo). Mismo criterio
+ * que createProviderHandle: `opencode-local` no necesita clave aquí.
+ */
+export async function checkProviderKey(config: Config): Promise<void> {
+  if (config.provider === 'opencode-local') return;
+  await resolveApiKey(config.baseUrl);
+}
+
 async function resolveApiKey(baseUrl: string): Promise<string> {
   if (isOpenRouterEndpoint(baseUrl)) {
     // Nunca la clave de OpenCode contra OpenRouter: seria un 401 y una fuga
