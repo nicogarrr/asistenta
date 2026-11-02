@@ -171,12 +171,21 @@ export async function setupCommand(
             write(
               'Clave del proveedor que ya has configurado: revisa su plan y política de datos antes de usarla. Un nombre free no garantiza coste cero.\n',
             );
-          const value = await deps.question(
+          const answer = await deps.question(
             field.key === 'telegram:allowedUserIds'
               ? 'Tu ID numérico de usuario Telegram (no @nombre ni ID del bot; varios separados por comas)'
               : field.key,
             field.key !== 'telegram:allowedUserIds',
           );
+          // «123, 456,» (coma final o espacios) no tumba todo el asistente: se limpia.
+          const value =
+            field.key === 'telegram:allowedUserIds' && answer.includes(',')
+              ? answer
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .join(',') || answer
+              : answer;
           if (value === '') {
             if (field.source === 'missing') pending++;
             continue;
