@@ -25,6 +25,8 @@ export interface TvDriver {
   /** appId en el idioma de las LG (APP_ALIASES: netflix, youtube.leanback.v4...). */
   launch?(appId: string): Promise<void>;
   media?(command: TvDriverMedia): Promise<void>;
+  /** Buscar `query` (dentro de la app `appId`, en el idioma de las LG, si se da). */
+  search?(query: string, appId?: string): Promise<void>;
 }
 
 /** Tope de pasos seguidos: «sube 50» no son 50 pulsaciones a ciegas. */
@@ -71,6 +73,10 @@ export async function runIntentOnDriver(driver: TvDriver, intent: TvIntent): Pro
       if (!driver.media) throw no('pausar o reproducir');
       await driver.media(intent.command);
       return `${driver.brand}: ${intent.command} enviado.`;
+    case 'search':
+      if (!driver.search) throw no('buscar dentro de las apps');
+      await driver.search(intent.text, intent.appId);
+      return `${driver.brand}: buscando «${intent.text}».`;
     case 'volumeHalf':
       throw no('bajar el volumen a la mitad (no dice el volumen que tiene)');
     case 'channel':

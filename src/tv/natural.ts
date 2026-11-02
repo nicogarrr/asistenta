@@ -32,7 +32,9 @@ export type TvIntent =
   | { action: 'status' }
   | { action: 'scene'; scene: string; appId?: string }
   | { action: 'key'; name: TvKeyName }
-  | { action: 'picture'; pictureMode: string };
+  | { action: 'picture'; pictureMode: string }
+  /** Buscar dentro de una app con receta directa (YouTube, Netflix): src/tv/search-recipes.ts. */
+  | { action: 'search'; text: string; appId: string };
 
 /** Modos de imagen de LG que se pueden pedir con palabras («pon la imagen en estándar»). */
 const PICTURE_WORDS: ReadonlyArray<[RegExp, string]> = [
@@ -430,6 +432,44 @@ function esOrdenDeEnergia(t: string, verbos: string): boolean {
   return !DELANTE_NO.test(delante);
 }
 
+/** Apps donde buscar es una sola orden sin teclado (recetas de src/tv/search-recipes.ts). */
+const SEARCH_APPS: Record<string, string> = {
+  youtube: 'youtube.leanback.v4',
+  'you tube': 'youtube.leanback.v4',
+  netflix: 'netflix',
+};
+const SEARCH_APP = '(youtube|you tube|netflix)';
+const SEARCH_VERB = '(?:busca|buscame|buscar|pon|ponme|reproduce|pone)';
+const SEARCH_FILLER =
+  /^(?:(?:el|un|una|unos|unas|los|las|la|algun|alguna) )?(?:video|videos|cancion|canciones|tema|temas|clip|clips|trailer|capitulo|serie|peli|pelicula|documental)(?: de)? /;
+
+/**
+ * «busca Bailando en YouTube», «pon en YouTube Bailando de Enrique Iglesias»,
+ * «pon el trailer de Dune en Netflix» → buscar dentro de esa app. Solo YouTube
+ * y Netflix (búsqueda directa); Movistar Plus+ va al modelo (guía + teclado).
+ */
+function parseSearchInApp(t: string): TvIntent | null {
+  const m =
+    new RegExp(`^${SEARCH_VERB} en ${SEARCH_APP} (.+)$`).exec(t) ??
+    new RegExp(`^${SEARCH_VERB} (.+) en ${SEARCH_APP}$`).exec(t);
+  if (!m?.[1] || !m[2]) return null;
+  const appWord = SEARCH_APPS[m[1]] ? m[1] : m[2];
+  const rawQuery = SEARCH_APPS[m[1]] ? m[2] : m[1];
+  const appId = SEARCH_APPS[appWord];
+  if (!appId) return null;
+  const query = rawQuery.replace(SEARCH_FILLER, '').trim();
+  // «pon la tele en youtube», «pon algo en youtube», «pon youtube en youtube»: no hay qué buscar.
+  if (
+    !query ||
+    query.length > 80 ||
+    /^(?:la )?(?:tele|tv|television|algo|eso|esto|app)$/.test(query)
+  ) {
+    return null;
+  }
+  if (SEARCH_APPS[query] || APP_ALIASES[query] !== undefined) return null;
+  return { action: 'search', text: query, appId };
+}
+
 function parseOne(text: string): TvIntent | null {
   const t = normalizeOrder(text);
   if (!t) return null;
@@ -787,6 +827,9 @@ function parseOne(text: string): TvIntent | null {
     return { action: 'media', command: 'stop' };
   }
 
+  const busca = parseSearchInApp(t);
+  if (busca) return busca;
+
   // Apps: "abre X" acepta cualquier nombre; "pon X" solo nombres conocidos
   // (si no, "pon la 1" o "pon algo de musica" lanzarian apps inventadas).
   m =
@@ -886,6 +929,8 @@ export function describeTvIntent(i: TvIntent): string {
       return KEY_NAMES[i.name];
     case 'picture':
       return `poner la imagen en modo ${PICTURE_NAMES[i.pictureMode] ?? i.pictureMode}`;
+    case 'search':
+      return `buscar «${i.text}» en ${appLabel(i.appId)}`;
   }
 }
 
