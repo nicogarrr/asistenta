@@ -10,6 +10,8 @@
  */
 
 import WebSocket from 'ws';
+import type { TvApp } from './app-cache.js';
+import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
 import { assertTvHost, TV_SESSION_IDLE_MS, tvSessionIdleMs } from './lgtv.js';
 import { sendWakeOnLan } from './wol.js';
@@ -94,6 +96,8 @@ export interface SamsungDeps {
    * WebSocket (TLS + «ms.channel.connect»), manda y espera 300 ms para cerrar.
    */
   pool?: SamsungSessionPool | null;
+  /** Apps instaladas (guardadas por tele en el daemon); sin esto, se piden a la tele. */
+  installedApps?: () => Promise<TvApp[]>;
 }
 
 export function samsungUrl(conn: SamsungConn): string {
@@ -323,6 +327,54 @@ export function samsungKey(key: string): object {
   };
 }
 
+const APPS_TIMEOUT_MS = 4_000;
+
+/**
+ * Apps instaladas de verdad: «ed.installedApp.get» por el mismo canal del
+ * mando; la tele contesta con `data.data = [{appId, name, app_type}]`. Abre y
+ * cierra su propia conexión (la del pool solo manda, no escucha respuestas).
+ */
+export async function samsungInstalledApps(
+  conn: SamsungConn,
+  deps: SamsungDeps = {},
+): Promise<TvApp[]> {
+  const { ws, token } = await openSamsung(conn, deps);
+  try {
+    if (token && token !== conn.token) await deps.onToken?.(token);
+    return await new Promise<TvApp[]>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new SamsungError(`La Samsung (${conn.host}) no dio su lista de apps.`)),
+        deps.connectTimeoutMs ?? APPS_TIMEOUT_MS,
+      );
+      ws.on('message', (data) => {
+        const msg = parse(data) as { event?: string; data?: { data?: unknown } } | null;
+        if (msg?.event !== 'ed.installedApp.get') return;
+        clearTimeout(timer);
+        const list = Array.isArray(msg.data?.data) ? msg.data.data : [];
+        const out: TvApp[] = [];
+        for (const a of list as Array<Record<string, unknown>>) {
+          const id = typeof a?.appId === 'string' ? a.appId.trim() : '';
+          const title = typeof a?.name === 'string' ? a.name.trim() : '';
+          if (id && title && /^[\w.-]{1,64}$/.test(id)) out.push({ id, title });
+        }
+        resolve(out);
+      });
+      ws.send(
+        JSON.stringify({
+          method: 'ms.channel.emit',
+          params: { event: 'ed.installedApp.get', to: 'host' },
+        }),
+      );
+    });
+  } finally {
+    try {
+      ws.close();
+    } catch {
+      // ya cerrado
+    }
+  }
+}
+
 export interface SamsungInfo {
   name?: string;
   model?: string;
@@ -372,6 +424,7 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
       ? deps.pool.send(conn, messages, deps)
       : samsungSend(conn, messages, deps).then(() => undefined);
   const press = (key: string) => send([samsungKey(key)]);
+  const listApps = deps.installedApps ?? (() => samsungInstalledApps(conn, deps));
   return {
     brand: 'Samsung',
     power: async (on) => {
@@ -403,10 +456,18 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
     key: (name) => press(SAMSUNG_KEYS[name]),
     media: (command) => press(SAMSUNG_MEDIA[command]),
     launch: async (appId) => {
-      const id = SAMSUNG_APP_IDS[appId];
+      let id = SAMSUNG_APP_IDS[lgAppIdFor(appId)];
+      let installed: TvApp[] = [];
       if (!id) {
+        installed = await listApps().catch(() => []);
+        id = matchInstalledApp(appId, installed)?.id;
+      }
+      if (!id) {
+        const names = installedNames(installed);
         throw new SamsungError(
-          `No sé abrir «${appId}» en la Samsung; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
+          names
+            ? `No encuentro «${appId}» en la Samsung. Tiene: ${names}.`
+            : `No sé abrir «${appId}» en la Samsung; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
         );
       }
       await send([
@@ -415,10 +476,13 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
           params: {
             event: 'ed.apps.launch',
             to: 'host',
-            data: { appId: id, action_type: 'DEEP_LINK' },
+            // Las apps de la tienda (id numérico) van por DEEP_LINK; las propias
+            // de Tizen («org.tizen.browser») por NATIVE_LAUNCH.
+            data: { appId: id, action_type: /^\d+$/.test(id) ? 'DEEP_LINK' : 'NATIVE_LAUNCH' },
           },
         },
       ]);
     },
+    apps: () => listApps(),
   };
 }
