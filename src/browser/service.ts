@@ -163,6 +163,12 @@ export interface BrowserServiceOptions {
   timeoutMs?: number;
   headless?: boolean;
   profilesDir?: string;
+  /**
+   * Clave de perfil compartido para un ámbito, o undefined si el ámbito tiene su
+   * perfil propio. Los ámbitos con la misma clave usan UN solo perfil (y sus sesiones
+   * iniciadas), de uno en uno: el perfil de Chrome se bloquea por proceso.
+   */
+  sharedProfileKey?: (scope: string) => string | undefined;
   /** Viewport for the headless page; defaults to a common laptop size. */
   viewport?: { width: number; height: number };
 }
@@ -412,6 +418,30 @@ export function profileDirFor(scope: string, base = paths.browser): string {
   const hash = createHash('sha256').update(scope).digest('hex').slice(0, 24);
   return join(base, hash);
 }
+
+/** Perfil compartido por clave (el del dueño): fuera del hash por ámbito, con nombre propio. */
+export function sharedProfileDir(key: string, base = paths.browser): string {
+  const hash = createHash('sha256').update(`shared:${key}`).digest('hex').slice(0, 24);
+  return join(base, `compartido-${hash}`);
+}
+
+/**
+ * Clave del perfil compartido del dueño, solo para sus hilos del DM de Telegram
+ * (`telegram:dm:<id>#<hilo>`); undefined para cualquier otro ámbito o sin dueño.
+ */
+export function ownerBrowserProfileKey(
+  scope: string,
+  ownerUserId: number | null | undefined,
+): string | undefined {
+  if (ownerUserId === null || ownerUserId === undefined) return undefined;
+  return scope.startsWith(`telegram:dm:${String(ownerUserId)}#`) ? 'dueno' : undefined;
+}
+
+/** Quién tiene abierto cada perfil compartido, entre todos los servicios del proceso. */
+const sharedProfileHolders = new Map<
+  string,
+  { service: { close(scope: string): Promise<void> }; scope: string }
+>();
 
 /**
  * Compare text the way a human does: without accents, without case, without the extra
@@ -719,7 +749,10 @@ export class BrowserService {
   readonly #sessions = new Map<string, Session>();
   /** Launches in flight, so concurrent callers for one scope share a single browser. */
   readonly #opening = new Map<string, Promise<Session>>();
-  readonly #options: Required<Omit<BrowserServiceOptions, 'policy'>> & { policy: BrowserPolicy };
+  readonly #options: Required<Omit<BrowserServiceOptions, 'policy' | 'sharedProfileKey'>> & {
+    policy: BrowserPolicy;
+    sharedProfileKey?: (scope: string) => string | undefined;
+  };
 
   constructor(options: BrowserServiceOptions) {
     this.#options = {
@@ -728,6 +761,7 @@ export class BrowserService {
       timeoutMs: options.timeoutMs ?? 45_000,
       headless: options.headless ?? true,
       profilesDir: options.profilesDir ?? paths.browser,
+      sharedProfileKey: options.sharedProfileKey,
       viewport: options.viewport ?? { width: 1440, height: 900 },
     };
   }
@@ -806,8 +840,21 @@ export class BrowserService {
       }
     }
 
-    const dir = profileDirFor(scope, this.#options.profilesDir);
+    const sharedKey = this.#options.sharedProfileKey?.(scope);
+    const dir = sharedKey
+      ? sharedProfileDir(sharedKey, this.#options.profilesDir)
+      : profileDirFor(scope, this.#options.profilesDir);
     mkdirSync(dir, { recursive: true });
+    // Un perfil compartido solo lo puede tener abierto un navegador a la vez: si otro
+    // ámbito (u otro servicio) lo tiene, se cierra antes. Sus inicios de sesión quedan
+    // en disco, así que el otro ámbito lo reabre ya con la sesión puesta.
+    if (sharedKey) {
+      const holder = sharedProfileHolders.get(dir);
+      if (holder && (holder.service !== this || holder.scope !== scope)) {
+        log.info('browser shared profile handed over', { from: holder.scope, to: scope });
+        await holder.service.close(holder.scope);
+      }
+    }
     const launchOptions = {
       headless: !wantVisible,
       viewport: this.#options.viewport,
@@ -870,6 +917,7 @@ export class BrowserService {
       },
     };
     this.#sessions.set(scope, session);
+    if (sharedKey) sharedProfileHolders.set(dir, { service: this, scope });
 
     const captured = session.console;
     page.on('console', (msg) => {
@@ -2072,6 +2120,9 @@ export class BrowserService {
       session.adSkip.timer = null;
     }
     this.#saveGrants(scope, session);
+    for (const [dir, holder] of sharedProfileHolders) {
+      if (holder.service === this && holder.scope === scope) sharedProfileHolders.delete(dir);
+    }
     await session.context.close().catch((err: unknown) => {
       log.warn('browser close failed', { err });
       if (strict) throw new Error('No se pudo confirmar el cierre del navegador.', { cause: err });

@@ -84,7 +84,7 @@ import {
   telegramBotSend,
 } from './boot-notice.js';
 import { BoundedMap } from './bounded-map.js';
-import { BrowserService } from './browser/service.js';
+import { BrowserService, ownerBrowserProfileKey } from './browser/service.js';
 import { EMAIL_CHANNEL, emailAuditRecord, taintEmailTurn } from './channels/email.js';
 import { setupEmailChannel } from './channels/email-setup.js';
 import {
@@ -1934,6 +1934,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
       timeoutMs: Math.min(config.toolTimeoutMs, 60_000),
       channel: config.browserChannel,
+      // El chat del dueño usa SIEMPRE el mismo perfil de Chrome: inicia sesión una vez
+      // (WhatsApp Web, Gmail...) y vale para todos sus hilos. Los demás chats siguen con
+      // perfil propio, para que una sesión iniciada no se vea desde otra conversación.
+      sharedProfileKey: (scope) => {
+        try {
+          return ownerBrowserProfileKey(scope, vigilanteOwnerId);
+        } catch {
+          return undefined; // el dueño aún no está resuelto (arranque): perfil propio del hilo
+        }
+      },
     });
     browsers.set(threadKey, service);
     return service;
