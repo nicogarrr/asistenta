@@ -192,6 +192,11 @@ export function renderPage(): string {
       color: var(--suave);
     }
     button.mini:hover { color: var(--texto); }
+    .modelo-selector { margin-top: 0.9rem; border-top: 1px solid var(--borde, #2a3340); padding-top: 0.7rem; }
+    .modelo-selector h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+    .modelo-fila { display: flex; gap: 0.5rem; align-items: center; margin: 0 0 0.35rem; }
+    .modelo-fila select { background: var(--fondo, #10151c); color: var(--texto, #e6edf3); border: 1px solid var(--borde, #2a3340); border-radius: 6px; padding: 0.3rem 0.45rem; font: inherit; max-width: 100%; }
+    .modelo-resultado { margin: 0.35rem 0 0; }
     .aviso {
       max-width: 1240px;
       margin: 0 auto 14px;
@@ -1482,11 +1487,105 @@ ${renderFormatScript()}
         return true;
       }
 
+      // Selector de modelo (tarjeta Estado): solo opciones de coste cero
+      // verificadas que llegan en /api/status como modelosDisponibles. Esa
+      // clave no se pinta como dato: va al selector.
+      function renderSelectorModelo(datos, opciones) {
+        var bloque = nodo('section', 'modelo-selector');
+        var titulo = nodo('h3', null, 'Modelo');
+        bloque.appendChild(titulo);
+        var actual = datos && typeof datos.model === 'string' ? datos.model : '';
+        var fila = nodo('p', 'modelo-fila');
+        var select = document.createElement('select');
+        select.setAttribute('aria-label', 'Modelo de Asistenta (solo opciones de coste cero)');
+        opciones.forEach(function (op) {
+          var option = document.createElement('option');
+          option.value = op.id;
+          option.textContent = op.nombre;
+          if (op.id === actual) option.selected = true;
+          select.appendChild(option);
+        });
+        fila.appendChild(select);
+        var boton = nodo('button', 'mini', 'Usar este modelo');
+        boton.setAttribute('type', 'button');
+        fila.appendChild(boton);
+        bloque.appendChild(fila);
+        var nota = nodo('p', 'muted', '');
+        bloque.appendChild(nota);
+        var resultado = nodo('p', 'modelo-resultado', '');
+        resultado.setAttribute('role', 'status');
+        bloque.appendChild(resultado);
+        function pintarNota() {
+          var elegida = opciones.find(function (op) { return op.id === select.value; });
+          nota.textContent = elegida && elegida.nota ? elegida.nota + ' · OpenCode Go, coste 0' : 'OpenCode Go, coste 0';
+        }
+        select.addEventListener('change', pintarNota);
+        pintarNota();
+        // Clave de OpenCode Go: sin terminal; se comprueba en vivo al guardar.
+        var filaClave = nodo('p', 'modelo-fila');
+        var entradaClave = document.createElement('input');
+        entradaClave.setAttribute('type', 'password');
+        entradaClave.setAttribute('autocomplete', 'off');
+        entradaClave.setAttribute('aria-label', 'Clave de OpenCode Go');
+        entradaClave.setAttribute('placeholder', 'Clave de OpenCode Go');
+        filaClave.appendChild(entradaClave);
+        var botonClave = nodo('button', 'mini', 'Guardar clave');
+        botonClave.setAttribute('type', 'button');
+        filaClave.appendChild(botonClave);
+        bloque.appendChild(filaClave);
+        var resultadoClave = nodo('p', 'modelo-resultado', '');
+        resultadoClave.setAttribute('role', 'status');
+        bloque.appendChild(resultadoClave);
+        botonClave.addEventListener('click', async function () {
+          if (!entradaClave.value.trim()) {
+            resultadoClave.textContent = 'Pega primero la clave de tu cuenta de OpenCode (apartado Go).';
+            return;
+          }
+          botonClave.disabled = true;
+          resultadoClave.textContent = 'Comprobando la clave con OpenCode Go…';
+          try {
+            var rc = await enviar('/api/clave', { clave: entradaClave.value });
+            resultadoClave.textContent = (rc && rc.mensaje) || 'Clave guardada.';
+            entradaClave.value = '';
+          } catch (error) {
+            resultadoClave.textContent = (error && error.message) || 'No pude guardar la clave.';
+          }
+          botonClave.disabled = false;
+        });
+        boton.addEventListener('click', async function () {
+          if (select.value === actual) {
+            resultado.textContent = 'Ya es el modelo en uso.';
+            return;
+          }
+          boton.disabled = true;
+          select.disabled = true;
+          resultado.textContent = 'Cambiando…';
+          try {
+            var r = await enviar('/api/modelo', { model: select.value });
+            actual = select.value;
+            await cargarEstado();
+            // El refresco repinta la tarjeta (y el selector): la confirmación se
+            // vuelve a poner encima para que no parpadee y desaparezca.
+            var nuevoResultado = document.querySelector('#panel-estado .modelo-resultado');
+            if (nuevoResultado) nuevoResultado.textContent = (r && r.mensaje) || 'Listo.';
+          } catch (error) {
+            resultado.textContent = (error && error.message) || 'No pude cambiar el modelo.';
+            boton.disabled = false;
+            select.disabled = false;
+          }
+        });
+        return bloque;
+      }
+
       async function cargarEstado() {
         var contenedor = document.getElementById('panel-estado');
         pintarCarga(contenedor);
         try {
-          contenedor.replaceChildren(renderValor(await pedir('/api/status'), 0));
+          var datos = await pedir('/api/status');
+          var opciones = datos && Array.isArray(datos.modelosDisponibles) ? datos.modelosDisponibles : null;
+          if (datos && typeof datos === 'object') delete datos.modelosDisponibles;
+          contenedor.replaceChildren(renderValor(datos, 0));
+          if (opciones && opciones.length) contenedor.appendChild(renderSelectorModelo(datos, opciones));
           finCarga(contenedor, true);
         } catch (error) {
           pintarError(contenedor, error, cargarEstado); return false;

@@ -119,7 +119,7 @@ import type {
   Outbound,
 } from './channels/types.js';
 import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
-import { type Config, loadConfig } from './config.js';
+import { type Config, loadConfig, resetConfigForTests } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
@@ -229,6 +229,8 @@ import { ENTRY_SEPARATOR, MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
+import { aplicarModeloPanel, MODELOS_PANEL } from './modelos-panel.js';
+import { aplicarClaveGo } from './clave-panel.js';
 import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
@@ -2012,6 +2014,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           status: () => ({
             model: config.model,
             provider: config.provider,
+            // Selector de la tarjeta Estado: solo opciones de coste cero
+            // verificadas (medición 2-nov-2026, ver src/modelos-panel.ts).
+            modelosDisponibles: MODELOS_PANEL,
             threads: threads.size,
             uptimeSeconds: Math.round(process.uptime()),
             // Próximo recordatorio y rutina del dueño (las rutinas arrancan más abajo:
@@ -2028,6 +2033,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               }
             })(),
           }),
+          // Selector de modelo del panel: fija preset+modelo en el .env y aplica
+          // la config recargada al proceso vivo (conversaciones nuevas).
+          // Campo «Clave de OpenCode Go» de la tarjeta Estado: validación en
+          // vivo y guardado en el almacén, sin terminal (clave-panel.ts).
+          setClave: (clave: string) => aplicarClaveGo(clave, { setKey: vaultSet }),
+          setModelo: async (id: string) =>
+            aplicarModeloPanel(id, {
+              reloadConfig: () => {
+                resetConfigForTests();
+                return loadConfig() as unknown as Record<string, unknown>;
+              },
+              applyConfig: (fresh) => {
+                Object.assign(config, fresh);
+              },
+            }),
           sessions: (q?: string) => (q ? sessions.search(q) : sessions.recent(undefined, 20)),
           memory: (scope?: string) =>
             panelMemoryEntries(memory, scope, vigilanteOwnerId ?? undefined),

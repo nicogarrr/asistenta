@@ -257,7 +257,8 @@ export async function checkProviderKey(config: Config): Promise<void> {
   await resolveApiKey(config.baseUrl);
 }
 
-async function resolveApiKey(baseUrl: string): Promise<string> {
+// Exportada para los tests de orden de resolución (env vs almacén).
+export async function resolveApiKey(baseUrl: string): Promise<string> {
   if (isOpenRouterEndpoint(baseUrl)) {
     // Nunca la clave de OpenCode contra OpenRouter: seria un 401 y una fuga
     // del secreto a un tercero. Solo vault provider:openrouterKey o
@@ -291,10 +292,13 @@ async function resolveApiKey(baseUrl: string): Promise<string> {
       `no API key for custom endpoint ${baseUrl}: set PA_API_KEY (the OpenCode key is never sent to third-party endpoints)`,
     );
   }
-  const fromVault = await vaultGet('provider:apiKey');
-  if (fromVault) return fromVault;
+  // La env manda sobre el almacén: una provider:apiKey vieja (p. ej. de la
+  // época zen/v1) no puede tapar una OPENCODE_GO_API_KEY puesta a propósito
+  // en el .env (bloqueo de Nico, 2-nov-2026: el 401 venía de la vieja).
   const fromEnv = process.env.OPENCODE_GO_API_KEY;
   if (fromEnv) return fromEnv;
+  const fromVault = await vaultGet('provider:apiKey');
+  if (fromVault) return fromVault;
   throw new Error(
     'no API key: double-click instalar.bat or run `pa vault set-stdin provider:apiKey` or set OPENCODE_GO_API_KEY',
   );
