@@ -6,10 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createTvTool, type TvToolDeps } from '../src/tools/tv.js';
-import {
-  collectTvSearchItems,
-  formatTvSearchResults,
-} from '../src/tv/search-results.js';
+import { collectTvSearchItems, formatTvSearchResults } from '../src/tv/search-results.js';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(200, 7)]);
 

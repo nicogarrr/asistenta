@@ -275,8 +275,32 @@ export function beginInbound(
       durationSeconds: inbound.audioDurationSeconds,
       caption: inbound.text.trim() || undefined,
     });
+    // El resto de audios de un álbum, cada uno con su message_id: «/play» respondiendo
+    // al 2.º soltaba el último (solo se recordaba el primero).
+    for (const extra of inbound.albumAudios ?? []) {
+      if (!extra.messageId) continue;
+      deps.recordAudio(chatKey, {
+        fileId: extra.fileId,
+        mimeType: extra.mimeType ?? 'audio/ogg',
+        messageId: extra.messageId,
+        durationSeconds: extra.durationSeconds,
+      });
+    }
   }
   return { dedupKey };
+}
+
+/**
+ * Las demás piezas de un álbum apuntan al hilo de su turno (que va con el message_id de
+ * la primera): responder a la 2.ª foto caía en otra conversación.
+ */
+export function linkAlbumPieces(
+  messageThread: { set(key: string, threadKey: string): unknown },
+  chatKey: string,
+  inbound: Pick<Inbound, 'albumMessageIds'>,
+  threadKey: string,
+): void {
+  for (const id of inbound.albumMessageIds ?? []) messageThread.set(`${chatKey}:${id}`, threadKey);
 }
 
 /** «responde a ese» + salto de línea + texto: respuesta al último correo (va a /correo). */

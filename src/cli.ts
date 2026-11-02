@@ -149,6 +149,7 @@ import {
   beginInbound,
   cachedFullReply,
   canJoinMessageBatch,
+  linkAlbumPieces,
   mergeBatchedInbounds,
   queueMessageTurn,
   queueThreadTurn,
@@ -8657,6 +8658,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
           const thread = await resolveThread(inbound);
           messageThread.set(dedupKey, thread.key);
+          linkAlbumPieces(messageThread, chatKey_, inbound, thread.key);
           // «no te entiendo», «¿cómo?» tras una respuesta: re-explicarlo en llano (skill wait-what).
           if (thread.agent.messages.length > 0 && wantsRepitch(inbound.text)) {
             inbound.text = repitchText(inbound.text);

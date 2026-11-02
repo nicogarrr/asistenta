@@ -3,11 +3,11 @@ import type { Static } from 'typebox';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { APP_NAMES, needsAppLookup, resolveAppId } from '../tv/apps.js';
-import { formatTvSearchResults } from '../tv/search-results.js';
 import { inspectTv } from '../tv/inspection.js';
 import { describeTvIntent, parseTvCommand, type TvIntent, tvOrderHasTime } from '../tv/natural.js';
 import type { TvPowerOutcome } from '../tv/power.js';
 import { resolveScene, runScene, summarizeScene, TV_SCENES } from '../tv/scenes.js';
+import { formatTvSearchResults } from '../tv/search-results.js';
 import { describeTvStatus, type TvStatus } from '../tv/status.js';
 
 /** Pantallas de inicio de webOS: «apagar todo» no las cierra (no son una app abierta). */

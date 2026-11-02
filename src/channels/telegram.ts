@@ -688,6 +688,8 @@ export class TelegramChannel implements ChannelAdapter {
       held.videoNotice ??= videoNotice;
     }
     const first = held.inbound;
+    // Cada pieza con su message_id: responder a la 2.ª foto o al 2.º audio la encuentra.
+    first.albumMessageIds = [...(first.albumMessageIds ?? []), inbound.messageId];
     const more = first.albumPhotoFileIds ?? [];
     if (inbound.photoFileId && !first.photoFileId) {
       // El álbum empezó por un vídeo: la primera foto pasa a ser la principal.
@@ -717,6 +719,7 @@ export class TelegramChannel implements ChannelAdapter {
         ...(first.albumAudios ?? []),
         {
           fileId: inbound.audioFileId,
+          messageId: inbound.messageId,
           mimeType: inbound.audioMimeType,
           durationSeconds: inbound.audioDurationSeconds,
           sizeBytes: inbound.audioSizeBytes,
