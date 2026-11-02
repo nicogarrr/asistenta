@@ -62,6 +62,16 @@ const DEFAULT_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 64 * 1024;
 const DECISIONS = new Set<ApprovalDecision>(['once', 'session', 'always', 'deny']);
 
+/** Respuesta a «Siempre/Por ahora» sobre una aprobación que solo admite «una vez». */
+export const ONCE_ONLY_MESSAGE =
+  'Esta la pide un especialista: solo se puede permitir una vez o denegar. «Siempre» y «Por ahora» no valen aquí.';
+
+/** ¿La aprobación `id` de la lista pendiente es de las que solo admiten «una vez»? */
+function isOnceOnly(pending: unknown, id: string): boolean {
+  if (!Array.isArray(pending)) return false;
+  return pending.some((item) => isRecord(item) && item.id === id && item.onceOnly === true);
+}
+
 class HttpError extends Error {
   readonly status: number;
 
@@ -322,6 +332,16 @@ async function respondApi(
           throw new HttpError(400, 'Decisión inválida');
         }
         if (!deps.approve) throw new HttpError(503, 'Aprobaciones no disponibles');
+        // Lo que pide un especialista solo admite «una vez» o «denegar»: un «Siempre»
+        // o «Por ahora» (un cliente viejo, una llamada a mano) no la resuelve, pero
+        // tampoco es que ya no esté pendiente: se dice qué vale.
+        if (
+          (decision === 'always' || decision === 'session') &&
+          deps.approvals &&
+          isOnceOnly(await deps.approvals(), route.id)
+        ) {
+          throw new HttpError(409, ONCE_ONLY_MESSAGE);
+        }
         const applied = await deps.approve(route.id, decision as ApprovalDecision);
         // Antes respondía { ok: true } aunque la aprobación no existiera o ya
         // hubiera caducado: el usuario creía haber decidido algo que no pasó.
