@@ -1,5 +1,5 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import { foldAccents } from '../text.js';
+import { foldAccents, sliceSafe } from '../text.js';
 
 /**
  * History summary (P6).
@@ -173,7 +173,7 @@ export function renderForSummary(messages: readonly AgentMessage[]): string {
       else if (b?.type === 'text' && b.text) parts.push(b.text);
       else if (b?.type === 'toolCall') {
         const t = b as { name?: string; arguments?: unknown };
-        parts.push(`[llamada ${t.name}: ${JSON.stringify(t.arguments ?? {}).slice(0, 300)}]`);
+        parts.push(`[llamada ${t.name}: ${sliceSafe(JSON.stringify(t.arguments ?? {}), 300)}]`);
       }
     }
     // Un mensaje = una linea, SIEMPRE: un toolResult multilinea podria
@@ -187,7 +187,8 @@ export function renderForSummary(messages: readonly AgentMessage[]): string {
       .trim()
       .replace(/[\r\n\u2028\u2029]+/g, ' ⏎ ');
     if (r === 'toolResult' && text.length > TOOL_RESULT_CHARS) {
-      text = `${text.slice(0, TOOL_RESULT_CHARS)} [...${text.length - TOOL_RESULT_CHARS} caracteres omitidos]`;
+      const kept = sliceSafe(text, TOOL_RESULT_CHARS);
+      text = `${kept} [...${text.length - kept.length} caracteres omitidos]`;
     }
     if (text) out.push(`${r === 'toolResult' ? 'resultado' : r}: ${text}`);
   }
