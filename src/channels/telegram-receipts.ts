@@ -65,7 +65,8 @@ export function receiptStartText(kind: ReceiptKind, inbound: ReceiptInput = {}):
 export function voiceHeardText(transcript: string): string {
   const flat = transcript.replace(/\s+/g, ' ').trim();
   if (!flat) return '🎙️ No he entendido ninguna palabra.';
-  const cut = flat.length > HEARD_MAX ? `${flat.slice(0, HEARD_MAX - 1).trimEnd()}…` : flat;
+  // sliceSafe: un corte a ciegas podía dejar medio emoji y Telegram rechaza ese texto.
+  const cut = flat.length > HEARD_MAX ? `${sliceSafe(flat, HEARD_MAX - 1).trimEnd()}…` : flat;
   return `🎙️ «${cut}»`;
 }
 
