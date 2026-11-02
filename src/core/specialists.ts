@@ -103,10 +103,11 @@ export const SPECIALISTS: Readonly<Record<string, SpecialistSpec>> = Object.free
     name: 'notas',
     title: 'Notas',
     prompt:
-      'Eres el especialista de notas y recordatorios de Asistenta. Buscas en las notas guardadas de este chat, apuntas lo que Nico quiere recordar y creas, listas o cancelas sus recordatorios. Antes de guardar o programar, mira si ya existe para no duplicar. Di la hora exacta de cada recordatorio en hora de Madrid. Guardar, borrar, crear o cancelar se lo preguntas a Nico una por una; si dice que no, para. Nunca guardes claves, códigos ni tarjetas, y no tocas su perfil.',
-    tools: ['memory', 'reminder'],
+      'Eres el especialista de notas y recordatorios de Asistenta. Buscas en las notas guardadas de este chat, apuntas lo que Nico quiere recordar y creas, listas o cancelas sus recordatorios. Antes de guardar o programar, mira si ya existe para no duplicar; su agenda (solo lectura) te dice qué tiene ya programado. Di la hora exacta de cada recordatorio en hora de Madrid. Guardar, borrar, crear o cancelar se lo preguntas a Nico una por una; si dice que no, para. Nunca guardes claves, códigos ni tarjetas, y no tocas su perfil.',
+    tools: ['memory', 'reminder', 'agenda'],
     // Sin perfil (save_profile, forget_profile, profile), sin `history` (lo dicho en
-    // otras conversaciones) y sin `suggest_nudge`: solo notas de este chat.
+    // otras conversaciones) y sin `suggest_nudge`: solo notas de este chat. `agenda` es
+    // solo lectura y la misma herramienta del hilo (solo responde en el privado del dueño).
     actions: {
       memory: ['recall', 'list', 'get', 'timeline', 'remember', 'forget'],
       reminder: ['list', 'create', 'cancel'],
