@@ -192,6 +192,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     growth: 'no crece: se reescribe en cada arranque',
   },
   {
+    name: 'ultimo-cierre.json',
+    what: 'por qué y cuándo se cerró el daemon la última vez, con el error si lo hubo (lo lee /estado)',
+    backup: false,
+    why: 'estado de ejecución',
+    growth: 'no crece: se reescribe en cada cierre',
+  },
+  {
     name: 'agent.heartbeat',
     what: 'latido del daemon',
     backup: false,
