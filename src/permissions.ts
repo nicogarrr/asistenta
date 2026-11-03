@@ -2696,6 +2696,10 @@ function isRiskyShell(command: string): boolean {
   return DESTRUCTIVE.test(command) || SHELL_INSTALL.test(command) || SHELL_NO_WINDOW.test(command);
 }
 
+/** Servicios de defensa de Windows: antivirus, cortafuegos, centro de seguridad, eventos. */
+const SHELL_DEFENSES =
+  'WinDefend|mpssvc|wscsvc|Sense|WdNisSvc|WdBoot|WdFilter|SecurityHealthService|EventLog|BFE';
+
 const SHELL_NO_WINDOW = new RegExp(
   [
     // Borrar con alias de PowerShell/cmd o desde código.
@@ -2752,6 +2756,18 @@ const SHELL_NO_WINDOW = new RegExp(
     String.raw`\bSet-NetFirewallProfile\b[^;|&]*-Enabled\s+(\$?false|0)\b|\b(Disable-NetFirewallRule|Disable-ComputerRestore|Disable-BitLocker|Suspend-BitLocker)\b|\bmanage-bde(\.exe)?\s+-(off|disable)\b`,
     String.raw`\bsc(\.exe)?\s+delete\b|\bRemove-Service\b|\bSet-Service\b[^;|&]*-StartupType\s+Disabled\b|\bschtasks(\.exe)?\b[^;|&]*/delete\b|\bUnregister-ScheduledTask\b`,
     String.raw`\b(Remove-LocalUser|Disable-LocalUser|Clear-Disk|Remove-Partition|Initialize-Disk)\b|\bdocker\s+((system|volume|image|container|builder)\s+prune|volume\s+rm)\b`,
+    // Ejecutar código a través de binarios de Windows (rundll32/regsvr32 cargan una DLL o un
+    // scriptlet remoto, `regsvr32 /i:http://… scrobj.dll`): antes solo preguntaban con una
+    // bandera de código en línea (-c, /c…), que no usan, y pasaban en la ventana.
+    String.raw`\b(rundll32|regsvr32|regasm|regsvcs|installutil|cmstp|odbcconf)(\.exe)?\b`,
+    // Parar el antivirus, el cortafuegos o el registro de eventos sin desactivarlos:
+    // `Stop-Service WinDefend`, `sc stop mpssvc`, `net stop EventLog` pasaban. Parar otro
+    // servicio (Spooler) sigue en la ventana.
+    String.raw`\b(Stop-Service|spsv|Suspend-Service)\b[^;&]*\b(${SHELL_DEFENSES})\b|\b(${SHELL_DEFENSES})\b[^;&]*\|\s*(Stop-Service|spsv|Suspend-Service)\b|\b(sc|net)(\.exe)?\s+(stop|pause)\s+"?(${SHELL_DEFENSES})\b`,
+    String.raw`\bSet-Service\b[^;|&]*\b(${SHELL_DEFENSES})\b[^;|&]*-Status\s+(Stopped|Paused)\b|\bSet-Service\b[^;|&]*-Status\s+(Stopped|Paused)\b[^;|&]*\b(${SHELL_DEFENSES})\b`,
+    // Lanzar procesos o borrar por WMI (`wmic process call create`, `wmic shadowcopy delete`,
+    // Invoke-WmiMethod/Invoke-CimMethod): Start-Process ya preguntaba, esto no.
+    String.raw`\bwmic(\.exe)?\b[^;|&]*\b(call\s+create|delete)\b|\b(Invoke-WmiMethod|Invoke-CimMethod)\b`,
   ].join('|'),
   'i',
 );
