@@ -279,10 +279,11 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       extraHours.push(clock.hour);
     }
     // «los lunes a las 9 y los jueves a las 5»: otro día con su propia hora. Un cron no
-    // dice dos horarios distintos; antes el segundo se perdía sin avisar.
+    // dice dos horarios distintos; antes el segundo se perdía sin avisar. También tras una
+    // coma («cada lunes a las 9, miércoles a las 10»), que sonaba solo los lunes.
     if (
       new RegExp(
-        `\\by\\s+(?:el\\s+|los\\s+|cada\\s+)?(?:${DAY})\\b.*?\\ba\\s+las?\\s+${CLOCK}`,
+        `(?:\\by\\s+|,\\s*(?:y\\s+)?)(?:el\\s+|los\\s+|cada\\s+)?(?:${DAY})\\b.*?\\ba\\s+las?\\s+${CLOCK}`,
       ).test(rest)
     ) {
       return null;
