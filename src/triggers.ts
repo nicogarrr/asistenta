@@ -71,7 +71,10 @@ export interface MailMatch {
  */
 export function parseMailMatch(match: string): MailMatch {
   const out: MailMatch = { from: [], subject: [], any: [] };
-  const re = /(?:(de|from|asunto|subject):)?(?:"([^"]*)"|(\S+))/gi;
+  // Comillas del móvil («“billete de tren”», ««billete de tren»») y «de: renfe» con espacio:
+  // antes partían la frase en palabras sueltas o dejaban «de:» como texto que buscar, y el
+  // disparador no saltaba nunca.
+  const re = /(?:(de|from|asunto|subject):\s*)?(?:["“”«]([^"“”«»]*)["“”»]|(\S+))/gi;
   for (const m of match.matchAll(re)) {
     const value = (m[2] ?? m[3] ?? '').trim().toLocaleLowerCase('es');
     if (!value) continue;
