@@ -18,7 +18,7 @@
  *   "modo cine (con Netflix)"  -> scene cine
  */
 import { APP_ALIASES, APP_NAMES, normalizeTvText } from './apps.js';
-import { netflixTitle, youtubeVideoId } from './search-recipes.js';
+import { netflixTitle, TV_LINK_SOURCE, youtubeVideoId } from './search-recipes.js';
 
 export type TvIntent =
   | { action: 'power'; on: boolean }
@@ -365,7 +365,7 @@ export function searchTextAsWritten(original: string, query: string): string {
     .toLowerCase();
 }
 
-const URL_IN_TEXT = /https?:\/\/\S+/;
+const URL_IN_TEXT = new RegExp(TV_LINK_SOURCE, 'i');
 /** «pon https://youtu.be/ID [en la tele]», «reproduce este vídeo <enlace>»: el enlace es de YouTube. */
 const PLAY_YT_LINK =
   /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:video|enlace|link)|(?:en|por) (?:la tele|la tv|la television|youtube|you tube)))*$/;
@@ -373,8 +373,15 @@ const PLAY_YT_LINK =
 const PLAY_NETFLIX_LINK =
   /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:titulo|enlace|link|capitulo|serie|peli|pelicula|documental)|(?:en|por) (?:la tele|la tv|la television|netflix)))*$/;
 
-export function parseTvCommand(text: string): TvIntent | null {
-  const link = URL_IN_TEXT.exec(text)?.[0];
+export function parseTvCommand(raw: string): TvIntent | null {
+  const found = URL_IN_TEXT.exec(raw);
+  const link = found?.[0];
+  // «pon https://youtu.be/ID. en la tele»: la puntuación pegada al enlace fuera.
+  const text = found
+    ? `${raw.slice(0, found.index + found[0].length)} ${raw
+        .slice(found.index + found[0].length)
+        .replace(/^[.,;:!?)»”"']+/, '')}`
+    : raw;
   const quoted = link ? null : searchWithQuotedTitle(text);
   if (quoted) return quoted;
   // Con un enlace, el resto de la orden se lee sin él: así un enlace largo
