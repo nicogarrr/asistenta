@@ -2787,6 +2787,13 @@ const SHELL_NO_WINDOW = new RegExp(
     String.raw`\b(Enable-PSRemoting|Enable-WSManCredSSP)\b|\bwinrm(\.cmd)?\s+(quickconfig|qc|set)\b|\bTrustedHosts\b[^;|&]*\s-Value\b|\bSet-Item\b[^;|&]*TrustedHosts\b`,
     String.raw`\b(New-SmbShare|Grant-SmbShareAccess|Set-SmbServerConfiguration|Set-SmbShare)\b|\bnet(\.exe)?\s+share\s+[^\s;|&]+=`,
     String.raw`\b(Add-Computer|Remove-Computer|Rename-Computer|Reset-ComputerMachinePassword)\b`,
+    // Instalar certificados o tocar credenciales guardadas, cambiar para siempre el PATH u
+    // otras variables, cambiar de dónde se bajan los paquetes o qué corre en cada commit, y
+    // escribir en el archivo hosts (redirige webs).
+    String.raw`\b(Import-Certificate|Import-PfxCertificate)\b|\bcmdkey(\.exe)?\s+/(add|generic|delete|pass)\b|\bvaultcmd(\.exe)?\s+/(addcreds|deletecreds)\b`,
+    String.raw`\bsetx(\.exe)?\s|SetEnvironmentVariable\s*\([^)]*['"]?(Machine|User)\b`,
+    String.raw`\b(npm|pnpm|yarn)(\.cmd)?\s+config\s+set\b[^;|&]*\bregistry\b|\bpip[\d.]*(\.exe)?\s+config\s+set\b|\bgit\s+config\b[^;|&]*\bcore\.hooksPath\s+[^\s;|&]`,
+    String.raw`\b(Set-Content|Add-Content|Out-File|sc|ac|Clear-Content)\b[^;|&]*drivers[\\/]+etc[\\/]+hosts\b|>>?\s*"?[^\s;|&]*drivers[\\/]+etc[\\/]+hosts\b`,
   ].join('|'),
   'i',
 );
