@@ -969,7 +969,18 @@ export class TvSessionPool {
         input = await this.inputFor(s, key, host, clientKey, deps);
       } catch (err) {
         // Nada enviado todavía: con la sesión cortada se prueba UNA vez en limpio.
-        if (s.closed && attempt === 0) continue;
+        // Una muerte silenciosa (la tele se apagó de golpe y el TCP quedó a
+        // medias, sin close) no marca s.closed: la delata el «no respondio»
+        // del request, igual que en request(). Sin esto la tecla fallaba al
+        // usuario pudiendo reabrir y enviarla, porque no se había enviado nada.
+        const cut =
+          s.closed ||
+          (err instanceof Error &&
+            /no respondio|cerro la conexion|No se pudo enviar/.test(err.message));
+        if (cut && attempt === 0) {
+          this.drop(s, key);
+          continue;
+        }
         throw err;
       }
       const wait = input.lastKeyAt + gap - this.now();

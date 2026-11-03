@@ -29,6 +29,8 @@ function fakeTv(opts: { pong?: boolean; newKey?: string; failUri?: string } = {}
   const inputs: FakeInput[] = [];
   class FakeWs extends EventEmitter {
     closed = false;
+    /** Muerte silenciosa: el socket deja de contestar SIN emitir close. */
+    silence = false;
     constructor() {
       super();
       c.opens += 1;
@@ -40,6 +42,7 @@ function fakeTv(opts: { pong?: boolean; newKey?: string; failUri?: string } = {}
     }
     send(data: string) {
       if (this.closed) throw new Error('socket cerrado');
+      if (this.silence) return;
       const m = JSON.parse(data);
       setImmediate(() => {
         if (this.closed) return;
@@ -205,6 +208,27 @@ describe('sesión persistente con la LG', () => {
     await tvRequest(HOST, 'KEY', 'system.launcher/launch', { id: 'youtube' }, tv.deps(pool));
     expect(tv.c.opens).toBe(2);
     expect(tv.c.registers).toBe(2);
+  });
+
+  it('sesión muerta en silencio (sin close): la tecla sale en una conexión nueva', async () => {
+    const tv = fakeTv();
+    // pingAfterMs alto: como si la muerte fuera de hace <5 s, el pool no llega a hacer ping.
+    const pool = newPool({ pingAfterMs: 60_000 });
+    const deps = { ...tv.deps(pool), commandTimeoutMs: 100 };
+    await pool.key(HOST, 'KEY', 'RIGHT', deps);
+    expect(tv.c.keys).toEqual(['RIGHT']);
+    // La tele se apaga de golpe: el TCP queda a medias (sin close) y el
+    // socket de input muere con ella. El request del input expira con
+    // «no respondio»: la tecla aún no se había enviado, toca reabrir una vez.
+    const sesion = tv.sockets[0];
+    const entrada = tv.inputs[0];
+    if (!sesion || !entrada) throw new Error('el fake no abrió los sockets esperados');
+    sesion.silence = true;
+    entrada.close();
+    await pool.key(HOST, 'KEY', 'LEFT', deps);
+    expect(tv.c.keys).toEqual(['RIGHT', 'LEFT']);
+    expect(tv.c.opens).toBe(2);
+    expect(tv.c.inputOpens).toBe(2);
   });
 
   it('sesión parada sin pong: se tira antes de enviar nada', async () => {
