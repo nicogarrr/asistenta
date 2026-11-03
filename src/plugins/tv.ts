@@ -14,7 +14,7 @@ import { paths } from '../paths.js';
 import { createTvTool, type TvMemoryState, type TvToolDeps } from '../tools/tv.js';
 import { createTvAppCache } from '../tv/app-cache.js';
 import { discoverWebOsTvs } from '../tv/discover.js';
-import { runIntentOnDriver } from '../tv/drivers.js';
+import { runIntentWaking } from '../tv/drivers.js';
 import { GlasshouseClient, GlasshouseUnavailableError } from '../tv/glasshouse.js';
 import { loadKnownTvs, relocateMovedTvs, saveTvClientKey } from '../tv/known-tvs.js';
 import {
@@ -268,7 +268,8 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
         text: found.text,
         label: tvTargetLabel(other),
         run: direct,
-        intentRunner: (intent) => runIntentOnDriver(driver, intent),
+        // Apagada del todo: «abre Netflix» la enciende por red antes (como la LG).
+        intentRunner: (intent) => runIntentWaking(driver, intent),
       };
     }
     if (!tv || tv.host === active) {
