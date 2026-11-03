@@ -31,7 +31,16 @@ function fakeTv(opts: { token?: string; connectMs?: number } = {}) {
         list.push(cb);
         handlers[ev] = list;
       },
-      send: (d: string) => void sent.push(d),
+      send: (d: string) => {
+        sent.push(d);
+        // Como una Tizen real: «ed.apps.launch» se acusa con data 200 (asis-computeruse-5).
+        if (d.includes('ed.apps.launch')) {
+          setTimeout(() => {
+            const ack = JSON.stringify({ event: 'ed.apps.launch', data: 200, from: 'host' });
+            for (const cb of handlers.message ?? []) cb(ack);
+          }, 1);
+        }
+      },
       close: () => {
         rec.closed = true;
       },

@@ -108,6 +108,8 @@ export interface SamsungDeps {
   pool?: SamsungSessionPool | null;
   /** Apps instaladas (guardadas por tele en el daemon); sin esto, se piden a la tele. */
   installedApps?: (opts?: { fresh?: boolean }) => Promise<TvApp[]>;
+  /** Espera máxima del acuse de «ed.apps.launch» (tests). */
+  launchAckMs?: number;
 }
 
 export function samsungUrl(conn: SamsungConn): string {
@@ -118,7 +120,32 @@ export function samsungUrl(conn: SamsungConn): string {
   return conn.secure && conn.token ? `${base}&token=${encodeURIComponent(conn.token)}` : base;
 }
 
-function parse(data: unknown): { event?: string; data?: { token?: unknown } } | null {
+type SamsungMessage = { event?: string; data?: { token?: unknown } };
+
+/** Espera el primer mensaje `event` que llegue a `listeners` tras `send()`, o undefined al vencer. */
+function awaitReply(
+  listeners: Set<(msg: SamsungMessage | null) => void>,
+  send: () => void,
+  event: string,
+  timeoutMs: number,
+): Promise<{ data: unknown } | undefined> {
+  return new Promise((resolve) => {
+    const l = (msg: SamsungMessage | null) => {
+      if (msg?.event !== event) return;
+      clearTimeout(timer);
+      listeners.delete(l);
+      resolve({ data: (msg as { data?: unknown }).data });
+    };
+    const timer = setTimeout(() => {
+      listeners.delete(l);
+      resolve(undefined);
+    }, timeoutMs);
+    listeners.add(l);
+    send();
+  });
+}
+
+function parse(data: unknown): SamsungMessage | null {
   try {
     const text =
       typeof data === 'string'
@@ -127,9 +154,7 @@ function parse(data: unknown): { event?: string; data?: { token?: unknown } } | 
           ? data.toString('utf8')
           : String(data);
     const v = JSON.parse(text) as unknown;
-    return v && typeof v === 'object'
-      ? (v as { event?: string; data?: { token?: unknown } })
-      : null;
+    return v && typeof v === 'object' ? (v as SamsungMessage) : null;
   } catch {
     return null;
   }
@@ -216,10 +241,41 @@ export async function samsungSend(
   return token;
 }
 
+/**
+ * Como samsungSend, pero con un solo mensaje y esperando su respuesta `event`
+ * (hasta `timeoutMs`; undefined si la tele no contesta a eso).
+ */
+export async function samsungRequest(
+  conn: SamsungConn,
+  message: object,
+  event: string,
+  timeoutMs: number,
+  deps: SamsungDeps = {},
+): Promise<{ data: unknown } | undefined> {
+  const { ws, token } = await openSamsung(conn, deps);
+  const listeners = new Set<(msg: SamsungMessage | null) => void>();
+  ws.on('message', (data) => {
+    const msg = parse(data);
+    for (const l of listeners) l(msg);
+  });
+  try {
+    return await awaitReply(listeners, () => ws.send(JSON.stringify(message)), event, timeoutMs);
+  } finally {
+    try {
+      ws.close();
+    } catch {
+      // ya cerrado
+    }
+    if (token && token !== conn.token) await deps.onToken?.(token);
+  }
+}
+
 interface SamsungSession {
   ws: SamsungSocket;
   closed: boolean;
   idleTimer?: ReturnType<typeof setTimeout>;
+  /** Quien espera una respuesta de la tele por esta conexión (acuse de «ed.apps.launch»). */
+  listeners: Set<(msg: SamsungMessage | null) => void>;
 }
 
 /**
@@ -279,7 +335,11 @@ export class SamsungSessionPool {
   private open(conn: SamsungConn, deps: SamsungDeps, key: string): Promise<SamsungSession> {
     const entry = (async () => {
       const { ws, token } = await openSamsung(conn, deps);
-      const s: SamsungSession = { ws, closed: false };
+      const s: SamsungSession = { ws, closed: false, listeners: new Set() };
+      ws.on('message', (data) => {
+        const msg = parse(data);
+        for (const l of s.listeners) l(msg);
+      });
       const gone = () => {
         s.closed = true;
         this.drop(s, key);
@@ -300,22 +360,42 @@ export class SamsungSessionPool {
     return !s.closed && (s.ws.readyState === undefined || s.ws.readyState === 1);
   }
 
-  /** Manda los mensajes por la conexión abierta (o una nueva si no hay o ya no vale). */
-  async send(
-    conn: SamsungConn,
-    messages: readonly object[],
-    deps: SamsungDeps = {},
-  ): Promise<void> {
+  private async session(conn: SamsungConn, deps: SamsungDeps): Promise<SamsungSession> {
     const key = samsungUrl(conn);
     let s = await (this.sessions.get(key) ?? this.open(conn, deps, key));
     if (!this.usable(s)) {
       this.drop(s, key);
       s = await this.open(conn, deps, key);
     }
-    for (const m of messages) s.ws.send(JSON.stringify(m));
     if (s.idleTimer) clearTimeout(s.idleTimer);
     s.idleTimer = setTimeout(() => this.drop(s, key), this.idleMs);
     s.idleTimer.unref?.();
+    return s;
+  }
+
+  /** Manda los mensajes por la conexión abierta (o una nueva si no hay o ya no vale). */
+  async send(
+    conn: SamsungConn,
+    messages: readonly object[],
+    deps: SamsungDeps = {},
+  ): Promise<void> {
+    const s = await this.session(conn, deps);
+    for (const m of messages) s.ws.send(JSON.stringify(m));
+  }
+
+  /**
+   * Manda un mensaje y espera la respuesta `event` de la tele hasta `timeoutMs`.
+   * Devuelve su `data` (o undefined si no contestó a tiempo: hay firmwares sin acuse).
+   */
+  async request(
+    conn: SamsungConn,
+    message: object,
+    event: string,
+    timeoutMs: number,
+    deps: SamsungDeps = {},
+  ): Promise<{ data: unknown } | undefined> {
+    const s = await this.session(conn, deps);
+    return awaitReply(s.listeners, () => s.ws.send(JSON.stringify(message)), event, timeoutMs);
   }
 }
 
@@ -338,6 +418,10 @@ export function samsungKey(key: string): object {
 }
 
 const APPS_TIMEOUT_MS = 4_000;
+/** Lo que se espera el acuse de «ed.apps.launch» (la tele contesta en ~0,1 s). */
+const LAUNCH_ACK_MS = 1_500;
+/** Teles que no acusan «ed.apps.launch» (firmwares viejos): no se les espera más. */
+const NO_LAUNCH_ACK = new Set<string>();
 /** Puerto DIAL de las Samsung (Application-URL http://IP:8080/ws/apps/). */
 export const SAMSUNG_DIAL_PORT = 8080;
 const DIAL_TIMEOUT_MS = 4_000;
@@ -471,6 +555,37 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
       : samsungSend(conn, messages, deps).then(() => undefined);
   const press = (key: string) => send([samsungKey(key)]);
   const listApps = deps.installedApps ?? (() => samsungInstalledApps(conn, deps));
+  /**
+   * Abre la app por su id y lee el acuse de la tele («ed.apps.launch», data 200;
+   * otro código = ese id no existe en la tele). Si esta tele nunca acusa, no se
+   * vuelve a esperar: manda y sigue, como antes.
+   */
+  const launchId = async (id: string): Promise<'ok' | 'missing' | 'unknown'> => {
+    const message = {
+      method: 'ms.channel.emit',
+      params: {
+        event: 'ed.apps.launch',
+        to: 'host',
+        // Las apps de la tienda (id numérico) van por DEEP_LINK; las propias
+        // de Tizen («org.tizen.browser») por NATIVE_LAUNCH.
+        data: { appId: id, action_type: /^\d+$/.test(id) ? 'DEEP_LINK' : 'NATIVE_LAUNCH' },
+      },
+    };
+    if (NO_LAUNCH_ACK.has(conn.host)) {
+      await send([message]);
+      return 'unknown';
+    }
+    const waitMs = deps.launchAckMs ?? LAUNCH_ACK_MS;
+    const reply = deps.pool
+      ? await deps.pool.request(conn, message, 'ed.apps.launch', waitMs, deps)
+      : await samsungRequest(conn, message, 'ed.apps.launch', waitMs, deps);
+    if (!reply) {
+      NO_LAUNCH_ACK.add(conn.host);
+      return 'unknown';
+    }
+    const code = Number(reply.data);
+    return Number.isFinite(code) && code !== 200 && code >= 400 ? 'missing' : 'ok';
+  };
   return {
     brand: 'Samsung',
     power: async (on) => {
@@ -528,18 +643,19 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
             : `No sé abrir «${appId}» en la Samsung; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
         );
       }
-      await send([
-        {
-          method: 'ms.channel.emit',
-          params: {
-            event: 'ed.apps.launch',
-            to: 'host',
-            // Las apps de la tienda (id numérico) van por DEEP_LINK; las propias
-            // de Tizen («org.tizen.browser») por NATIVE_LAUNCH.
-            data: { appId: id, action_type: /^\d+$/.test(id) ? 'DEEP_LINK' : 'NATIVE_LAUNCH' },
-          },
-        },
-      ]);
+      if ((await launchId(id)) !== 'missing') return;
+      // La tele dice que ese id no está (app desinstalada, o el id de la tienda
+      // es otro en este modelo): lista fresca y, si la app sigue con otro id, ese.
+      const fresh = await (deps.installedApps
+        ? deps.installedApps({ fresh: true })
+        : samsungInstalledApps(conn, deps)
+      ).catch(() => null);
+      const other = fresh ? matchInstalledApp(appId, fresh)?.id : undefined;
+      if (other && other !== id && (await launchId(other)) !== 'missing') return;
+      const names = fresh ? installedNames(fresh) : '';
+      throw new SamsungError(
+        `«${appId}» ya no está en la Samsung (¿la desinstalaste?).${names ? ` Tiene: ${names}.` : ''}`,
+      );
     },
     apps: () => listApps(),
     search: async (query, appId) => {
