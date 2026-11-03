@@ -15,6 +15,7 @@
  * - cada peticion tiene su timeout y la respuesta un tope de tamano.
  */
 import { log } from '../log.js';
+import { sliceSafe } from '../text.js';
 import { vaultGet } from '../vault.js';
 import {
   type McpPromptInfo,
@@ -115,7 +116,7 @@ export function readMcpHttpServers(raw: string | undefined): McpHttpServersRepor
     if (!isRecord(item) || typeof item.url !== 'string') continue;
     if (typeof item.command === 'string') continue;
     const name = typeof item.name === 'string' ? item.name.trim() : '';
-    const shown = name ? name.slice(0, 40) : '(sin nombre)';
+    const shown = name ? sliceSafe(name, 40) : '(sin nombre)';
     if (!name || !NAME_PATTERN.test(name)) {
       report.skipped.push({
         name: shown,
