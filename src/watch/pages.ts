@@ -873,10 +873,15 @@ export function parseVigilaArgs(args: string): VigilaArgs | null {
     keyword = (kw[1] ?? kw[2] ?? '').trim();
     rest = rest.replace(kw[0], ' ');
   }
-  const obj = /objetivo\s*=\s*(\S+(?:\s?€)?)/i.exec(rest);
+  // «objetivo=500 euros» o «=500eur»: la unidad es parte del objetivo (antes «euros»
+  // quedaba como nombre de la vigilancia y «500eur» no se entendía).
+  const obj = /objetivo\s*=\s*(€?\s?[^\s€]+?(?:\s?(?:€|euros?\b|eur\b))?)(?=\s|$)/i.exec(rest);
   if (obj?.[1]) {
-    const raw = obj[1].replace(/[€\s]/g, '');
-    const cents = parseMachinePrice(raw);
+    const raw = obj[1].replace(/euros?|eur|[€\s]/gi, '');
+    // «1.299€» es 1299 € escrito en español (punto de miles): antes no se entendía.
+    const cents = /^\d{1,3}(?:\.\d{3})+$/.test(raw)
+      ? Number(raw.replace(/\./g, '')) * 100
+      : parseMachinePrice(raw);
     if (cents === null || cents <= 0) {
       throw new Error(
         `No entiendo el objetivo "${obj[1]}". Ponlo en euros, por ejemplo: objetivo=500€ u objetivo=1.299,50€`,
