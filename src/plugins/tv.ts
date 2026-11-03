@@ -246,17 +246,21 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
       const driver =
         other.brand === 'roku'
           ? rokuDriver(other.host, {
-              installedApps: () => appCache.get(other.host, () => rokuInstalledApps(other.host)),
+              installedApps: (o) =>
+                appCache.get(other.host, () => rokuInstalledApps(other.host), o),
             })
           : samsungDriver(
               { host: other.host, token: other.clientKey, secure: other.secure === '1' },
               {
-                installedApps: () =>
-                  appCache.get(other.host, () =>
-                    samsungInstalledApps(
-                      { host: other.host, token: other.clientKey, secure: other.secure === '1' },
-                      { onToken: (key) => saveTvClientKey(other.host, key) },
-                    ),
+                installedApps: (o) =>
+                  appCache.get(
+                    other.host,
+                    () =>
+                      samsungInstalledApps(
+                        { host: other.host, token: other.clientKey, secure: other.secure === '1' },
+                        { onToken: (key) => saveTvClientKey(other.host, key) },
+                      ),
+                    o,
                   ),
                 mac: other.mac,
                 onToken: (key) => saveTvClientKey(other.host, key),

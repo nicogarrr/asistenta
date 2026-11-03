@@ -107,7 +107,7 @@ export interface SamsungDeps {
    */
   pool?: SamsungSessionPool | null;
   /** Apps instaladas (guardadas por tele en el daemon); sin esto, se piden a la tele. */
-  installedApps?: () => Promise<TvApp[]>;
+  installedApps?: (opts?: { fresh?: boolean }) => Promise<TvApp[]>;
 }
 
 export function samsungUrl(conn: SamsungConn): string {
@@ -511,6 +511,14 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
           return [];
         });
         id = matchInstalledApp(appId, installed)?.id;
+        // La lista guardada (12 h) no tiene una app recién instalada: se pide otra vez, una.
+        if (!id && deps.installedApps) {
+          const fresh = await deps.installedApps({ fresh: true }).catch(() => null);
+          if (fresh) {
+            installed = fresh;
+            id = matchInstalledApp(appId, fresh)?.id;
+          }
+        }
       }
       if (!id) {
         const names = installedNames(installed);
