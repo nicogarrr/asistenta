@@ -2705,11 +2705,20 @@ const SHELL_NO_WINDOW = new RegExp(
     // Perder trabajo o bajar defensas sin borrar «un archivo»: git que tira cambios, espejo
     // que borra el destino, copias de sombra, registros, arranque, antivirus, cortafuegos,
     // cuentas, borrado seguro y la red.
-    String.raw`\bgit\s+(clean\s+-\w*f|reset\s+--hard|push\s+[^;|&]*(--force\b|-f\b|\+\S)|checkout\s+(-f\b|--\s))`,
+    // Con la bandera en cualquier sitio: antes `git clean -d -f`, `git reset HEAD~1 --hard`,
+    // `git checkout .`, `git checkout HEAD -- a.ts` o `git restore .` pasaban sin preguntar.
+    String.raw`\bgit\s+(clean\b[^;|&]*\s(-\w*f\w*|--force)\b|reset\b[^;|&]*\s--hard\b|push\s+[^;|&]*(--force\b|-f\b|--mirror\b|\+\S)|checkout\s+(-f\b|\.(\s|$))|checkout\b[^;|&]*\s--(\s|$))`,
+    // restore sin --staged tira cambios; también switch forzado, borrar una rama sin fusionar,
+    // tirar el stash, caducar el reflog o reescribir la historia.
+    String.raw`\bgit\s+(restore\b(?![^;|&]*\s--staged\b)|restore\b[^;|&]*\s(-W|--worktree)\b|switch\b[^;|&]*\s(-f|--force|--discard-changes)\b|branch\b[^;|&]*\s(-D|--delete\s+--force|--force\s+--delete)\b|stash\s+(drop|clear)\b|reflog\s+expire\b|update-ref\s+-d\b|filter-(branch|repo)\b)`,
     String.raw`\brobocopy\b[^;|&]*\s/(mir|purge)\b|\bvssadmin\s+(delete|resize)\b|\bwevtutil(\.exe)?\s+(cl|clear-log)\b|\bbcdedit\b`,
     String.raw`\b(Set|Add)-MpPreference\b|\bnetsh\s+(advfirewall|firewall)\b|\bnet\s+(user|localgroup)\b[^;|&]*\s/(add|delete)\b|\bcipher(\.exe)?\s+/w\b|\b(Disable|Remove)-NetAdapter\b`,
-    // Código en línea o en otro intérprete: lo que corre no se ve en el comando.
-    String.raw`\b(python\d?|py|node|pwsh|powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?\s+[^;|&]*?(^|\s)(-c|-e|-p|--eval|--print|-Command|-EncodedCommand|-enc|-File|/c|/k)(\s|$)`,
+    // Código en línea o en otro intérprete: lo que corre no se ve en el comando. Antes
+    // `\s+` se comía el único espacio y `(^|\s)` ya no tenía cuál: la forma normal
+    // (`python -c "…"`, `node -e "…"`, `cmd /c …`, `powershell -c …`) no casaba y solo
+    // preguntaba con otra bandera delante. PowerShell acepta prefijos: -ec/-en…/-EncodedCommand,
+    // -com…/-Command y -fi…/-File; `mshta` ejecuta lo que se le pase.
+    String.raw`\b(python[\d.]*|py|node|pwsh|powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?(?=\s)[^;|&]*?\s(-c(o(m(m(a(n(d)?)?)?)?)?)?|-e(c|n(c(o(d(e(d(c(o(m(m(a(n(d)?)?)?)?)?)?)?)?)?)?)?)?)?|-f(i(l(e)?)?)?|-p|--eval|--print|/c|/k)(\s|$)|\bmshta(\.exe)?\s`,
     String.raw`-ExecutionPolicy\s+(Bypass|Unrestricted)`,
     // Instalar o ejecutar paquetes sin «install».
     String.raw`\b(npx|bunx)\b|\b(pnpm|yarn)\s+dlx\b|-m\s+pip\s+install\b|\b(choco|scoop)\s+install\b`,
