@@ -69,7 +69,7 @@ const Params = lazySchema(() =>
     at: Type.Optional(
       Type.String({
         description:
-          "create, one time: local date and time as YYYY-MM-DDTHH:MM (24h, the user's timezone). Work it out from the <now> block.",
+          "create, one time: local date and time as YYYY-MM-DDTHH:MM (24h, the user's timezone). Work it out from the <now> block. cancel: when several share the text, the time of the one to remove (HH:MM or YYYY-MM-DDTHH:MM).",
       }),
     ),
     in_minutes: Type.Optional(
@@ -371,6 +371,23 @@ function exactlyNamed<T>(hits: T[], said: string, text: (h: T) => string): T[] {
   return exact.length === 1 ? exact : hits;
 }
 
+/** «pastilla (21:00)»: la hora local de la próxima vez, para distinguir dos con el mismo texto. */
+function labelWithTime(row: ReminderRow): string {
+  if (!row.next) return reminderText(row.routine);
+  const w = wallClock(row.next);
+  return `${reminderText(row.routine)} (${pad(w.hour)}:${pad(w.minute)})`;
+}
+
+/** ¿Suena a esa hora? `at` es HH:MM (cualquier día) o YYYY-MM-DDTHH:MM (hora local). */
+function firesAt(next: Date | null, at: string): boolean {
+  if (!next) return false;
+  const m = /^(?:(\d{4})-(\d{2})-(\d{2})T)?(\d{1,2}):(\d{2})$/.exec(at);
+  if (!m) return false;
+  const w = wallClock(next);
+  if (Number(m[4]) !== w.hour || Number(m[5]) !== w.minute) return false;
+  return m[1] === undefined || localDay(next.getTime()) === `${m[1]}-${m[2]}-${m[3]}`;
+}
+
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${sliceSafe(text.replace(/\s+/g, ' '), 60)}${suffix}`.trim();
 }
@@ -504,23 +521,32 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         // respuesta repetía «maría» en minúsculas.
         const needle = String(args.text ?? '').trim();
         if (!needle) return reply('cancel necesita text: una palabra del recordatorio.', true);
-        const hits = exactlyNamed(
+        const found = exactlyNamed(
           mine().filter((r) => foldAccents(reminderText(r)).includes(foldAccents(needle))),
           needle,
           reminderText,
         );
+        // Dos con el mismo texto («pastilla» a las 9 y a las 21): el modelo solo podía
+        // cancelar por texto y la pregunta no decía la hora de cada uno. Ahora la dice y
+        // `at` elige el de esa hora (con `at`, nunca borra uno que suena a otra hora).
+        const rows = reminderRows(found);
+        const at = args.at === undefined ? '' : String(args.at).trim();
+        const hits = at ? rows.filter((r) => firesAt(r.next, at)) : rows;
         if (hits.length === 0)
-          return reply(`No encuentro ningún recordatorio con "${needle}".`, true);
+          return reply(
+            `No encuentro ningún recordatorio con "${needle}"${at ? ` a las ${at}` : ''}.`,
+            true,
+          );
         if (hits.length > 1) {
           return reply(
-            `Hay ${hits.length} recordatorios con "${needle}": ${hits.map(reminderText).join(' / ')}. Dime cuál.`,
+            `Hay ${hits.length} recordatorios con "${needle}": ${hits.map(labelWithTime).join(' / ')}. Dime cuál (cancel con at=HH:MM).`,
             true,
           );
         }
-        const [hit] = hits as [Routine];
-        deps.store.deleteRoutine(scope, hit.name);
+        const [hit] = hits as [ReminderRow];
+        deps.store.deleteRoutine(scope, hit.routine.name);
         deps.sync();
-        return reply(`Cancelado: ${reminderText(hit)}.`);
+        return reply(`Cancelado: ${at ? labelWithTime(hit) : reminderText(hit.routine)}.`);
       }
 
       const text = String(args.text ?? '').trim();
