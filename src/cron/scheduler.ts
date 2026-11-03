@@ -196,7 +196,18 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       if (ap === 'p' && hour >= 1 && hour < 12) hour += 12;
       if (ap === 'a' && hour === 12) hour = 0;
       return min ? `${hour}:${min}` : `${hour}`;
-    });
+    })
+    // «a las 9 de la noche menos cuarto», «a las 6 de la mañana y media»: la parte del día
+    // dicha antes de los minutos cortaba la hora y los minutos se perdían (sonaba a las 21:00
+    // o a las 6:00). Se pasa a «9 menos cuarto de la noche». Solo media/cuarto tras «y»:
+    // «a las 8 de la mañana y 10 de la noche» son dos horas.
+    .replace(
+      new RegExp(
+        `\\b(\\d{1,2}|${SPOKEN_HOURS}) ((?:de|por) la (?:manana|madrugada|tarde|noche)) (y (?:media|cuarto)|menos (?:${MINUTES_BEFORE}))\\b`,
+        'g',
+      ),
+      '$1 $3 $2',
+    );
 
   // A time of day is the strongest signal. `a las 8`, `a las 8:30`, `a las 20h`.
   let hour = 0;
@@ -229,7 +240,10 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       // «, 14» sin «las» solo dentro de una lista que sigue («, 14 y 20»): «a las 8, 20
       // minutos de paseo» no es otra hora.
       const bare = named ? null : new RegExp(`^\\s*,\\s*${CLOCK}(?=\\s*,|\\s*\\by\\s)`).exec(rest);
-      const m = named ?? bare;
+      // «a las 8 de la mañana y 10 de la noche»: la segunda hora va sin «las», pero con su
+      // parte del día no puede ser minutos de la primera. Antes se perdía y solo sonaba a las 8.
+      const own = named || bare ? null : new RegExp(`^\\s*\\by\\s+${CLOCK}`).exec(rest);
+      const m = named ?? bare ?? (own?.[6] ? own : null);
       if (!m) break;
       if (!take(m)) return null;
       if (bare) list = true;
