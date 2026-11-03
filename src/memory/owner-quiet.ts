@@ -23,6 +23,15 @@ const BEFORE = new RegExp(`${DONT}(?: ni)? ${JOIN}(?:antes de|hasta) ${HOUR}${PA
 const AFTER = new RegExp(
   `${DONT}(?: ni)? ${JOIN}(?:despues de|a partir de|mas tarde de|desde) ${HOUR}${PART}`,
 );
+/**
+ * «no me escribas entre las 23 y las 8», «de 11 de la noche a 8 de la mañana», «desde las 23
+ * hasta las 9», «de 10 a 7»: las dos horas como franja. Antes se apuntaba el dato
+ * («📝 Apuntado») pero las horas de silencio no lo leían y seguían las de serie.
+ */
+const RANGE_HOUR = String.raw`(?:(?:la|las) )?(\d{1,2}|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:(?::|\.)(\d{2})| y (media|cuarto))?`;
+const RANGE = new RegExp(
+  `${DONT} (?:entre|de|desde) ${RANGE_HOUR}${PART} (?:y|a|hasta) ${RANGE_HOUR}${PART}(?![:.]?\\d)`,
+);
 const WORD_HOUR: Record<string, number> = {
   dos: 2,
   tres: 3,
@@ -58,6 +67,28 @@ function hour24(raw: string, part: string | undefined, kind: 'before' | 'after')
   return h;
 }
 
+/**
+ * Las horas de una franja. Con la parte del día dicha, como siempre. Sin ella: si la franja
+ * da la vuelta a la medianoche («de 10 a 7») el principio es de la noche (22); si no («entre
+ * la 1 y las 7», «de 9 a 11») se toma tal cual.
+ */
+function rangeHours(m: RegExpExecArray): QuietHours | null {
+  const [, sRaw = '', , , sPart, eRaw = '', eMin, eHalf, ePart] = m;
+  const literal = (raw: string): number =>
+    /^\d+$/.test(raw) ? Number(raw) : (WORD_HOUR[raw] ?? Number.NaN);
+  let start = sPart ? hour24(sRaw, sPart, 'after') : literal(sRaw);
+  let end = ePart ? hour24(eRaw, ePart, 'before') : literal(eRaw);
+  if (start === null || end === null || !Number.isInteger(start) || !Number.isInteger(end))
+    return null;
+  if (start < 0 || start > 24 || end < 0 || end > 24) return null;
+  start %= 24;
+  end %= 24;
+  if (!sPart && !ePart && start >= 1 && start <= 11 && end < start) start += 12;
+  // «hasta las 8 y media»: hasta la hora siguiente, mejor de más que de menos.
+  const extra = (eMin && eMin !== '00') || eHalf ? 1 : 0;
+  return { startHour: start, endHour: (end + extra) % 24 };
+}
+
 function span({ startHour, endHour }: QuietHours): number {
   return (endHour - startHour + 24) % 24;
 }
@@ -77,6 +108,13 @@ export function ownerStatedQuiet(
     const e = entry.trim();
     if (!e.startsWith(SAID_PREFIX)) continue;
     const t = foldAccents(e.slice(SAID_PREFIX.length).toLowerCase());
+    const range = RANGE.exec(t);
+    const hours = range ? rangeHours(range) : null;
+    if (hours) {
+      ({ startHour, endHour } = hours);
+      stated = true;
+      continue;
+    }
     const before = BEFORE.exec(t);
     if (before) {
       const h = hour24(before[1] ?? '', before[4], 'before');
