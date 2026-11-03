@@ -93,10 +93,13 @@ const dayCap = new DayCap();
  */
 const DEDUPE_WINDOW_MS = 10_000;
 const DEDUPE_MAX = 20;
+const SUMMARY_MSG = 'líneas repetidas omitidas';
 type DedupeEntry = {
   start: number;
   seen: number;
   msg: string;
+  /** Mensaje del error (si lo había): con el mismo `msg`, distingue qué bucle se resume. */
+  err?: string;
   timer?: ReturnType<typeof setTimeout>;
 };
 const dedupe = new Map<string, DedupeEntry>();
@@ -120,7 +123,16 @@ function flushEntry(entry: DedupeEntry): void {
   const omitted = entry.seen - DEDUPE_MAX;
   if (omitted <= 0) return;
   entry.seen = DEDUPE_MAX;
-  write('warn', 'líneas repetidas omitidas', { mensaje: entry.msg, omitidas: omitted });
+  // El resumen no pasa por la deduplicación: con más de DEDUPE_MAX bucles distintos cerrando en
+  // la misma ventana, los resúmenes 21+ compartían clave y se perdían (o se resumían entre sí
+  // sin decir de qué mensaje eran).
+  write(
+    'warn',
+    SUMMARY_MSG,
+    { mensaje: entry.msg, ...(entry.err ? { error: entry.err } : {}), omitidas: omitted },
+    true,
+    true,
+  );
 }
 
 /** Vuelca los resúmenes pendientes (al cerrar el proceso). */
@@ -137,12 +149,13 @@ function dedupeDecision(
 ): 'write' | 'drop' {
   if (level !== 'error' && level !== 'warn') return 'write';
   const err = fields.err as { message?: unknown } | undefined;
-  const key = `${level}|${msg}|${typeof err?.message === 'string' ? err.message.slice(0, 120) : ''}`;
+  const errMsg = typeof err?.message === 'string' ? err.message.slice(0, 120) : '';
+  const key = `${level}|${msg}|${errMsg}`;
   const entry = dedupe.get(key);
   if (!entry || nowMs - entry.start > DEDUPE_WINDOW_MS) {
     if (entry) flushEntry(entry);
     dedupe.delete(key);
-    dedupe.set(key, { start: nowMs, seen: 1, msg });
+    dedupe.set(key, { start: nowMs, seen: 1, msg, ...(errMsg ? { err: errMsg } : {}) });
     if (dedupe.size > 500) {
       const oldest = dedupe.keys().next().value as string;
       const gone = dedupe.get(oldest);
@@ -178,9 +191,10 @@ function write(
   msg: string,
   fields: Record<string, unknown>,
   toConsole = true,
+  summary = false,
 ): void {
   if (LEVEL_ORDER[level] < threshold) return;
-  if (dedupeDecision(level, msg, fields, Date.now()) === 'drop') return;
+  if (!summary && dedupeDecision(level, msg, fields, Date.now()) === 'drop') return;
   const ts = new Date().toISOString();
   let line: string;
   try {
