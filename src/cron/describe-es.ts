@@ -91,10 +91,39 @@ function intervalEs(m: string, h: string, minute: number | null): string | null 
   return `${base} de ${pad(from as number)}:${pad(minute)} a ${pad(last)}:${pad(minute)}`;
 }
 
+const DOW_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const MONTH_NAMES = [
+  'jan',
+  'feb',
+  'mar',
+  'apr',
+  'may',
+  'jun',
+  'jul',
+  'aug',
+  'sep',
+  'oct',
+  'nov',
+  'dec',
+];
+
+/**
+ * «MON-FRI», «sun», «JAN»: el planificador los acepta, pero aquí no se sabían decir y el
+ * aviso ponía el cron crudo («repite 0 9 * * MON-FRI») y la lista «con un horario propio».
+ */
+function namesToNumbers(field: string, names: readonly string[], base: number): string {
+  return field.replace(/[a-z]{3}/gi, (w) => {
+    const i = names.indexOf(w.toLowerCase());
+    return i < 0 ? w : String(i + base);
+  });
+}
+
 export function scheduleEs(schedule: string): string | null {
   const f = schedule.trim().split(/\s+/);
   if (f.length !== 5) return null;
-  const [m = '', h = '', dom = '', mon = '', dow = ''] = f;
+  const [m = '', h = '', dom = '', monRaw = '', dowRaw = ''] = f;
+  const mon = namesToNumbers(monRaw, MONTH_NAMES, 1);
+  const dow = namesToNumbers(dowRaw, DOW_NAMES, 0);
   // «0 9 * 12 1»: rutina solo en unos meses («, en diciembre»). Antes salía el cron crudo.
   if (mon !== '*' && dom === '*') {
     const months = monthsEs(mon);
