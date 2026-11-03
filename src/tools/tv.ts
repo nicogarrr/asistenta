@@ -569,8 +569,11 @@ async function searchInApp(
         recipe.kind === 'params' && recipe.video
           ? `He puesto en ${recipe.app} el vídeo del enlace (v=${recipe.video}) directamente. ` +
             'Comprueba en la captura que se está viendo ese vídeo; si no, sigue con la vía siguiente SIN PREGUNTAR.'
-          : `He abierto ${recipe.app} buscando «${query}» directamente, sin teclado. ` +
-            'Comprueba en la captura que salen resultados; si no, sigue con la vía siguiente SIN PREGUNTAR.',
+          : recipe.kind === 'contentId' && recipe.title
+            ? `He abierto en ${recipe.app} el título del enlace (${recipe.title}) directamente. ` +
+              'Comprueba en la captura que sale ese título; si no, sigue con la vía siguiente SIN PREGUNTAR.'
+            : `He abierto ${recipe.app} buscando «${query}» directamente, sin teclado. ` +
+              'Comprueba en la captura que salen resultados; si no, sigue con la vía siguiente SIN PREGUNTAR.',
     },
   ];
   if (frame) content.push({ type: 'text' as const, text: frameSummary(frame) }, frame.imageBlock);
@@ -581,6 +584,7 @@ async function searchInApp(
       appId: recipe.appId,
       recipe: recipe.kind,
       ...(recipe.kind === 'params' && recipe.video ? { video: recipe.video } : {}),
+      ...(recipe.kind === 'contentId' && recipe.title ? { title: recipe.title } : {}),
       verified: false,
       ...(frame ? { ...frame.state, blank: frame.blank } : {}),
     },

@@ -18,7 +18,7 @@
  *   "modo cine (con Netflix)"  -> scene cine
  */
 import { APP_ALIASES, APP_NAMES, normalizeTvText } from './apps.js';
-import { youtubeVideoId } from './search-recipes.js';
+import { netflixTitle, youtubeVideoId } from './search-recipes.js';
 
 export type TvIntent =
   | { action: 'power'; on: boolean }
@@ -369,6 +369,9 @@ const URL_IN_TEXT = /https?:\/\/\S+/;
 /** «pon https://youtu.be/ID [en la tele]», «reproduce este vídeo <enlace>»: el enlace es de YouTube. */
 const PLAY_YT_LINK =
   /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:video|enlace|link)|(?:en|por) (?:la tele|la tv|la television|youtube|you tube)))*$/;
+/** «pon <enlace de Netflix> en la tele», «abre en Netflix este enlace <enlace>». */
+const PLAY_NETFLIX_LINK =
+  /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:titulo|enlace|link|capitulo|serie|peli|pelicula|documental)|(?:en|por) (?:la tele|la tv|la television|netflix)))*$/;
 
 export function parseTvCommand(text: string): TvIntent | null {
   const link = URL_IN_TEXT.exec(text)?.[0];
@@ -404,11 +407,21 @@ function withLinkIntent(intent: TvIntent | null, text: string, link: string): Tv
   if (intent?.action === 'search' && intent.text === 'enlacedelvideo') {
     return { ...intent, text: link };
   }
-  if (intent || !youtubeVideoId(link)) return intent;
+  // «abre en la tele <enlace>» se leía como abrir la app «en la tele enlacedelvideo».
+  if (intent && !(intent.action === 'launch' && intent.appId.includes('enlacedelvideo'))) {
+    return intent;
+  }
   const rest = normalizeOrder(text.replace(link, ' '));
-  return PLAY_YT_LINK.test(rest)
-    ? { action: 'search', text: link, appId: 'youtube.leanback.v4' }
-    : null;
+  if (youtubeVideoId(link)) {
+    return PLAY_YT_LINK.test(rest)
+      ? { action: 'search', text: link, appId: 'youtube.leanback.v4' }
+      : null;
+  }
+  // «pon https://www.netflix.com/title/ID en la tele»: ese título en Netflix.
+  if (netflixTitle(link)) {
+    return PLAY_NETFLIX_LINK.test(rest) ? { action: 'search', text: link, appId: 'netflix' } : null;
+  }
+  return null;
 }
 
 function parseTvCommandNorm(text: string): TvIntent | null {

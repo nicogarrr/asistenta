@@ -29,7 +29,14 @@ export type TvSearchRecipe =
       /** Id del vídeo cuando lo pedido es un enlace de YouTube: se pone, no se busca. */
       video?: string;
     }
-  | { kind: 'contentId'; appId: string; app: string; contentId: string }
+  | {
+      kind: 'contentId';
+      appId: string;
+      app: string;
+      contentId: string;
+      /** Id del título cuando lo pedido es un enlace de Netflix: se abre, no se busca. */
+      title?: string;
+    }
   | { kind: 'keyboard'; appId: string; app: string; hint: string };
 
 const YOUTUBE_IDS = new Set(['youtube.leanback.v4', 'org.webosbrew.youtube.adfree']);
@@ -42,6 +49,32 @@ const YT_VIDEO_ID =
 /** Id de vídeo de YouTube en lo pedido (enlace o «v=ID»), o null si es texto. */
 export function youtubeVideoId(query: string): string | null {
   return YT_VIDEO_ID.exec(query.trim())?.[1] ?? null;
+}
+
+const NETFLIX_TITLE =
+  /^(?:https?:\/\/)?(?:www\.|m\.)?netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(title|watch)\/(\d{4,12})(?!\d)/i;
+
+/**
+ * Título de Netflix en lo pedido («https://www.netflix.com/title/80057281»,
+ * también /watch/ID y con idioma «/es/title/ID»), o null si es texto.
+ */
+export function netflixTitle(query: string): { id: string; page: 'title' | 'watch' } | null {
+  const m = NETFLIX_TITLE.exec(query.trim());
+  if (!m?.[1] || !m[2]) return null;
+  return { id: m[2], page: m[1].toLowerCase() === 'watch' ? 'watch' : 'title' };
+}
+
+/**
+ * Contenido «m=<url>&source_type=4» de Netflix (el formato DIAL que usan webOS
+ * y la Samsung): un enlace abre ESE título (su ficha, o lo reproduce si era
+ * /watch/ID); cualquier otro texto se busca.
+ */
+export function netflixContentId(query: string): string {
+  const t = netflixTitle(query);
+  const url = t
+    ? `https://www.netflix.com/${t.page}/${t.id}`
+    : `https://www.netflix.com/search?q=${encodeURIComponent(query.trim().slice(0, 200))}`;
+  return `m=${url}&source_type=4`;
 }
 
 /** ¿Es una de las apps de YouTube de la tele (oficial o AdFree)? */
@@ -68,11 +101,15 @@ export function appSearchRecipe(appId: string, query: string): TvSearchRecipe | 
     };
   }
   if (appId === 'netflix') {
+    // «pon en Netflix https://www.netflix.com/title/ID»: ese título, no una
+    // búsqueda del texto del enlace (que no encontraba nada).
+    const title = netflixTitle(q);
     return {
       kind: 'contentId',
       appId,
       app: 'Netflix',
-      contentId: `m=https://www.netflix.com/search?q=${encodeURIComponent(q)}&source_type=4`,
+      contentId: netflixContentId(q),
+      ...(title ? { title: title.id } : {}),
     };
   }
   if (appId === MOVISTAR_ID) {
