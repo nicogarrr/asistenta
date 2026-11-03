@@ -146,6 +146,10 @@ export function parseFechaCalendario(
   const tail = (m[18] ?? '').length;
   const title = original.slice(original.length - tail).trim();
   if (!title) return null;
+  // «mañana a las 21 30 cena», «a las 9 h 30»: los minutos quedaban en el título («30
+  // cena») y el aviso a las 21:00 o a las 9:00. Si tras una hora sin minutos ni parte del
+  // día el título empieza por dos cifras, se pregunta otra vez.
+  if (m[12] && !m[13] && !m[16] && !m[17] && /^[0-5]\d(?!\S)/.test(title)) return null;
   const today = wallClock(now, timeZone);
   let y = today.year;
   let mo = today.month;
