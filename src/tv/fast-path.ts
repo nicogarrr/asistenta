@@ -25,6 +25,7 @@ export const TV_CONTEXT_MS = 3 * 60_000;
 const FAST_MAX_LEN = 80;
 const MENTIONS_TV = /\b(tele|televisi[oó]n|tv)\b/i;
 const URL_IN_TEXT = /https?:\/\/\S+/g;
+const QUOTED = /[«"“][^«»"“”\r\n]{1,80}[»"”]/;
 const NAMES_SEARCH_APP = /\b(you ?tube|netflix)\b/i;
 const NAMES_PC =
   /\b(ordenador|pc|port[aá]til|escritorio|windows|m[oó]vil|iphone|chrome|navegador|correo|telegram)\b/i;
@@ -59,6 +60,13 @@ function withoutTvName(text: string, names: readonly string[]): string {
   const link = text.match(URL_IN_TEXT)?.[0];
   if (link)
     return withoutTvName(text.replace(link, ' zzenlacezz '), names).replace('zzenlacezz', link);
+  // Igual con un título entre comillas: «Mañana» sin comillas se leería como hora.
+  const quoted = QUOTED.exec(text)?.[0];
+  if (quoted)
+    return withoutTvName(text.replace(quoted, ' zztitulocomillaszz '), names).replace(
+      'zztitulocomillaszz',
+      quoted,
+    );
   let out = normalizeTvText(text);
   for (const n of names) {
     const nn = normalizeTvText(n);
