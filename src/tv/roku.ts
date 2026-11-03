@@ -51,7 +51,7 @@ export class RokuError extends Error {
 export interface RokuDeps {
   fetchImpl?: typeof fetch;
   /** Apps instaladas (guardadas por tele en el daemon); sin esto, /query/apps cada vez. */
-  installedApps?: () => Promise<TvApp[]>;
+  installedApps?: (opts?: { fresh?: boolean }) => Promise<TvApp[]>;
 }
 
 async function ecp(
@@ -165,6 +165,14 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
           () => [],
         );
         id = matchInstalledApp(appId, installed)?.id;
+        // La lista guardada (12 h) no tiene una app recién instalada: se pide otra vez, una.
+        if (!id && deps.installedApps) {
+          const fresh = await deps.installedApps({ fresh: true }).catch(() => null);
+          if (fresh) {
+            installed = fresh;
+            id = matchInstalledApp(appId, fresh)?.id;
+          }
+        }
       }
       if (!id) {
         const names = installedNames(installed);
