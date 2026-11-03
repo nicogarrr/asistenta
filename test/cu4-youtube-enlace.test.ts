@@ -129,7 +129,10 @@ describe('Roku: un enlace de YouTube abre ese vídeo', () => {
     }) as unknown as typeof fetch;
     const d = rokuDriver('192.168.1.30', { fetchImpl });
     await d.search?.(`https://youtu.be/${ID}`, 'youtube.leanback.v4');
-    expect(calls).toEqual([`http://192.168.1.30:8060/launch/837?contentId=${ID}&mediaType=movie`]);
+    expect(calls).toEqual([
+      `http://192.168.1.30:8060/launch/837?contentId=${ID}&mediaType=movie`,
+      'http://192.168.1.30:8060/query/active-app',
+    ]);
     calls.length = 0;
     await d.search?.('bailando', 'youtube.leanback.v4');
     expect(calls[0]).toContain('/search/browse?keyword=bailando');

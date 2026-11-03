@@ -8,7 +8,7 @@
 
 import type { TvApp } from './app-cache.js';
 import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
-import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
+import type { TvDriver, TvDriverKey, TvDriverMedia, TvLaunchCheck } from './drivers.js';
 import { assertTvHost } from './lgtv.js';
 import { isYoutubeApp, netflixTitle, youtubeVideoId } from './search-recipes.js';
 import { sendWakeOnLan } from './wol.js';
@@ -66,7 +66,15 @@ export interface RokuDeps {
   /** MAC guardada en `pa tv setup-roku` (de /query/device-info): encender por red. */
   mac?: string | undefined;
   wake?: (mac: string, host: string) => Promise<unknown>;
+  /** Cuánto se espera a que la app abierta salga en pantalla (/query/active-app). */
+  confirmMs?: number;
+  confirmStepMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** Lo que espera como mucho la confirmación de la app en pantalla (Netflix tarda ~1–2 s). */
+const ROKU_CONFIRM_MS = 3_000;
+const ROKU_CONFIRM_STEP_MS = 500;
 
 async function ecp(
   host: string,
@@ -145,6 +153,41 @@ function unescapeXml(s: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&amp;/g, '&');
+}
+
+/**
+ * App en pantalla: GET /query/active-app (`<app id="12" …>Netflix</app>`; en el
+ * inicio `<app>Roku</app>`, sin id). null si la respuesta no se entiende.
+ */
+export async function rokuActiveApp(
+  host: string,
+  deps: RokuDeps = {},
+): Promise<{ id: string | null; title: string } | null> {
+  const xml = await ecp(host, '/query/active-app', 'GET', deps);
+  const m = /<app\b([^>]*)>([^<]*)<\/app>/i.exec(xml);
+  if (!m) return null;
+  const id = /\bid="([^"]+)"/i.exec(m[1] ?? '')?.[1]?.trim() ?? null;
+  return { id, title: unescapeXml((m[2] ?? '').trim()) || 'Roku' };
+}
+
+/**
+ * Espera a que `id` salga en pantalla (hasta confirmMs). undefined si el Roku
+ * no lo dice (respuesta rara o error): entonces no se afirma nada.
+ */
+async function confirmForeground(
+  host: string,
+  id: string,
+  deps: RokuDeps,
+): Promise<TvLaunchCheck | undefined> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const deadline = Date.now() + (deps.confirmMs ?? ROKU_CONFIRM_MS);
+  for (;;) {
+    const active = await rokuActiveApp(host, deps).catch(() => null);
+    if (!active) return undefined;
+    if (active.id === id) return { title: active.title, foreground: true };
+    if (Date.now() >= deadline) return { foreground: false, showing: active.title };
+    await sleep(deps.confirmStepMs ?? ROKU_CONFIRM_STEP_MS);
+  }
 }
 
 /** Apps instaladas de verdad: GET /query/apps (`<app id="12" …>Netflix</app>`). */
@@ -226,6 +269,8 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
         );
       }
       await ecp(host, `/launch/${encodeURIComponent(id)}`, 'POST', deps);
+      // ¿Ha salido de verdad? (antes se decía «abriendo» sin mirar).
+      return confirmForeground(host, id, deps);
     },
     apps: () => (deps.installedApps ?? (() => rokuInstalledApps(host, deps)))(),
     search: async (query, appId) => {
@@ -240,7 +285,7 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
         const yt = ROKU_APP_IDS['youtube.leanback.v4'];
         const params = new URLSearchParams({ contentId: video, mediaType: 'movie' });
         await ecp(host, `/launch/${yt}?${params.toString()}`, 'POST', deps);
-        return;
+        return yt ? confirmForeground(host, yt, deps) : undefined;
       }
       // Un enlace de Netflix (…/title/ID): deep link ECP a ese título, no una
       // búsqueda del texto del enlace.
@@ -248,7 +293,9 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
       if (title) {
         const params = new URLSearchParams({ contentId: title.id, mediaType: 'movie' });
         await ecp(host, `/launch/${ROKU_APP_IDS.netflix}?${params.toString()}`, 'POST', deps);
-        return;
+        return ROKU_APP_IDS.netflix
+          ? confirmForeground(host, ROKU_APP_IDS.netflix, deps)
+          : undefined;
       }
       await ecp(host, rokuSearchPath(query, appId), 'POST', deps);
     },

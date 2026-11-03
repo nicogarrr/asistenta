@@ -36,12 +36,37 @@ export interface TvDriver {
   mute(on: boolean): Promise<{ toggles?: boolean } | undefined>;
   key(name: TvDriverKey): Promise<void>;
   /** appId en el idioma de las LG (APP_ALIASES: netflix, youtube.leanback.v4...). */
-  launch?(appId: string): Promise<void>;
+  launch?(appId: string): Promise<TvLaunchCheck | unknown>;
   media?(command: TvDriverMedia): Promise<void>;
   /** Apps instaladas de verdad (Roku /query/apps, Samsung ed.installedApp.get). */
   apps?(): Promise<Array<{ id: string; title: string }>>;
   /** Buscar `query` (dentro de la app `appId`, en el idioma de las LG, si se da). */
-  search?(query: string, appId?: string): Promise<void>;
+  search?(query: string, appId?: string): Promise<TvLaunchCheck | unknown>;
+}
+
+/**
+ * Lo que la tele dice tras abrir una app (Roku: /query/active-app). Sin esto
+ * (marcas que no lo leen, o la tele no lo dijo) la respuesta es la de siempre.
+ */
+export interface TvLaunchCheck {
+  /** Nombre de la app abierta, como lo dice la tele. */
+  title?: string;
+  /** true = está en pantalla; false = tras esperar, en pantalla hay otra cosa. */
+  foreground?: boolean;
+  /** Lo que hay en pantalla cuando no es la app pedida («Roku» = inicio). */
+  showing?: string;
+}
+
+/** Frase del dueño con lo comprobado en pantalla (si la tele lo dijo). */
+function checkedSaid(brand: string, said: string, what: string, check: unknown): string {
+  const c = (check && typeof check === 'object' ? check : {}) as TvLaunchCheck;
+  if (c.foreground === true)
+    return `${brand}: ${c.title ?? what} abierto; comprobado, está en pantalla.`;
+  if (c.foreground === false) {
+    const showing = c.showing ? `«${c.showing}»` : 'otra cosa';
+    return `${brand}: he pedido abrir ${c.title ?? what}, pero en pantalla sigue ${showing}; puede estar tardando o no haberse abierto.`;
+  }
+  return said;
 }
 
 /** Órdenes de «poner algo» que encienden antes una tele apagada del todo (como la LG, #1936). */
@@ -144,16 +169,24 @@ export async function runIntentOnDriver(driver: TvDriver, intent: TvIntent): Pro
       return `${driver.brand}: tecla ${intent.name} pulsada.`;
     case 'launch':
       if (!driver.launch) throw no('abrir apps');
-      await driver.launch(intent.appId);
-      return `${driver.brand}: abriendo ${intent.appId}.`;
+      return checkedSaid(
+        driver.brand,
+        `${driver.brand}: abriendo ${intent.appId}.`,
+        intent.appId,
+        await driver.launch(intent.appId),
+      );
     case 'media':
       if (!driver.media) throw no('pausar o reproducir');
       await driver.media(intent.command);
       return `${driver.brand}: ${intent.command} enviado.`;
     case 'search':
       if (!driver.search) throw no('buscar dentro de las apps');
-      await driver.search(intent.text, intent.appId);
-      return searchSaid(driver.brand, intent.text, intent.appId);
+      return checkedSaid(
+        driver.brand,
+        searchSaid(driver.brand, intent.text, intent.appId),
+        intent.appId ?? 'la app',
+        await driver.search(intent.text, intent.appId),
+      );
     case 'volumeHalf':
       throw no('bajar el volumen a la mitad (no dice el volumen que tiene)');
     case 'channel':

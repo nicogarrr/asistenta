@@ -79,6 +79,7 @@ describe('driver Roku (ECP, fetch falso)', () => {
       'POST http://192.168.1.60:8060/keypress/VolumeDown',
       'POST http://192.168.1.60:8060/keypress/VolumeDown',
       'POST http://192.168.1.60:8060/launch/12',
+      'GET http://192.168.1.60:8060/query/active-app',
       'POST http://192.168.1.60:8060/keypress/Select',
     ]);
   });

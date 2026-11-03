@@ -84,7 +84,7 @@ describe('driver Roku: encender por red', () => {
     const d = rokuDriver(HOST, { fetchImpl: r.fetchImpl, mac: 'd8:31:34:aa:bb:01', wake: r.wake });
     const said = await runIntentWaking(d, { action: 'launch', appId: 'netflix' }, noSleep);
     expect(r.wake).toHaveBeenCalledWith('d8:31:34:aa:bb:01', HOST);
-    expect(r.calls).toEqual(['POST /keypress/PowerOn', 'POST /launch/12']);
+    expect(r.calls).toEqual(['POST /keypress/PowerOn', 'POST /launch/12', 'GET /query/active-app']);
     expect(said).toMatch(/apagada del todo: la he encendido por red/);
     expect(said).toMatch(/Roku: abriendo netflix/);
   });

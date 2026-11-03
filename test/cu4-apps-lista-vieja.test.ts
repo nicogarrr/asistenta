@@ -41,7 +41,7 @@ describe('lista de apps guardada y vieja', () => {
       installedApps: (o) => cache.get('192.168.1.60', loader, o),
     });
     await runIntentOnDriver(d, intentOf('abre RTVE Play en la tele'));
-    expect(calls).toEqual(['POST /launch/593099']);
+    expect(calls).toEqual(['POST /launch/593099', 'GET /query/active-app']);
     expect(loader).toHaveBeenCalledTimes(2);
     // La siguiente vez ya sale de la lista guardada: ninguna petición de lista.
     await runIntentOnDriver(d, intentOf('abre RTVE Play en la tele'));
