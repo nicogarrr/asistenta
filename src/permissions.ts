@@ -2774,6 +2774,12 @@ const SHELL_NO_WINDOW = new RegExp(
     // Copias de sombra por CIM/WMI (vssadmin ya preguntaba), catálogos de copia de
     // seguridad, el registro de eventos (wevtutil cl ya preguntaba) y el diario USN.
     String.raw`\b(Remove-CimInstance|Remove-WmiObject|rwmi|Clear-EventLog|Remove-EventLog|Limit-EventLog)\b|\bwbadmin(\.exe)?\s+delete\b|\bfsutil(\.exe)?\b[^;|&]*\b(deletejournal|setzerodata)\b`,
+    // Quitar componentes de Windows (activarlos ya preguntaba), publicar o retirar paquetes y
+    // borrar un repositorio o una release de GitHub, abrir o quitar reglas del cortafuegos por
+    // PowerShell (netsh ya preguntaba) y quitar drivers o desactivar dispositivos.
+    String.raw`\b(Disable-WindowsOptionalFeature|Remove-WindowsCapability|Remove-WindowsPackage|Remove-WindowsDriver)\b|\bdism(\.exe)?\b[^;|&]*/(disable-feature|remove-package|remove-capability|remove-driver|resetbase)\b`,
+    String.raw`\b(npm|pnpm|yarn|bun)(\.cmd|\.exe)?\s+(publish|unpublish)\b|\bcargo\s+(publish|yank)\b|\btwine(\.exe)?\s+upload\b|\bgh(\.exe)?\s+(repo|release)\s+delete\b`,
+    String.raw`\b(Remove|New)-NetFirewallRule\b|\bpnputil(\.exe)?\b[^;|&]*/(delete-driver|remove-device|disable-device)\b|\bDisable-PnpDevice\b`,
   ].join('|'),
   'i',
 );
