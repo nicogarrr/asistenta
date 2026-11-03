@@ -2734,6 +2734,15 @@ const SHELL_NO_WINDOW = new RegExp(
     // seguido de espacio y `curl|wget … | sh/bash`.
     String.raw`\b(iex|Invoke-Expression)\b|\[scriptblock\]::Create|\.Download(String|File|Data)\s*\(`,
     String.raw`\|\s*(sh|bash|zsh|python[\d.]*|py|node|pwsh|powershell|cmd|perl|ruby|php)(\.exe)?(\s|$)`,
+    // Desinstalar también tira cosas: antes `winget uninstall`, `pip uninstall`,
+    // `Uninstall-Package`, `Remove-AppxPackage` o `wsl --unregister` (borra la distro entera)
+    // pasaban en la ventana.
+    String.raw`\b(winget|choco|scoop|pip[\d.]*|npm|pnpm|yarn|bun|cargo|gem|conda|mamba|apt|apt-get|brew)(\.cmd|\.exe)?\s+(uninstall|remove|purge)\b|\b(Uninstall-(Package|Module|Script)|Remove-AppxPackage)\b|\bwsl(\.exe)?\b[^;|&]*\s--(unregister|uninstall)\b`,
+    // Bajar defensas por PowerShell (netsh y Set-MpPreference ya preguntaban), borrar
+    // servicios, tareas programadas, usuarios, discos o volúmenes de Docker.
+    String.raw`\bSet-NetFirewallProfile\b[^;|&]*-Enabled\s+(\$?false|0)\b|\b(Disable-NetFirewallRule|Disable-ComputerRestore|Disable-BitLocker|Suspend-BitLocker)\b|\bmanage-bde(\.exe)?\s+-(off|disable)\b`,
+    String.raw`\bsc(\.exe)?\s+delete\b|\bRemove-Service\b|\bSet-Service\b[^;|&]*-StartupType\s+Disabled\b|\bschtasks(\.exe)?\b[^;|&]*/delete\b|\bUnregister-ScheduledTask\b`,
+    String.raw`\b(Remove-LocalUser|Disable-LocalUser|Clear-Disk|Remove-Partition|Initialize-Disk)\b|\bdocker\s+((system|volume|image|container|builder)\s+prune|volume\s+rm)\b`,
   ].join('|'),
   'i',
 );
