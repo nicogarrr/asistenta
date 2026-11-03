@@ -265,8 +265,13 @@ const ANTES_DEL_VERBO = '^(?:(?:ya|venga|vale|bueno|pues|ahora|no|si|puedes|podr
 
 /** La orden lleva hora, plazo o condicion: no es para ejecutarla ya. */
 export function tvOrderHasTime(text: string): boolean {
-  return DEFERRED.test(normalizeOrder(text));
+  // «pon en YouTube «Mañana» de Shakira»: entre comillas es el título, no una hora.
+  return DEFERRED.test(normalizeOrder(text.replace(QUOTED_TITLE_G, ' ')));
 }
+
+/** Un título entre comillas («…», "…", “…”) dentro de una orden. */
+const QUOTED_TITLE = /[«"“]([^«»"“”\r\n]{1,80})[»"”]/;
+const QUOTED_TITLE_G = new RegExp(QUOTED_TITLE.source, 'g');
 
 /** Teclas del mando que se piden por voz (todas están en la lista blanca de tools/tv.ts). */
 export type TvKeyName = 'BACK' | 'HOME' | 'ENTER' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'EXIT';
@@ -367,6 +372,8 @@ const PLAY_YT_LINK =
 
 export function parseTvCommand(text: string): TvIntent | null {
   const link = URL_IN_TEXT.exec(text)?.[0];
+  const quoted = link ? null : searchWithQuotedTitle(text);
+  if (quoted) return quoted;
   // Con un enlace, el resto de la orden se lee sin él: así un enlace largo
   // (…&list=…&t=90s) no pasa del tope de texto ni se lee como hora.
   const intent = link
@@ -376,6 +383,21 @@ export function parseTvCommand(text: string): TvIntent | null {
   // «pon en YouTube https://youtu.be/ID»: el enlace tal cual (el id distingue mayúsculas).
   if (link && intent.text === link) return intent;
   return { ...intent, text: searchTextAsWritten(text, intent.text) };
+}
+
+/**
+ * «pon en YouTube «Mañana» de Shakira»: el título entre comillas se lee aparte,
+ * así «Mañana», «Lunes» o «Las 10» no se toman por una hora (antes iba al
+ * modelo como orden diferida). Solo para buscar; el resto sigue igual.
+ */
+function searchWithQuotedTitle(text: string): TvIntent | null {
+  const m = QUOTED_TITLE.exec(text);
+  const title = m?.[1]?.trim();
+  if (!m || !title) return null;
+  const intent = parseTvCommandNorm(text.replace(m[0], ' zztitulozz '));
+  if (intent?.action !== 'search' || !intent.text.includes('zztitulozz')) return null;
+  const query = intent.text.replace('zztitulozz', title.toLowerCase()).replace(/\s+/g, ' ').trim();
+  return { ...intent, text: query.length > 80 ? query.slice(0, 80) : query };
 }
 
 function withLinkIntent(intent: TvIntent | null, text: string, link: string): TvIntent | null {
