@@ -14,7 +14,7 @@ import type { TvApp } from './app-cache.js';
 import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
 import { assertTvHost, TV_SESSION_IDLE_MS, tvSessionIdleMs } from './lgtv.js';
-import { youtubeVideoId } from './search-recipes.js';
+import { netflixContentId, youtubeVideoId } from './search-recipes.js';
 import { sendWakeOnLan } from './wol.js';
 
 const APP_NAME_B64 = Buffer.from('Asistenta').toString('base64');
@@ -547,13 +547,9 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
       if (!q) throw new SamsungError('¿Qué busco en la Samsung? Dime el título.');
       const app = lgAppIdFor(appId ?? '');
       if (app === 'netflix') {
-        // El mismo contenido «m=<url>&source_type=4» que la receta de la LG.
-        await samsungDialLaunch(
-          conn.host,
-          'Netflix',
-          `m=https://www.netflix.com/search?q=${encodeURIComponent(q)}&source_type=4`,
-          deps,
-        );
+        // El mismo contenido «m=<url>&source_type=4» que la receta de la LG
+        // (un enlace …/title/ID abre ese título; el resto se busca).
+        await samsungDialLaunch(conn.host, 'Netflix', netflixContentId(q), deps);
         return;
       }
       if (app === 'youtube.leanback.v4') {

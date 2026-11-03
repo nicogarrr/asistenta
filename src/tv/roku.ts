@@ -10,7 +10,7 @@ import type { TvApp } from './app-cache.js';
 import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
 import { assertTvHost } from './lgtv.js';
-import { isYoutubeApp, youtubeVideoId } from './search-recipes.js';
+import { isYoutubeApp, netflixTitle, youtubeVideoId } from './search-recipes.js';
 
 export const ROKU_PORT = 8060;
 const ROKU_TIMEOUT_MS = 4_000;
@@ -197,6 +197,14 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
         const yt = ROKU_APP_IDS['youtube.leanback.v4'];
         const params = new URLSearchParams({ contentId: video, mediaType: 'movie' });
         await ecp(host, `/launch/${yt}?${params.toString()}`, 'POST', deps);
+        return;
+      }
+      // Un enlace de Netflix (…/title/ID): deep link ECP a ese título, no una
+      // búsqueda del texto del enlace.
+      const title = appId && lgAppIdFor(appId) === 'netflix' ? netflixTitle(query) : null;
+      if (title) {
+        const params = new URLSearchParams({ contentId: title.id, mediaType: 'movie' });
+        await ecp(host, `/launch/${ROKU_APP_IDS.netflix}?${params.toString()}`, 'POST', deps);
         return;
       }
       await ecp(host, rokuSearchPath(query, appId), 'POST', deps);

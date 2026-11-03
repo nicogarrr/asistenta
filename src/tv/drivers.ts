@@ -7,6 +7,19 @@
  */
 
 import type { TvIntent } from './natural.js';
+import { netflixTitle, youtubeVideoId } from './search-recipes.js';
+
+/** Lo que se pidió, dicho para el dueño: un enlace no se lee como «buscando «https://…»». */
+function searchSaid(brand: string, text: string, appId?: string): string {
+  const app = (appId ?? '').toLowerCase();
+  if (app.includes('netflix') && netflixTitle(text)) {
+    return `${brand}: abriendo en Netflix el título del enlace.`;
+  }
+  if (app.includes('youtube') && youtubeVideoId(text)) {
+    return `${brand}: poniendo en YouTube el vídeo del enlace.`;
+  }
+  return `${brand}: buscando «${text}».`;
+}
 
 export type TvDriverKey = 'BACK' | 'HOME' | 'ENTER' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'EXIT';
 export type TvDriverMedia = 'play' | 'pause' | 'stop' | 'rewind' | 'fastForward';
@@ -140,7 +153,7 @@ export async function runIntentOnDriver(driver: TvDriver, intent: TvIntent): Pro
     case 'search':
       if (!driver.search) throw no('buscar dentro de las apps');
       await driver.search(intent.text, intent.appId);
-      return `${driver.brand}: buscando «${intent.text}».`;
+      return searchSaid(driver.brand, intent.text, intent.appId);
     case 'volumeHalf':
       throw no('bajar el volumen a la mitad (no dice el volumen que tiene)');
     case 'channel':
