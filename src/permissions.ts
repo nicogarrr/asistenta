@@ -2716,6 +2716,11 @@ const SHELL_NO_WINDOW = new RegExp(
     String.raw`\b(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|wget|curl(\.exe)?|Start-BitsTransfer|bitsadmin)\b[^;|&]*\s(-OutFile|-o|-O|--output|/transfer)(\s|$)`,
     String.raw`\b(Start-Process|saps|Invoke-Item)\b|(^|[\s;&|(])(start|ii)\s`,
     String.raw`\.(ps1|bat|vbs|hta|scr)\b`,
+    // Bajar y ejecutar SIN archivo: `irm … | iex`, `iex(irm …)`, la «cuna» de WebClient,
+    // un scriptblock creado de texto o `curl … | python`. DESTRUCTIVE solo veía `iex `
+    // seguido de espacio y `curl|wget … | sh/bash`.
+    String.raw`\b(iex|Invoke-Expression)\b|\[scriptblock\]::Create|\.Download(String|File|Data)\s*\(`,
+    String.raw`\|\s*(sh|bash|zsh|python[\d.]*|py|node|pwsh|powershell|cmd|perl|ruby|php)(\.exe)?(\s|$)`,
   ].join('|'),
   'i',
 );
