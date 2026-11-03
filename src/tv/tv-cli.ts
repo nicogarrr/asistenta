@@ -700,6 +700,8 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
             ...((prev?.name ?? info.name) ? { name: prev?.name ?? info.name ?? '' } : {}),
             ...(info.model ? { model: info.model } : {}),
             ...(info.serial ? { uuid: `roku-${info.serial.toLowerCase()}` } : {}),
+            // Para encenderlo por red cuando está apagado del todo.
+            ...((info.mac ?? prev?.mac) ? { mac: info.mac ?? prev?.mac ?? '' } : {}),
             pairedAt: new Date().toISOString(),
           }),
         ),
@@ -709,7 +711,7 @@ export async function tvCommand(args: string[], deps: TvCliDeps = {}): Promise<n
       if (becameActive) await vaultSetMany({ [TV_HOST_KEY]: host, [TV_ACTIVE_BRAND]: 'roku' });
       const label = tvLabel({ host, brand: 'roku', name: prev?.name ?? info.name });
       out(
-        `Guardado ${label}${info.isTv ? '' : ' (es un reproductor, no una tele: el volumen depende de la tele o la barra)'}. ` +
+        `Guardado ${label}${info.isTv ? '' : ' (es un reproductor, no una tele: el volumen depende de la tele o la barra)'}${info.mac || prev?.mac ? '' : ' (sin MAC: no podré encenderlo por red)'}. ` +
           (becameActive
             ? 'Es la tele activa.\n'
             : `Nómbralo en las órdenes («apaga la tele del ${prev?.name ?? info.name ?? 'roku'}») o hazlo el activo con: pa tv usar ${host}\n`),

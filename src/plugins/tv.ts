@@ -248,6 +248,8 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
           ? rokuDriver(other.host, {
               installedApps: (o) =>
                 appCache.get(other.host, () => rokuInstalledApps(other.host), o),
+              // Apagado del todo: «abre Netflix» lo enciende por red antes (como la Samsung).
+              mac: other.mac,
             })
           : samsungDriver(
               { host: other.host, token: other.clientKey, secure: other.secure === '1' },

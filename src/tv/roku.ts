@@ -11,6 +11,7 @@ import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js'
 import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
 import { assertTvHost } from './lgtv.js';
 import { isYoutubeApp, netflixTitle, youtubeVideoId } from './search-recipes.js';
+import { sendWakeOnLan } from './wol.js';
 
 export const ROKU_PORT = 8060;
 const ROKU_TIMEOUT_MS = 4_000;
@@ -48,10 +49,23 @@ export class RokuError extends Error {
   override name = 'RokuError';
 }
 
+/**
+ * No se llegó al Roku (no contestó por la red): apagado del todo o fuera de la
+ * wifi. Con su MAC se puede encender por red y repetir la orden (como la
+ * Samsung desde #1943). Solo lo repiten «abre/pon…», que no hacen daño dos veces.
+ */
+export class RokuUnreachableError extends RokuError {
+  override name = 'RokuUnreachableError';
+  readonly unreachable = true;
+}
+
 export interface RokuDeps {
   fetchImpl?: typeof fetch;
   /** Apps instaladas (guardadas por tele en el daemon); sin esto, /query/apps cada vez. */
   installedApps?: (opts?: { fresh?: boolean }) => Promise<TvApp[]>;
+  /** MAC guardada en `pa tv setup-roku` (de /query/device-info): encender por red. */
+  mac?: string | undefined;
+  wake?: (mac: string, host: string) => Promise<unknown>;
 }
 
 async function ecp(
@@ -70,7 +84,7 @@ async function ecp(
       signal: AbortSignal.timeout(ROKU_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new RokuError(
+    throw new RokuUnreachableError(
       `No llego al Roku (${ip}:${ROKU_PORT}): ¿está encendido y en la misma wifi? (${err instanceof Error ? err.message : String(err)})`,
     );
   }
@@ -92,7 +106,17 @@ export interface RokuInfo {
   name?: string;
   model?: string;
   serial?: string;
+  /** MAC de la red por la que está conectado (wifi o cable), para encenderlo por red. */
+  mac?: string;
   isTv: boolean;
+}
+
+/** MAC válida en minúsculas (aa:bb:…), o undefined. */
+function cleanMac(raw: string | undefined): string | undefined {
+  const mac = raw?.trim().toLowerCase().replace(/-/g, ':');
+  if (!mac || !/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return undefined;
+  if (mac === '00:00:00:00:00:00' || mac === 'ff:ff:ff:ff:ff:ff') return undefined;
+  return mac;
 }
 
 /** Lee /query/device-info (para `pa tv setup-roku`): nombre, modelo, serie. */
@@ -101,10 +125,15 @@ export async function rokuDeviceInfo(host: string, deps: RokuDeps = {}): Promise
   const name = tag(xml, 'user-device-name') ?? tag(xml, 'friendly-device-name');
   const model = tag(xml, 'model-name');
   const serial = tag(xml, 'serial-number');
+  // La MAC de la red por la que contesta ahora: el paquete mágico va a esa tarjeta.
+  const wifi = cleanMac(tag(xml, 'wifi-mac'));
+  const eth = cleanMac(tag(xml, 'ethernet-mac'));
+  const mac = tag(xml, 'network-type') === 'ethernet' ? (eth ?? wifi) : (wifi ?? eth);
   return {
     ...(name ? { name } : {}),
     ...(model ? { model } : {}),
     ...(serial ? { serial } : {}),
+    ...(mac ? { mac } : {}),
     isTv: tag(xml, 'is-tv') === 'true',
   };
 }
@@ -147,7 +176,21 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
   const press = (key: string) => ecp(host, `/keypress/${key}`, 'POST', deps).then(() => undefined);
   return {
     brand: 'Roku',
-    power: (on) => press(on ? 'PowerOn' : 'PowerOff'),
+    power: async (on) => {
+      if (!on || !deps.mac) return press(on ? 'PowerOn' : 'PowerOff');
+      // Apagado del todo (sin «Inicio rápido de la TV») el ECP no contesta: el
+      // paquete mágico primero; si ya estaba en reposo, PowerOn lo enciende.
+      await (deps.wake ?? ((mac: string, ip: string) => sendWakeOnLan(mac, { host: ip })))(
+        deps.mac,
+        host,
+      );
+      try {
+        await press('PowerOn');
+      } catch (err) {
+        // Sigue arrancando: el paquete ya salió; quien repite la orden espera.
+        if (!(err instanceof RokuUnreachableError)) throw err;
+      }
+    },
     volumeStep: async (steps) => {
       for (let i = 0; i < Math.abs(steps); i++) await press(steps > 0 ? 'VolumeUp' : 'VolumeDown');
     },
