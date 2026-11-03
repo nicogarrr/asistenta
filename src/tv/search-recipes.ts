@@ -43,6 +43,14 @@ const YOUTUBE_IDS = new Set(['youtube.leanback.v4', 'org.webosbrew.youtube.adfre
 const YT_TV = 'https://www.youtube.com/tv';
 const MOVISTAR_ID = 'com.telefonica.app.nux';
 
+/**
+ * Un enlace dentro de una orden: con http(s), o sin él si es de YouTube o
+ * Netflix («pon en YouTube youtu.be/ID», como sale al copiarlo en el móvil).
+ * Sin la puntuación de detrás («…/ID.», «…/ID, porfa»).
+ */
+export const TV_LINK_SOURCE =
+  '(?:https?:\\/\\/|(?<![\\w.@/])(?:www\\.|m\\.|music\\.)?(?:youtu\\.be|youtube\\.com|netflix\\.com)\\/)[^\\s«»"“”]+?(?=[.,;:!?)»”"\']*(?:\\s|$))';
+
 const YT_VIDEO_ID =
   /(?:youtu\.be\/|[?&]v=|^v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/;
 

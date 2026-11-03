@@ -18,13 +18,14 @@
  */
 import { APP_ALIASES, normalizeTvText } from './apps.js';
 import { parseTvCommand, searchTextAsWritten, type TvIntent, tvOrderHasTime } from './natural.js';
+import { TV_LINK_SOURCE } from './search-recipes.js';
 import { extractTvTarget, withoutTvPlace } from './target.js';
 
 /** Ventana tras una orden de tele en la que lo siguiente se entiende como de la tele. */
 export const TV_CONTEXT_MS = 3 * 60_000;
 const FAST_MAX_LEN = 80;
 const MENTIONS_TV = /\b(tele|televisi[oó]n|tv)\b/i;
-const URL_IN_TEXT = /https?:\/\/\S+/g;
+const URL_IN_TEXT = new RegExp(TV_LINK_SOURCE, 'gi');
 const QUOTED = /[«"“][^«»"“”\r\n]{1,80}[»"”]/;
 const NAMES_SEARCH_APP = /\b(you ?tube|netflix)\b/i;
 const NAMES_PC =
