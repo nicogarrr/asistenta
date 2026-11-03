@@ -573,6 +573,51 @@ async function confirmSamsungApp(
   }
 }
 
+/** Nombre de cada app conocida (SAMSUNG_APP_IDS) por si la tele no lo dice. */
+const SAMSUNG_APP_NAMES: Record<string, string> = {
+  netflix: 'Netflix',
+  'youtube.leanback.v4': 'YouTube',
+  amazon: 'Prime Video',
+  'com.disney.disneyplus-prod': 'Disney+',
+  'spotify-beehive': 'Spotify',
+  'com.apple.appletv': 'Apple TV',
+};
+
+/**
+ * «¿Qué está viendo?» en una Samsung: GET :8001/api/v2/ (`PowerState`: reposo)
+ * y, a la vez, el estado de cada app conocida (`visible`). Antes la respuesta
+ * era «la Samsung no deja leer qué está viendo». Solo consultas: no la enciende.
+ */
+export async function samsungStatus(host: string, deps: SamsungDeps = {}): Promise<string> {
+  const ip = assertTvHost(host);
+  let body: unknown;
+  try {
+    const res = await (deps.fetchImpl ?? fetch)(`http://${ip}:8001/api/v2/`, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(INFO_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    body = await res.json();
+  } catch {
+    return 'Samsung: no contesta por la red; parece apagada del todo (o fuera de la wifi).';
+  }
+  const device = (body as { device?: { PowerState?: unknown } } | null)?.device;
+  if (String(device?.PowerState ?? '').toLowerCase() === 'standby') {
+    return 'Samsung: está en reposo (pantalla apagada).';
+  }
+  const known = Object.entries(SAMSUNG_APP_IDS);
+  const states = await Promise.all(known.map(([, id]) => samsungAppStatus(ip, id, deps)));
+  const i = states.findIndex((st) => st?.visible === true);
+  if (i >= 0) {
+    const [key = ''] = known[i] ?? [];
+    return `Samsung: en pantalla está ${states[i]?.name ?? SAMSUNG_APP_NAMES[key] ?? 'una app'}.`;
+  }
+  if (states.every((st) => st === null)) {
+    return 'Samsung: está encendida, pero no dice qué tiene en pantalla.';
+  }
+  return 'Samsung: está encendida; en pantalla no está Netflix, YouTube, Prime Video, Disney+, Spotify ni Apple TV (será la tele, un HDMI u otra app).';
+}
+
 /** GET http://IP:8001/api/v2/ (para `pa tv setup-samsung`). */
 export async function samsungDeviceInfo(
   host: string,
@@ -648,6 +693,7 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
   };
   return {
     brand: 'Samsung',
+    status: () => samsungStatus(conn.host, deps),
     power: async (on) => {
       if (on) {
         // Apagada no hay WebSocket: se enciende por red con su MAC.
