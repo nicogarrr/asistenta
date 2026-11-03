@@ -79,9 +79,23 @@ export function forgetRequest(text: string): ForgetRequest | null {
   if (/^(?:olvida|borra)\s+eso$|^olv[ií]dalo$|^b[oó]rralo$|^no lo recuerdes$/i.test(t)) {
     return { kind: 'last' };
   }
+  // «olvida lo de…», y también «olvida lo que te dije del dentista».
   const m =
-    /^(?:olvida|borra|olvídate de|olvidate de)\s+lo\s+(?:de|del)\s+(?:que\s+)?(.{2,60})$/i.exec(t);
+    /^(?:olvida|borra|olvídate de|olvidate de)\s+lo\s+(?:que\s+te\s+(?:dije|conté|conte)\s+(?:de|del|sobre)|de|del)\s+(?:que\s+)?(.{2,60})$/i.exec(
+      t,
+    );
   if (m?.[1]) return { kind: 'match', query: m[1].replace(/^(?:la|el|los|las|mi|mis)\s+/i, '') };
+  // «olvida que mi dentista es el Dr. García», «borra que vivo en Getafe»: lo que sigue es un
+  // dato de los que se apuntan. Antes no se reconocía y lo llevaba el modelo, que no borra del
+  // perfil. De «mi(s) X es/vive…» se olvida todo lo de «mi X» (el valor puede haber cambiado).
+  const said = /^(?:olvida|borra|olvídate de|olvidate de)\s+que\s+(.{2,140})$/i.exec(t)?.[1];
+  if (said && statedFact(said)) {
+    const subject =
+      /^(mis?\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,3}?)\s+(?:es|son|se llama|se llaman|vive|viven|está|están|trabaja)\s/iu.exec(
+        said,
+      )?.[1];
+    return { kind: 'match', query: subject ?? said };
+  }
   return null;
 }
 
