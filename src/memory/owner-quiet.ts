@@ -107,7 +107,12 @@ export function ownerStatedQuiet(
   for (const entry of entries) {
     const e = entry.trim();
     if (!e.startsWith(SAID_PREFIX)) continue;
-    const t = foldAccents(e.slice(SAID_PREFIX.length).toLowerCase());
+    // «después de medianoche», «entre la medianoche y las 7»: son las 12 de la noche. Antes no
+    // se leían y seguían las horas de serie aunque se contestara «📝 Apuntado».
+    const t = foldAccents(e.slice(SAID_PREFIX.length).toLowerCase()).replace(
+      /\b(?:la |las )?medianoche\b/g,
+      'las 12 de la noche',
+    );
     const range = RANGE.exec(t);
     const hours = range ? rangeHours(range) : null;
     if (hours) {
