@@ -62,14 +62,22 @@ export function youtubeVideoId(query: string): string | null {
 const NETFLIX_TITLE =
   /^(?:https?:\/\/)?(?:www\.|m\.)?netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(title|watch)\/(\d{4,12})(?!\d)/i;
 
+const NETFLIX_JBV =
+  /^(?:https?:\/\/)?(?:www\.|m\.)?netflix\.com\/[^\s?#]*\?(?:[^\s#]*&)?jbv=(\d{4,12})(?!\d)/i;
+
 /**
  * Título de Netflix en lo pedido («https://www.netflix.com/title/80057281»,
- * también /watch/ID y con idioma «/es/title/ID»), o null si es texto.
+ * también /watch/ID, con idioma «/es/title/ID» y la ficha del navegador
+ * «/browse?jbv=ID»), o null si es texto.
  */
 export function netflixTitle(query: string): { id: string; page: 'title' | 'watch' } | null {
-  const m = NETFLIX_TITLE.exec(query.trim());
-  if (!m?.[1] || !m[2]) return null;
-  return { id: m[2], page: m[1].toLowerCase() === 'watch' ? 'watch' : 'title' };
+  const q = query.trim();
+  const m = NETFLIX_TITLE.exec(q);
+  if (m?.[1] && m[2]) return { id: m[2], page: m[1].toLowerCase() === 'watch' ? 'watch' : 'title' };
+  // La ficha abierta desde el inicio o el buscador del navegador: la barra dice
+  // «netflix.com/browse?jbv=ID» (o /search?q=…&jbv=ID), no /title/ID.
+  const jbv = NETFLIX_JBV.exec(q)?.[1];
+  return jbv ? { id: jbv, page: 'title' } : null;
 }
 
 /**
