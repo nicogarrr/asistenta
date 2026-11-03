@@ -2768,6 +2768,12 @@ const SHELL_NO_WINDOW = new RegExp(
     // Lanzar procesos o borrar por WMI (`wmic process call create`, `wmic shadowcopy delete`,
     // Invoke-WmiMethod/Invoke-CimMethod): Start-Process ya preguntaba, esto no.
     String.raw`\bwmic(\.exe)?\b[^;|&]*\b(call\s+create|delete)\b|\b(Invoke-WmiMethod|Invoke-CimMethod)\b`,
+    // Borrar ramas remotas o tags, un worktree con cambios o lo inalcanzable: antes
+    // `git push origin --delete x`, `git push origin :x` o `git gc --prune=now` pasaban.
+    String.raw`\bgit\s+push\b[^;|&]*(\s--delete\b|\s-d\b|\s:[^\s:]+)|\bgit\s+(worktree\s+remove\b[^;|&]*\s(-f|--force)\b|gc\b[^;|&]*\s--prune(=|\s+)(now|all)\b|tag\s+(-d|--delete)\b)`,
+    // Copias de sombra por CIM/WMI (vssadmin ya preguntaba), catálogos de copia de
+    // seguridad, el registro de eventos (wevtutil cl ya preguntaba) y el diario USN.
+    String.raw`\b(Remove-CimInstance|Remove-WmiObject|rwmi|Clear-EventLog|Remove-EventLog|Limit-EventLog)\b|\bwbadmin(\.exe)?\s+delete\b|\bfsutil(\.exe)?\b[^;|&]*\b(deletejournal|setzerodata)\b`,
   ].join('|'),
   'i',
 );
