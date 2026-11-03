@@ -47,7 +47,12 @@ export function statedFact(text: string): string | null {
   const timeless = one.replace(/(\d(?:\s+y\s+(?:media|cuarto))?)\s+de la ma(?:ñ|n)ana\b/gi, '$1');
   if (/[?¿]/.test(one) || /^si\s/i.test(one) || TEMPORARY.test(timeless)) return null;
   // Otra frase detrás («…, ayúdame con…», «…. Mira esto») es otro pedido.
-  if (/,|;|:|[.!]\s+\p{L}/u.test(one.replace(/\b(?:dr|dra|sr|sra|d|dña)\.\s/giu, ''))) return null;
+  // «antes de las 8:30» es una hora, no otra frase: antes los dos puntos la descartaban y
+  // esas horas de silencio no se apuntaban nunca.
+  const plain = one
+    .replace(/\b(?:dr|dra|sr|sra|d|dña)\.\s/giu, '')
+    .replace(/(\d):(?=\d{2}\b)/g, '$1h');
+  if (/,|;|:|[.!]\s+\p{L}/u.test(plain)) return null;
   if (!STATED.some((re) => re.test(one))) return null;
   return one.charAt(0).toUpperCase() + one.slice(1);
 }

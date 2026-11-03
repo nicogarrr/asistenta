@@ -10,16 +10,38 @@ import { SAID_PREFIX } from './owner-facts.js';
 
 const DONT =
   'no me (?:escribas|(?:mandes|envies)(?: nada| mensajes)?|hables|avises|despiertes|molestes)';
-const HOUR = String.raw`(?:la|las) (\d{1,2})(?:(?::|\.)(\d{2})| y (?:media|cuarto))?`;
+/** «las 9», «las nueve», «las 9:30», «las 9 y media». «La una» no: es la hora de comer. */
+const HOUR = String.raw`(?:la|las) (\d{1,2}|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:(?::|\.)(\d{2})| y (media|cuarto))?`;
 const PART = '(?: de la (manana|tarde|noche|madrugada))?';
-const BEFORE = new RegExp(`${DONT} antes de ${HOUR}${PART}`);
-const AFTER = new RegExp(`${DONT} (?:despues de|a partir de|mas tarde de) ${HOUR}${PART}`);
+/**
+ * Las dos horas en la misma frase: «no me escribas antes de las 9 ni después de las 11»,
+ * «ni antes de las 9 ni después de las 23», «después de las 11 y antes de las 9». Antes
+ * solo se leía la hora pegada a «no me escribas» y la otra se perdía en silencio.
+ */
+const JOIN = String.raw`(?:[^.;!?]*?(?:,|\by|\bni|\bo)\s)?`;
+const BEFORE = new RegExp(`${DONT}(?: ni)? ${JOIN}(?:antes de|hasta) ${HOUR}${PART}`);
+const AFTER = new RegExp(
+  `${DONT}(?: ni)? ${JOIN}(?:despues de|a partir de|mas tarde de|desde) ${HOUR}${PART}`,
+);
+const WORD_HOUR: Record<string, number> = {
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+};
 
 /** Silencio de más horas que esto no es una preferencia de horario: se ignora. */
 export const MAX_QUIET_SPAN_HOURS = 16;
 
 function hour24(raw: string, part: string | undefined, kind: 'before' | 'after'): number | null {
-  let h = Number(raw);
+  let h = /^\d+$/.test(raw) ? Number(raw) : (WORD_HOUR[raw] ?? Number.NaN);
   if (!Number.isInteger(h) || h < 0 || h > 24) return null;
   if (h === 24) h = 0;
   // «las 12 de la noche» es la medianoche, y «después de las 12» habla de la noche: antes
@@ -57,10 +79,9 @@ export function ownerStatedQuiet(
     const t = foldAccents(e.slice(SAID_PREFIX.length).toLowerCase());
     const before = BEFORE.exec(t);
     if (before) {
-      const h = hour24(before[1] ?? '', before[3], 'before');
+      const h = hour24(before[1] ?? '', before[4], 'before');
       // «antes de las 9 y media»: hasta la hora siguiente, mejor de más que de menos.
-      const extra =
-        before[2] && before[2] !== '00' ? 1 : /y (?:media|cuarto)/.test(before[0]) ? 1 : 0;
+      const extra = (before[2] && before[2] !== '00') || before[3] ? 1 : 0;
       if (h !== null) {
         endHour = (h + extra) % 24;
         stated = true;
@@ -68,7 +89,7 @@ export function ownerStatedQuiet(
     }
     const after = AFTER.exec(t);
     if (after) {
-      const h = hour24(after[1] ?? '', after[3], 'after');
+      const h = hour24(after[1] ?? '', after[4], 'after');
       if (h !== null) {
         startHour = h;
         stated = true;
