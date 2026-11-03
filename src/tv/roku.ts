@@ -190,6 +190,57 @@ async function confirmForeground(
   }
 }
 
+/** Estados de /query/media-player que se dicen al dueño (el resto, nada). */
+const ROKU_PLAYER_STATES: Record<string, string> = {
+  play: 'reproduciendo',
+  pause: 'en pausa',
+  buffer: 'cargando',
+};
+/** power-mode de /query/device-info con la pantalla apagada (Roku TV en reposo). */
+const ROKU_STANDBY = new Set(['displayoff', 'ready', 'suspend']);
+
+/** «123456 ms» → «2:03» (o «1:02:03»); undefined si no es un número. */
+function rokuClock(raw: string | undefined): string | undefined {
+  const ms = Number(/^(\d{1,10})\s*ms$/i.exec(raw?.trim() ?? '')?.[1]);
+  if (!Number.isFinite(ms) || ms <= 0) return undefined;
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+/**
+ * «¿Qué está viendo la tele?» en un Roku: /query/device-info (reposo),
+ * /query/active-app (qué app) y /query/media-player (si reproduce y por dónde).
+ * Antes la respuesta era «el Roku no deja leer qué está viendo», y sí deja.
+ */
+export async function rokuStatus(host: string, deps: RokuDeps = {}): Promise<string> {
+  const info = await ecp(host, '/query/device-info', 'GET', deps).catch((err: unknown) => {
+    if (err instanceof RokuUnreachableError) throw err;
+    return '';
+  });
+  if (ROKU_STANDBY.has((tag(info, 'power-mode') ?? '').toLowerCase())) {
+    return 'Roku: está en reposo (pantalla apagada).';
+  }
+  const xml = await ecp(host, '/query/active-app', 'GET', deps);
+  const m = /<app\b([^>]*)>([^<]*)<\/app>/i.exec(xml);
+  if (!m) throw new RokuError('El Roku no dice qué hay en pantalla.');
+  const id = /\bid="([^"]+)"/i.exec(m[1] ?? '')?.[1]?.trim();
+  const title = unescapeXml((m[2] ?? '').trim()) || 'Roku';
+  const saver = /<screensaver\b/i.test(xml) ? ', con el salvapantallas puesto' : '';
+  if (!id) return `Roku: está en el inicio, sin ninguna app abierta${saver}.`;
+  const player = await ecp(host, '/query/media-player', 'GET', deps).catch(() => '');
+  const state =
+    ROKU_PLAYER_STATES[(/<player\b[^>]*\bstate="([^"]+)"/i.exec(player)?.[1] ?? '').toLowerCase()];
+  const pos = rokuClock(tag(player, 'position'));
+  const dur = rokuClock(tag(player, 'duration'));
+  const detail = state
+    ? ` (${state}${pos && dur && state !== 'cargando' ? `, ${pos} de ${dur}` : ''})`
+    : '';
+  return `Roku: en pantalla está ${title}${detail}${saver}.`;
+}
+
 /** Apps instaladas de verdad: GET /query/apps (`<app id="12" …>Netflix</app>`). */
 export async function rokuInstalledApps(host: string, deps: RokuDeps = {}): Promise<TvApp[]> {
   const xml = await ecp(host, '/query/apps', 'GET', deps);
@@ -219,6 +270,7 @@ export function rokuDriver(host: string, deps: RokuDeps = {}): TvDriver {
   const press = (key: string) => ecp(host, `/keypress/${key}`, 'POST', deps).then(() => undefined);
   return {
     brand: 'Roku',
+    status: () => rokuStatus(host, deps),
     power: async (on) => {
       if (!on || !deps.mac) return press(on ? 'PowerOn' : 'PowerOff');
       // Apagado del todo (sin «Inicio rápido de la TV») el ECP no contesta: el
