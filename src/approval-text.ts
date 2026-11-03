@@ -97,7 +97,7 @@ export function formatApproval(
   if (call.tool === 'cuentas' && call.args.action === 'codigo_registro') {
     const sitio =
       exactSite ||
-      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+      (typeof call.args.sitio === 'string' ? sliceSafe(call.args.sitio.trim(), 120) : '');
     if (!sitio || hasInvisible(sitio)) return deniedInvisible('cuentas');
     const question = `Voy a mirar en tu correo el código que te ha mandado ${sitio} para terminar el alta. ¿Sigo?`;
     return withinBudget(question, question, 'cuentas');
@@ -105,7 +105,7 @@ export function formatApproval(
   if (call.tool === 'cuentas' && call.args.action === 'descartar') {
     const sitio =
       exactSite ||
-      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+      (typeof call.args.sitio === 'string' ? sliceSafe(call.args.sitio.trim(), 120) : '');
     if (!sitio || hasInvisible(sitio)) return deniedInvisible('cuentas');
     const question = `Voy a descartar el alta a medias en ${sitio} y borrar la contraseña que guardé para ella. ¿Sigo?`;
     return withinBudget(question, question, 'cuentas');
@@ -113,9 +113,9 @@ export function formatApproval(
   if (call.tool === 'cuentas' && call.args.action === 'confirmar_registro') {
     const sitio =
       exactSite ||
-      (typeof call.args.sitio === 'string' ? call.args.sitio.trim().slice(0, 120) : '');
+      (typeof call.args.sitio === 'string' ? sliceSafe(call.args.sitio.trim(), 120) : '');
     const correo =
-      typeof call.args.correo === 'string' ? call.args.correo.trim().slice(0, 200) : '';
+      typeof call.args.correo === 'string' ? sliceSafe(call.args.correo.trim(), 200) : '';
     if (!sitio || !correo || hasInvisible(sitio + correo)) return deniedInvisible('cuentas');
     const at = correo.indexOf('@');
     const shown = at > 0 ? `${correo.charAt(0)}…${correo.slice(at)}` : correo;
@@ -256,9 +256,11 @@ export function formatApproval(
             .filter(Boolean)
             .join('\n');
     const PREVIEW = 1200;
+    // Sin partir un emoji: medio par sustituto en la pregunta la deja como JSON mal formado
+    // para Telegram y el aviso de aprobación podía no llegar (una nota con emojis es lo normal).
     const preview =
       body.length > PREVIEW
-        ? `${body.slice(0, PREVIEW)}\n… (${body.length} caracteres en total)`
+        ? `${sliceSafe(body, PREVIEW)}\n… (${body.length} caracteres en total)`
         : body;
     const question = [
       `¿Permito ${call.tool === 'edit' ? 'editar' : 'escribir'}?`,
