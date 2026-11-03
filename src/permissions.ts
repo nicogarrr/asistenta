@@ -2780,6 +2780,13 @@ const SHELL_NO_WINDOW = new RegExp(
     String.raw`\b(Disable-WindowsOptionalFeature|Remove-WindowsCapability|Remove-WindowsPackage|Remove-WindowsDriver)\b|\bdism(\.exe)?\b[^;|&]*/(disable-feature|remove-package|remove-capability|remove-driver|resetbase)\b`,
     String.raw`\b(npm|pnpm|yarn|bun)(\.cmd|\.exe)?\s+(publish|unpublish)\b|\bcargo\s+(publish|yank)\b|\btwine(\.exe)?\s+upload\b|\bgh(\.exe)?\s+(repo|release)\s+delete\b`,
     String.raw`\b(Remove|New)-NetFirewallRule\b|\bpnputil(\.exe)?\b[^;|&]*/(delete-driver|remove-device|disable-device)\b|\bDisable-PnpDevice\b`,
+    // Crear usuarios, cambiarles la contraseña o hacerlos administradores (borrarlos ya
+    // preguntaba), abrir el PC a control remoto, compartir carpetas con todos o SMB1, y
+    // meter o sacar el PC de un dominio o renombrarlo.
+    String.raw`\b(New-LocalUser|Set-LocalUser|Enable-LocalUser|Rename-LocalUser|Add-LocalGroupMember|Remove-LocalGroupMember)\b|\bnet(\.exe)?\s+user\s+[^\s/;|&]+\s+[^\s/;|&]`,
+    String.raw`\b(Enable-PSRemoting|Enable-WSManCredSSP)\b|\bwinrm(\.cmd)?\s+(quickconfig|qc|set)\b|\bTrustedHosts\b[^;|&]*\s-Value\b|\bSet-Item\b[^;|&]*TrustedHosts\b`,
+    String.raw`\b(New-SmbShare|Grant-SmbShareAccess|Set-SmbServerConfiguration|Set-SmbShare)\b|\bnet(\.exe)?\s+share\s+[^\s;|&]+=`,
+    String.raw`\b(Add-Computer|Remove-Computer|Rename-Computer|Reset-ComputerMachinePassword)\b`,
   ].join('|'),
   'i',
 );
