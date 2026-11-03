@@ -368,10 +368,10 @@ export function searchTextAsWritten(original: string, query: string): string {
 const URL_IN_TEXT = new RegExp(TV_LINK_SOURCE, 'i');
 /** «pon https://youtu.be/ID [en la tele]», «reproduce este vídeo <enlace>»: el enlace es de YouTube. */
 const PLAY_YT_LINK =
-  /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:video|enlace|link)|(?:en|por) (?:la tele|la tv|la television|youtube|you tube)))*$/;
+  /^(?:pon|ponme|ponlo|ponla|ponmelo|ponmela|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:video|enlace|link)|(?:en|por) (?:la tele|la tv|la television|youtube|you tube)))*$/;
 /** «pon <enlace de Netflix> en la tele», «abre en Netflix este enlace <enlace>». */
 const PLAY_NETFLIX_LINK =
-  /^(?:pon|ponme|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:titulo|enlace|link|capitulo|serie|peli|pelicula|documental)|(?:en|por) (?:la tele|la tv|la television|netflix)))*$/;
+  /^(?:pon|ponme|ponlo|ponla|ponmelo|ponmela|reproduce|reproduceme|abre|ensena|ensename)(?: (?:(?:este|el|ese) (?:titulo|enlace|link|capitulo|serie|peli|pelicula|documental)|(?:en|por) (?:la tele|la tv|la television|netflix)))*$/;
 
 export function parseTvCommand(raw: string): TvIntent | null {
   const found = URL_IN_TEXT.exec(raw);
@@ -419,14 +419,18 @@ function withLinkIntent(intent: TvIntent | null, text: string, link: string): Tv
     return intent;
   }
   const rest = normalizeOrder(text.replace(link, ' '));
+  // «youtu.be/ID en la tele» (el enlace pegado y nada más que la tele): poner, sin verbo.
+  const onlyTv = /^en (?:la |el )?(?:tele|tv|television|televisor)$/.test(rest);
   if (youtubeVideoId(link)) {
-    return PLAY_YT_LINK.test(rest)
+    return onlyTv || PLAY_YT_LINK.test(rest)
       ? { action: 'search', text: link, appId: 'youtube.leanback.v4' }
       : null;
   }
   // «pon https://www.netflix.com/title/ID en la tele»: ese título en Netflix.
   if (netflixTitle(link)) {
-    return PLAY_NETFLIX_LINK.test(rest) ? { action: 'search', text: link, appId: 'netflix' } : null;
+    return onlyTv || PLAY_NETFLIX_LINK.test(rest)
+      ? { action: 'search', text: link, appId: 'netflix' }
+      : null;
   }
   return null;
 }

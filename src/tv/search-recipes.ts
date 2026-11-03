@@ -51,8 +51,10 @@ const MOVISTAR_ID = 'com.telefonica.app.nux';
 export const TV_LINK_SOURCE =
   '(?:https?:\\/\\/|(?<![\\w.@/])(?:www\\.|m\\.|music\\.)?(?:youtu\\.be|youtube\\.com|netflix\\.com)\\/)[^\\s«»"“”]+?(?=[.,;:!?)»”"\']*(?:\\s|$))';
 
+// Con /i: «Youtu.be/ID» (el móvil pone mayúscula al principio) o «YouTu.be/ID»; el id
+// no cambia porque su clase de caracteres ya tiene mayúsculas y minúsculas.
 const YT_VIDEO_ID =
-  /(?:youtu\.be\/|[?&]v=|^v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/;
+  /(?:youtu\.be\/|[?&]v=|^v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/i;
 
 /** Id de vídeo de YouTube en lo pedido (enlace o «v=ID»), o null si es texto. */
 export function youtubeVideoId(query: string): string | null {
