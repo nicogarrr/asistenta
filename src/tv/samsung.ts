@@ -57,6 +57,15 @@ export class SamsungError extends Error {
   override name = 'SamsungError';
 }
 
+/**
+ * No se llegó a conectar con la Samsung (no salió ninguna orden): apagada del
+ * todo o fuera de la red. Es seguro encenderla por red y repetir.
+ */
+export class SamsungUnreachableError extends SamsungError {
+  override name = 'SamsungUnreachableError';
+  readonly unreachable = true;
+}
+
 /** Socket minimo (inyectable en tests). */
 export interface SamsungSocket {
   on(event: 'open', cb: () => void): void;
@@ -159,7 +168,7 @@ async function openSamsung(
       timeoutMs,
     );
     ws.on('error', (err) =>
-      finish(new SamsungError(`No llego a la Samsung (${conn.host}): ${err.message}`)),
+      finish(new SamsungUnreachableError(`No llego a la Samsung (${conn.host}): ${err.message}`)),
     );
     ws.on('close', () =>
       finish(
@@ -356,7 +365,7 @@ export async function samsungDialLaunch(
       signal: AbortSignal.timeout(DIAL_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new SamsungError(
+    throw new SamsungUnreachableError(
       `No llego a la Samsung por DIAL (${ip}:${SAMSUNG_DIAL_PORT}): ¿está encendida? (${err instanceof Error ? err.message : String(err)})`,
     );
   }
@@ -496,7 +505,11 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
       let id = SAMSUNG_APP_IDS[lgAppIdFor(appId)];
       let installed: TvApp[] = [];
       if (!id) {
-        installed = await listApps().catch(() => []);
+        // Apagada: «No sé abrir RTVE Play» sería falso; que se vea que no llega.
+        installed = await listApps().catch((err: unknown) => {
+          if (err instanceof SamsungUnreachableError) throw err;
+          return [];
+        });
         id = matchInstalledApp(appId, installed)?.id;
       }
       if (!id) {

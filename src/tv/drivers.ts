@@ -31,6 +31,68 @@ export interface TvDriver {
   search?(query: string, appId?: string): Promise<void>;
 }
 
+/** Órdenes de «poner algo» que encienden antes una tele apagada del todo (como la LG, #1936). */
+const WAKES_FOR = new Set<TvIntent['action']>(['launch', 'search']);
+/** Lo que tarda como mucho una tele en aceptar órdenes tras encenderla por red. */
+export const DRIVER_BOOT_MS = 20_000;
+const DRIVER_RETRY_MS = 2_000;
+
+/** El driver no llegó a conectar (no salió ninguna orden): seguro encender y repetir. */
+function isDriverUnreachable(err: unknown): boolean {
+  return err instanceof Error && (err as Error & { unreachable?: unknown }).unreachable === true;
+}
+
+export interface WakeOptions {
+  bootMs?: number;
+  retryMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/**
+ * Como runIntentOnDriver, pero «pon en YouTube X» o «abre Netflix» con la tele
+ * apagada del todo la encienden por red y repiten la orden hasta que la tele
+ * contesta (como la LG desde #1936). Antes la Samsung contestaba «No llego a
+ * la Samsung» y había que pedir «enciende la tele» y repetir la orden.
+ * Solo si no salió nada (no conectó): una orden que llegó nunca se repite.
+ */
+export async function runIntentWaking(
+  driver: TvDriver,
+  intent: TvIntent,
+  opts: WakeOptions = {},
+): Promise<string> {
+  try {
+    return await runIntentOnDriver(driver, intent);
+  } catch (err) {
+    if (!WAKES_FOR.has(intent.action) || !isDriverUnreachable(err)) throw err;
+    try {
+      await driver.power(true);
+    } catch {
+      // Sin MAC o sin Wake-on-LAN: el error de siempre («no llego»).
+      throw err;
+    }
+    const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    const now = opts.now ?? Date.now;
+    const deadline = now() + (opts.bootMs ?? DRIVER_BOOT_MS);
+    for (;;) {
+      await sleep(opts.retryMs ?? DRIVER_RETRY_MS);
+      try {
+        const said = await runIntentOnDriver(driver, intent);
+        return `La ${driver.brand} estaba apagada del todo: la he encendido por red (Wake-on-LAN) antes. ${said}`;
+      } catch (again) {
+        if (!isDriverUnreachable(again) || now() >= deadline) {
+          if (isDriverUnreachable(again)) {
+            throw new Error(
+              `He encendido la ${driver.brand} por red, pero no contesta tras ${Math.round((opts.bootMs ?? DRIVER_BOOT_MS) / 1000)} s; no he podido ${intent.action === 'search' ? 'buscar' : 'abrir la app'}. Repítelo en un momento.`,
+            );
+          }
+          throw again;
+        }
+      }
+    }
+  }
+}
+
 /** Tope de pasos seguidos: «sube 50» no son 50 pulsaciones a ciegas. */
 export const MAX_DRIVER_STEPS = 20;
 
