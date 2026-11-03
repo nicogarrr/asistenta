@@ -16,9 +16,12 @@ vi.mock('../src/voice/decode.js', () => ({
   }),
 }));
 
-vi.mock('@huggingface/transformers', () => ({
+// El mock de '@huggingface/transformers' se INYECTA con setImportTransformersForTests:
+// vi.mock sobre el import() dinámico de loadWhisperPipeline se saltaba el mock de forma
+// intermitente y el test descargaba el whisper de verdad (y transcribía el tono: «¡Biii!»).
+const fakeTransformers = {
   LogLevel: { ERROR: 40 },
-  env: {},
+  env: {} as { cacheDir?: string; logLevel?: number },
   pipeline: async (_task: string, model: string) => {
     st.loads.push(model);
     if (st.holdLoad) await st.holdLoad;
@@ -45,12 +48,13 @@ vi.mock('@huggingface/transformers', () => ({
       },
     });
   },
-}));
+};
 
 import {
   resetSttStateForTests,
   SMALL_STT_MODEL,
   STT_DOWNLOAD_NOTICE,
+  setImportTransformersForTests,
   sttModelFromEnv,
   TURBO_STT_MODEL,
   transcribeVoiceNote,
@@ -63,6 +67,7 @@ const big = { env: {}, totalMem: 16 * GB };
 
 beforeEach(() => {
   resetSttStateForTests();
+  setImportTransformersForTests(async () => fakeTransformers as never);
   st.loads.length = 0;
   st.loaded.length = 0;
   st.failLoad.clear();

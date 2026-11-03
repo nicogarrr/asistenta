@@ -221,6 +221,25 @@ export type AsrPipeline = ((
 
 const inflight = new Map<string, Promise<AsrPipeline>>();
 
+type TransformersModule = typeof import('@huggingface/transformers');
+
+/**
+ * El import real de transformers.js, indirección para los tests: `vi.mock`
+ * sobre un `import()` dinámico se salta el mock de forma intermitente (una de
+ * cada varias ejecuciones cargaba el whisper de verdad, descarga de 100 MB y
+ * todo, y el test fracasaba con la alucinación del modelo sobre el tono de
+ * prueba). Con el cargador inyectado el test es determinista.
+ */
+let importTransformers: () => Promise<TransformersModule> = () =>
+  import('@huggingface/transformers');
+
+/** Solo para tests: sustituye el import dinámico de transformers (null lo devuelve al real). */
+export function setImportTransformersForTests(
+  loader: (() => Promise<TransformersModule>) | null,
+): void {
+  importTransformers = loader ?? (() => import('@huggingface/transformers'));
+}
+
 /**
  * The pipeline, memoised process-wide (one per checkpoint).
  *
@@ -235,7 +254,7 @@ export function loadWhisperPipeline(model: string): Promise<AsrPipeline> {
   const memo = inflight.get(model);
   if (memo) return memo;
   const loading = (async () => {
-    const { LogLevel, env, pipeline } = await import('@huggingface/transformers');
+    const { LogLevel, env, pipeline } = await importTransformers();
     // Not the library default (`node_modules/@Users/.../.cache` under the repo):
     // a wiped state dir must not leave a whisper model behind, and a model
     // downloaded into the repo would be committed with it.
