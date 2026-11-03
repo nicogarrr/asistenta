@@ -157,6 +157,14 @@ const MONTH_NAMES = [
 /** Una hora dicha: «9», «8:30», «ocho y media», «9 menos cuarto», «7 de la tarde». */
 const CLOCK = `(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(${MINUTES_AFTER})|\\s+menos\\s+(${MINUTES_BEFORE}))?(?:\\s+en punto)?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`;
 
+/**
+ * «a las 7:5», «a las 21 30», «a las 9 h 30»: tras una hora sin minutos ni parte del día
+ * vienen cifras que CLOCK no lee. Antes sonaba a la hora en punto sin avisar; se pregunta.
+ * «a las 8 de la mañana 2 pastillas» (con parte del día) sigue igual.
+ */
+const minutesUnread = (m: RegExpExecArray, after: string): boolean =>
+  !m[2] && !m[3] && !m[4] && !m[6] && /^(?:[:.]\d|\s*\d)/.test(after);
+
 /** Hora y minuto de una coincidencia de CLOCK, en 24 h; null si no es una hora real. */
 function clockOf(m: RegExpExecArray): { hour: number; minute: number } | null {
   const said = m[1] ?? '0';
@@ -191,7 +199,8 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     .replace(/\s+/g, ' ')
     .trim()
     // «a las 8 pm», «8:30 p.m.», «12 am»: antes se ignoraba y «8 pm» sonaba a las 8:00.
-    .replace(/\b(\d{1,2})(?:[:.](\d{2}))?\s?([ap])\.?\s?m\b\.?/g, (_m, h, min, ap) => {
+    // «8:5 pm»: sin el (?<![:.]) el «5 pm» se volvía «17» y la rutina sonaba a las 8:17.
+    .replace(/(?<![:.\d])\b(\d{1,2})(?:[:.](\d{2}))?\s?([ap])\.?\s?m\b\.?/g, (_m, h, min, ap) => {
       let hour = Number(h);
       if (ap === 'p' && hour >= 1 && hour < 12) hour += 12;
       if (ap === 'a' && hour === 12) hour = 0;
@@ -220,6 +229,8 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   if (timeMatch) {
     const first = clockOf(timeMatch);
     if (!first) return null;
+    if (minutesUnread(timeMatch, normalised.slice(timeMatch.index + timeMatch[0].length)))
+      return null;
     hour = first.hour;
     minute = first.minute;
     hasTime = true;
@@ -231,6 +242,7 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       const clock = clockOf(m);
       // Un cron solo pone varias horas con el mismo minuto; si no, se pregunta.
       if (!clock || clock.minute !== minute) return false;
+      if (minutesUnread(m, rest.slice(m[0].length))) return false;
       extraHours.push(clock.hour);
       rest = rest.slice(m[0].length);
       return true;
@@ -262,6 +274,8 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     )) {
       const clock = clockOf(later as RegExpExecArray);
       if (!clock || clock.minute !== minute) return null;
+      const end = (later.index ?? 0) + later[0].length;
+      if (minutesUnread(later as RegExpExecArray, rest.slice(end))) return null;
       extraHours.push(clock.hour);
     }
     // «los lunes a las 9 y los jueves a las 5»: otro día con su propia hora. Un cron no
