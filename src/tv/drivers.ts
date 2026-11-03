@@ -38,6 +38,8 @@ export interface TvDriver {
   /** appId en el idioma de las LG (APP_ALIASES: netflix, youtube.leanback.v4...). */
   launch?(appId: string): Promise<TvLaunchCheck | unknown>;
   media?(command: TvDriverMedia): Promise<void>;
+  /** «¿Qué está viendo?»: la frase para el dueño (Roku: app en pantalla y si reproduce). */
+  status?(): Promise<string>;
   /** Apps instaladas de verdad (Roku /query/apps, Samsung ed.installedApp.get). */
   apps?(): Promise<Array<{ id: string; title: string }>>;
   /** Buscar `query` (dentro de la app `appId`, en el idioma de las LG, si se da). */
@@ -194,7 +196,8 @@ export async function runIntentOnDriver(driver: TvDriver, intent: TvIntent): Pro
     case 'input':
       throw no('cambiar de entrada');
     case 'status':
-      throw no('leer qué está viendo');
+      if (!driver.status) throw no('leer qué está viendo');
+      return driver.status();
     default:
       throw no(`hacer «${intent.action}»`);
   }
