@@ -266,6 +266,8 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
             );
       return {
         text: found.text,
+        // Sus apps de verdad (guardadas por tele): «qué apps tiene la del dormitorio».
+        ...(driver.apps ? { apps: () => driver.apps?.() ?? Promise.resolve([]) } : {}),
         label: tvTargetLabel(other),
         run: direct,
         // Apagada del todo: «abre Netflix» la enciende por red antes (como la LG).

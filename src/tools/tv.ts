@@ -55,6 +55,8 @@ export interface TvOrderRoute {
   run: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Tele de otra marca (Roku...): ejecuta la orden entendida con su driver y da la frase. */
   intentRunner?: (intent: TvIntent) => Promise<string>;
+  /** Tele de otra marca: sus apps instaladas de verdad (Roku /query/apps, Samsung). */
+  apps?: () => Promise<Array<{ id: string; title: string }>>;
 }
 
 export interface TvToolDeps {
@@ -234,7 +236,7 @@ const Params = lazySchema(() =>
     text: Type.Optional(
       Type.String({
         description:
-          'Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo"). Para type: el texto a escribir de una vez en el campo enfocado de la tele (buscadores, máx 200): mucho más rápido que teclear letra a letra con key.',
+          'Para apps con varias teles: la tele cuya lista quieres ("la del dormitorio"). Para command: la orden tal cual en castellano ("apaga la tele", "abre Netflix", "volumen a 20", "canal 5", "sube el volumen", "silencio", "pausa", "pon el HDMI 2", "que esta viendo"). Para type: el texto a escribir de una vez en el campo enfocado de la tele (buscadores, máx 200): mucho más rápido que teclear letra a letra con key.',
       }),
     ),
     pictureMode: Type.Optional(
@@ -745,11 +747,29 @@ async function runTvAction(
       };
     }
     case 'apps': {
-      const list = await deps.apps();
+      // Con varias teles: «qué apps tiene la del dormitorio» (text) o una
+      // Roku/Samsung activa leen SU lista; antes siempre se preguntaba a la LG.
+      const route = deps.routeOrder ? await deps.routeOrder((args.text ?? '').trim()) : undefined;
+      if (route?.ask) {
+        return { content: [{ type: 'text' as const, text: route.ask }], details: { asked: true } };
+      }
+      if (route?.intentRunner && !route.apps) {
+        throw new Error('Esa tele no deja leer su lista de apps desde Asistenta.');
+      }
+      const routeApps = route?.apps;
+      const list = routeApps
+        ? await routeApps()
+        : route
+          ? await route.run(() => deps.apps())
+          : await deps.apps();
+      const label = route?.label ? ` (tele: ${route.label})` : '';
       const text = list.length
-        ? list.map((a) => `${a.id}\t${a.title}`).join('\n')
-        : 'La tele no devuelve apps instaladas.';
-      return { content: [{ type: 'text' as const, text }], details: { count: list.length } };
+        ? `${label ? `Apps${label}:\n` : ''}${list.map((a) => `${a.id}\t${a.title}`).join('\n')}`
+        : `La tele${label} no devuelve apps instaladas.`;
+      return {
+        content: [{ type: 'text' as const, text }],
+        details: { count: list.length, ...(route?.label ? { tv: route.label } : {}) },
+      };
     }
     case 'launch': {
       const asked = (args.appId ?? '').trim();
