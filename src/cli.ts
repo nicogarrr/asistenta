@@ -7260,19 +7260,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               (id) => telegram.downloadFile(id),
               (b, mimeType) => transcribeVoiceNote(b, { mimeType }),
             );
-            for (const r of rest) {
-              if (!r.heard) continue;
-              try {
+            keepAlbumTranscripts(rest, {
+              recall: (messageId, said) => recall.setTranscript(chatKey(inbound), messageId, said),
+              index: (id, said) =>
                 docMemory.indexTranscript(
                   memoryScopesFor(thread.key).write,
-                  r.audio.fileId,
-                  r.heard.text,
+                  id,
+                  said,
                   inbound.text,
-                );
-              } catch (err) {
-                log.warn('transcript index failed', { err });
-              }
-            }
+                ),
+              warn: (err) => log.warn('transcript index failed', { err }),
+            });
             heard = albumHeard(heard, rest);
           }
           // Marked as a transcription so the model does not treat a misheard word as
@@ -9231,6 +9229,32 @@ export async function transcribeAlbumAudios(
     }
   }
   return out;
+}
+
+/**
+ * Lo oído de cada audio de un álbum queda con el suyo: en la lista de audios recientes
+ * (para «suéltame el que hablaba de…») y en la memoria, por su message_id. Antes solo el
+ * primero quedaba con su texto y el resto se indexaba con el file_id de Telegram. Un
+ * fallo al indexar uno no tumba los demás.
+ */
+export function keepAlbumTranscripts(
+  rest: readonly AlbumAudioHeard[],
+  deps: {
+    recall: (messageId: string, text: string) => void;
+    index: (id: string, text: string) => void;
+    warn: (err: unknown) => void;
+  },
+): void {
+  for (const r of rest) {
+    if (!r.heard) continue;
+    const id = r.audio.messageId ?? r.audio.fileId;
+    if (r.audio.messageId) deps.recall(r.audio.messageId, r.heard.text);
+    try {
+      deps.index(id, r.heard.text);
+    } catch (err) {
+      deps.warn(err);
+    }
+  }
 }
 
 /** Junta lo oído del primer audio y del resto del álbum, numerado («(2/3) …»). */
