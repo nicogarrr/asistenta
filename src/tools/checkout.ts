@@ -11,6 +11,7 @@ import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log, redact } from '../log.js';
 import type { PurchaseStage, ToolCall } from '../permissions.js';
 import { fold, isPaymentText, pageSaysMoney } from '../permissions.js';
+import { sliceSafe } from '../text.js';
 import { buildFillScript } from './browser.js';
 
 /**
@@ -331,6 +332,17 @@ function q(value: string): string {
 }
 
 /**
+ * La página corta los nombres a 160/240/400 unidades sin mirar: un emoji en el corte deja
+ * medio emoji (un sustituto suelto), y ese texto mal formado llega al modelo. Se quita.
+ */
+function wellFormed(text: string): string {
+  return text.replace(
+    /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
+    '',
+  );
+}
+
+/**
  * The real page: Playwright through the daemon's browser, so it is the same profile, the
  * same session and the same domain approvals as the `browser` tool. No second browser.
  *
@@ -369,7 +381,7 @@ const name = await loc
         '',
     ).trim().slice(0, 160))
   .catch(() => '');
-return name;`);
+return name;`).then(wellFormed);
     },
 
     async inspect(selector: string) {
@@ -419,10 +431,10 @@ return JSON.stringify({ ...info, where: here });`);
       try {
         const parsed = JSON.parse(raw) as ElementInfo;
         return {
-          label: String(parsed.label ?? ''),
+          label: wellFormed(String(parsed.label ?? '')),
           button: Boolean(parsed.button),
-          formSubmit: String(parsed.formSubmit ?? ''),
-          where: String(parsed.where ?? ''),
+          formSubmit: wellFormed(String(parsed.formSubmit ?? '')),
+          where: wellFormed(String(parsed.where ?? '')),
         };
       } catch {
         return { label: '', button: false, formSubmit: '', where: '' };
@@ -643,7 +655,7 @@ export function createCheckoutTool(
     const words = enter ? `${info.label} ${info.formSubmit}` : info.label;
     if (looksLikePaymentSubmission(words)) {
       throw new Error(
-        `no pulso "${(enter ? words : info.label).trim().slice(0, 80)}": eso cobra el dinero y el pago lo hace la persona, no yo. ` +
+        `no pulso "${sliceSafe((enter ? words : info.label).trim(), 80)}": eso cobra el dinero y el pago lo hace la persona, no yo. ` +
           'Dile al usuario que está todo listo y que pulse él.',
       );
     }
