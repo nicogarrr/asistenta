@@ -2702,6 +2702,12 @@ const SHELL_NO_WINDOW = new RegExp(
     String.raw`(^|[\s;&|(])(ri|rd|erase|del|rm)\s`,
     String.raw`\b(Clear-Content|Remove-ItemProperty|Clear-RecycleBin|Format-Volume|Stop-Computer|Restart-Computer|shutdown(\.exe)?)\b`,
     String.raw`\b(rmtree|os\.remove|os\.unlink|unlinkSync|rmSync|rimraf)\b`,
+    // Perder trabajo o bajar defensas sin borrar «un archivo»: git que tira cambios, espejo
+    // que borra el destino, copias de sombra, registros, arranque, antivirus, cortafuegos,
+    // cuentas, borrado seguro y la red.
+    String.raw`\bgit\s+(clean\s+-\w*f|reset\s+--hard|push\s+[^;|&]*(--force\b|-f\b|\+\S)|checkout\s+(-f\b|--\s))`,
+    String.raw`\brobocopy\b[^;|&]*\s/(mir|purge)\b|\bvssadmin\s+(delete|resize)\b|\bwevtutil(\.exe)?\s+(cl|clear-log)\b|\bbcdedit\b`,
+    String.raw`\b(Set|Add)-MpPreference\b|\bnetsh\s+(advfirewall|firewall)\b|\bnet\s+(user|localgroup)\b[^;|&]*\s/(add|delete)\b|\bcipher(\.exe)?\s+/w\b|\b(Disable|Remove)-NetAdapter\b`,
     // Código en línea o en otro intérprete: lo que corre no se ve en el comando.
     String.raw`\b(python\d?|py|node|pwsh|powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?\s+[^;|&]*?(^|\s)(-c|-e|-p|--eval|--print|-Command|-EncodedCommand|-enc|-File|/c|/k)(\s|$)`,
     String.raw`-ExecutionPolicy\s+(Bypass|Unrestricted)`,
