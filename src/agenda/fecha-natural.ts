@@ -78,30 +78,43 @@ const PALABRAS: Readonly<Record<string, number>> = {
  * lo demás no se entendía. Solo la primera hora del texto (la del aviso, no el título).
  */
 function horaHablada(text: string): string {
-  return text
-    .replace(/\ba\s+mediodia\b/, 'a las 12:00')
-    .replace(
-      /\ba\s+las?\s+(una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b/,
-      // «a la una» es la hora de comer (13:00) salvo «de la madrugada/mañana/noche».
-      (_w, word: string, at: number, all: string) =>
-        word === 'una' &&
-        !/^(?:\s+(?:y\s+media|y\s+cuarto|menos\s+cuarto))?\s+de\s+la\s+(?:madrugada|manana|noche)\b/.test(
-          all.slice(at + _w.length),
-        )
-          ? 'a las 13'
-          : `a las ${PALABRAS[word]}`,
-    )
-    .replace(
-      /\ba\s+las?\s+(\d{1,2})\s+(y\s+media|y\s+cuarto|menos\s+cuarto)\b/,
-      (whole, h: string, how: string) => {
-        const hour = Number(h);
-        if (how.startsWith('y') && hour <= 23) {
-          return `a las ${hour}:${how.endsWith('media') ? '30' : '15'}`;
-        }
-        if (how.startsWith('menos') && hour >= 1 && hour <= 24) return `a las ${hour - 1}:45`;
-        return whole;
-      },
-    );
+  return (
+    text
+      // «a las doce del mediodía» y «al mediodía»: antes el primero dejaba «del mediodía» en el
+      // título y el segundo no se entendía. Solo si no se dijo ya otra hora antes (entonces
+      // «mediodía» es parte del título).
+      .replace(/\ba\s+las\s+(?:12|doce)\s+del\s+mediodia\b/, 'a las 12:00')
+      .replace(/\bal?\s+mediodia\b/, (w: string, at: number, all: string) =>
+        /\ba\s+las?\s+\S/.test(all.slice(0, at)) ? w : 'a las 12:00',
+      )
+      // «a las 9 en punto bus»: antes «en punto bus» era el título.
+      .replace(
+        /(\ba\s+las?\s+(?:\d{1,2}(?::\d{2})?|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce))\s+en\s+punto\b/,
+        '$1',
+      )
+      .replace(
+        /\ba\s+las?\s+(una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b/,
+        // «a la una» es la hora de comer (13:00) salvo «de la madrugada/mañana/noche».
+        (_w, word: string, at: number, all: string) =>
+          word === 'una' &&
+          !/^(?:\s+(?:y\s+media|y\s+cuarto|menos\s+cuarto))?\s+de\s+la\s+(?:madrugada|manana|noche)\b/.test(
+            all.slice(at + _w.length),
+          )
+            ? 'a las 13'
+            : `a las ${PALABRAS[word]}`,
+      )
+      .replace(
+        /\ba\s+las?\s+(\d{1,2})\s+(y\s+media|y\s+cuarto|menos\s+cuarto)\b/,
+        (whole, h: string, how: string) => {
+          const hour = Number(h);
+          if (how.startsWith('y') && hour <= 23) {
+            return `a las ${hour}:${how.endsWith('media') ? '30' : '15'}`;
+          }
+          if (how.startsWith('menos') && hour >= 1 && hour <= 24) return `a las ${hour - 1}:45`;
+          return whole;
+        },
+      )
+  );
 }
 
 const LEAD = String.raw`^(\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?)`;
