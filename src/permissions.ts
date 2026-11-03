@@ -2714,6 +2714,13 @@ const SHELL_NO_WINDOW = new RegExp(
     // Instalar o ejecutar paquetes sin «install».
     String.raw`\b(npx|bunx)\b|\b(pnpm|yarn)\s+dlx\b|-m\s+pip\s+install\b|\b(choco|scoop)\s+install\b`,
     String.raw`\b(Install-Module|Install-Package|Install-Script|Add-AppxPackage|msiexec)\b|\bwinget\s+upgrade\b`,
+    // Más instaladores y ejecutores de paquetes en cualquier punto del comando (SHELL_INSTALL
+    // solo los ve al principio o tras ; & |): uv/uvx, pipx, pip3.11, yarn global, npm exec,
+    // go/gem/conda/apt/brew install, dotnet tool, y activar componentes de Windows.
+    String.raw`\b(uvx|pipx)\b|\buv\s+(tool|pip|add)\b|\bpip[\d.]*(\.exe)?\s+install\b`,
+    String.raw`\b(npm|pnpm|yarn|bun)(\.cmd|\.exe)?\s+(install|i|ci|add|exec|x|global|create)\b`,
+    String.raw`\b(cargo|go|gem|conda|mamba|apt|apt-get|brew)\s+install\b|\bdotnet\s+tool\s+install\b`,
+    String.raw`\b(Add-WindowsCapability|Enable-WindowsOptionalFeature)\b|\bdism(\.exe)?\b[^;|&]*/enable-feature\b`,
     // Persistencia: tareas programadas, registro, servicios, perfil, inicio.
     String.raw`\bschtasks(\.exe)?\b[^;|&]*/create\b|\bRegister-ScheduledTask\b`,
     String.raw`\breg(\.exe)?\s+(add|import|load|copy|restore)\b|\b(Set-ItemProperty|New-Service)\b|\bsc(\.exe)?\s+(create|config)\b`,
