@@ -87,6 +87,12 @@ function horaHablada(text: string): string {
       .replace(/\bal?\s+mediodia\b/, (w: string, at: number, all: string) =>
         /\ba\s+las?\s+\S/.test(all.slice(0, at)) ? w : 'a las 12:00',
       )
+      // «mañana por la tarde a las 5 café»: la parte del día delante de la hora pasa detrás
+      // («a las 5 de la tarde»). Antes no se entendía. «A la una» no (decisión pendiente).
+      .replace(
+        /\bpor\s+la\s+(manana|tarde|noche)\s*,?\s+(a\s+las\s+(?:(?:1\d|2[0-3]|[2-9])(?:[:.]\d{2})?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:\s+y\s+media|\s+y\s+cuarto|\s+menos\s+cuarto)?)\b(?!\s+de\s+la\b|[:.]\d)/,
+        '$2 de la $1',
+      )
       // «a las 9 en punto bus»: antes «en punto bus» era el título.
       .replace(
         /(\ba\s+las?\s+(?:\d{1,2}(?::\d{2})?|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce))\s+en\s+punto\b/,
