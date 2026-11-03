@@ -12,7 +12,7 @@
 import WebSocket from 'ws';
 import type { TvApp } from './app-cache.js';
 import { installedNames, lgAppIdFor, matchInstalledApp } from './driver-apps.js';
-import type { TvDriver, TvDriverKey, TvDriverMedia } from './drivers.js';
+import type { TvDriver, TvDriverKey, TvDriverMedia, TvLaunchCheck } from './drivers.js';
 import { assertTvHost, TV_SESSION_IDLE_MS, tvSessionIdleMs } from './lgtv.js';
 import { netflixContentId, youtubeVideoId } from './search-recipes.js';
 import { sendWakeOnLan } from './wol.js';
@@ -110,6 +110,14 @@ export interface SamsungDeps {
   installedApps?: (opts?: { fresh?: boolean }) => Promise<TvApp[]>;
   /** Espera máxima del acuse de «ed.apps.launch» (tests). */
   launchAckMs?: number;
+  /**
+   * Tras abrir una app, lo que se espera como mucho a que la tele diga que está
+   * en pantalla (GET :8001/api/v2/applications/<id> → `visible`). Sin esto (o 0)
+   * no se pregunta: el daemon pasa SAMSUNG_CONFIRM_MS.
+   */
+  confirmMs?: number;
+  confirmStepMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export function samsungUrl(conn: SamsungConn): string {
@@ -513,6 +521,58 @@ export interface SamsungInfo {
   tokenAuth: boolean;
 }
 
+/** Lo que espera como mucho la confirmación de la app en pantalla (Netflix tarda ~1–2 s). */
+export const SAMSUNG_CONFIRM_MS = 3_000;
+const SAMSUNG_CONFIRM_STEP_MS = 500;
+const APP_STATUS_TIMEOUT_MS = 1_500;
+
+/**
+ * Estado de una app: GET http://IP:8001/api/v2/applications/<id> →
+ * `{"id":…,"name":"Netflix","running":true,"visible":true}`. null si la tele no
+ * lo dice (error, 404, o una respuesta sin `visible`).
+ */
+export async function samsungAppStatus(
+  host: string,
+  appId: string,
+  deps: SamsungDeps = {},
+): Promise<{ visible: boolean; name?: string } | null> {
+  const ip = assertTvHost(host);
+  try {
+    const res = await (deps.fetchImpl ?? fetch)(
+      `http://${ip}:8001/api/v2/applications/${encodeURIComponent(appId)}`,
+      { signal: AbortSignal.timeout(APP_STATUS_TIMEOUT_MS) },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { visible?: unknown; name?: unknown };
+    if (typeof body?.visible !== 'boolean') return null;
+    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    return name ? { visible: body.visible, name } : { visible: body.visible };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Espera a que la app `appId` salga en pantalla (hasta confirmMs). undefined si
+ * no se pregunta o la tele no lo dice: entonces no se afirma nada.
+ */
+async function confirmSamsungApp(
+  host: string,
+  appId: string,
+  deps: SamsungDeps,
+): Promise<TvLaunchCheck | undefined> {
+  if (!deps.confirmMs || deps.confirmMs <= 0) return undefined;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = Date.now() + deps.confirmMs;
+  for (;;) {
+    const st = await samsungAppStatus(host, appId, deps);
+    if (!st) return undefined;
+    if (st.visible) return st.name ? { title: st.name, foreground: true } : { foreground: true };
+    if (Date.now() >= deadline) return { foreground: false };
+    await sleep(deps.confirmStepMs ?? SAMSUNG_CONFIRM_STEP_MS);
+  }
+}
+
 /** GET http://IP:8001/api/v2/ (para `pa tv setup-samsung`). */
 export async function samsungDeviceInfo(
   host: string,
@@ -643,7 +703,7 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
             : `No sé abrir «${appId}» en la Samsung; prueba con Netflix, YouTube, Prime Video, Disney+, Spotify o Apple TV.`,
         );
       }
-      if ((await launchId(id)) !== 'missing') return;
+      if ((await launchId(id)) !== 'missing') return confirmSamsungApp(conn.host, id, deps);
       // La tele dice que ese id no está (app desinstalada, o el id de la tienda
       // es otro en este modelo): lista fresca y, si la app sigue con otro id, ese.
       const fresh = await (deps.installedApps
@@ -651,7 +711,8 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
         : samsungInstalledApps(conn, deps)
       ).catch(() => null);
       const other = fresh ? matchInstalledApp(appId, fresh)?.id : undefined;
-      if (other && other !== id && (await launchId(other)) !== 'missing') return;
+      if (other && other !== id && (await launchId(other)) !== 'missing')
+        return confirmSamsungApp(conn.host, other, deps);
       const names = fresh ? installedNames(fresh) : '';
       throw new SamsungError(
         `«${appId}» ya no está en la Samsung (¿la desinstalaste?).${names ? ` Tiene: ${names}.` : ''}`,
@@ -666,13 +727,13 @@ export function samsungDriver(conn: SamsungConn, deps: SamsungDeps = {}): TvDriv
         // El mismo contenido «m=<url>&source_type=4» que la receta de la LG
         // (un enlace …/title/ID abre ese título; el resto se busca).
         await samsungDialLaunch(conn.host, 'Netflix', netflixContentId(q), deps);
-        return;
+        return confirmSamsungApp(conn.host, SAMSUNG_APP_IDS.netflix ?? '', deps);
       }
       if (app === 'youtube.leanback.v4') {
         const id = youtubeVideoId(query);
         if (id) {
           await samsungDialLaunch(conn.host, 'YouTube', `v=${id}`, deps);
-          return;
+          return confirmSamsungApp(conn.host, SAMSUNG_APP_IDS['youtube.leanback.v4'] ?? '', deps);
         }
         throw new SamsungError(
           'La Samsung no deja buscar texto dentro de YouTube desde fuera: pásame el enlace del vídeo y lo pongo, o dime «abre YouTube» y lo buscas con el mando.',

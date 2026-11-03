@@ -29,7 +29,12 @@ import {
 import { tvPower } from '../tv/power.js';
 import type { KnownTv } from '../tv/registry.js';
 import { rokuDriver, rokuInstalledApps } from '../tv/roku.js';
-import { samsungDriver, samsungInstalledApps, sharedSamsungPool } from '../tv/samsung.js';
+import {
+  SAMSUNG_CONFIRM_MS,
+  samsungDriver,
+  samsungInstalledApps,
+  sharedSamsungPool,
+} from '../tv/samsung.js';
 import { deepLaunchPayload } from '../tv/search-recipes.js';
 import { readTvStatus } from '../tv/status.js';
 import {
@@ -268,6 +273,8 @@ export function tvToolDeps(store: Store, opts: TvToolDepsOptions = {}): TvToolDe
                 onToken: (key) => saveTvClientKey(other.host, key),
                 // Daemon: la conexión se queda abierta entre órdenes (como la LG, #1891).
                 pool: opts.keepAlive ? sharedSamsungPool() : null,
+                // Tras abrir una app, la tele dice si está en pantalla (tope 3 s).
+                confirmMs: SAMSUNG_CONFIRM_MS,
               },
             );
       return {
