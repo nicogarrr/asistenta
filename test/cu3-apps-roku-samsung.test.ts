@@ -95,7 +95,13 @@ describe('el nombre dicho llega al id de la marca', () => {
       if (!intent) throw new Error(text);
       await runIntentOnDriver(d, intent);
     }
-    expect(calls).toEqual(['POST /launch/837', 'POST /launch/13']);
+    // Tras abrir, se mira que la app salga en pantalla (/query/active-app).
+    expect(calls).toEqual([
+      'POST /launch/837',
+      'GET /query/active-app',
+      'POST /launch/13',
+      'GET /query/active-app',
+    ]);
   });
 
   it('Samsung: «abre YouTube» sin pedir la lista', async () => {
@@ -167,7 +173,13 @@ describe('lista real de apps instaladas', () => {
     const t1 = performance.now();
     await d.launch?.('rtve play');
     const second = performance.now() - t1;
-    expect(calls).toEqual(['GET /query/apps', 'POST /launch/593099', 'POST /launch/593099']);
+    expect(calls).toEqual([
+      'GET /query/apps',
+      'POST /launch/593099',
+      'GET /query/active-app',
+      'POST /launch/593099',
+      'GET /query/active-app',
+    ]);
     // 2 peticiones la 1.ª vez, 1 la 2.ª (fakes de 40 ms por petición).
     expect(second).toBeLessThan(first);
     console.log(`roku «abre RTVE Play»: 1.ª ${first.toFixed(0)} ms, 2.ª ${second.toFixed(0)} ms`);

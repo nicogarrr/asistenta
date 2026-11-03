@@ -127,7 +127,10 @@ describe('Roku y Samsung: el enlace abre el título', () => {
     }) as unknown as typeof fetch;
     const d = rokuDriver('192.168.1.30', { fetchImpl });
     const said = await runIntentOnDriver(d, nfx(LINK) as never);
-    expect(calls).toEqual([`http://192.168.1.30:8060/launch/12?contentId=${ID}&mediaType=movie`]);
+    expect(calls).toEqual([
+      `http://192.168.1.30:8060/launch/12?contentId=${ID}&mediaType=movie`,
+      'http://192.168.1.30:8060/query/active-app',
+    ]);
     expect(said).toBe('Roku: abriendo en Netflix el título del enlace.');
     calls.length = 0;
     await d.search?.('dune', 'netflix');
