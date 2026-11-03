@@ -360,6 +360,17 @@ function nextRunOf(schedule: string, from: Date): Date | null {
   }
 }
 
+/**
+ * Entre varios que contienen lo buscado, el que se llama exactamente así: con «comprar pan»
+ * y «comprar pan integral», cancelar «comprar pan» quita el primero. Antes contestaba «hay
+ * 2» y el modelo, que solo cancela por texto, no podía quitarlo nunca.
+ */
+function exactlyNamed<T>(hits: T[], said: string, text: (h: T) => string): T[] {
+  const want = foldAccents(said).trim();
+  const exact = hits.filter((h) => foldAccents(text(h)).trim() === want);
+  return exact.length === 1 ? exact : hits;
+}
+
 function nameFor(prefix: string, text: string, suffix = ''): string {
   return `${prefix} ${sliceSafe(text.replace(/\s+/g, ' '), 60)}${suffix}`.trim();
 }
@@ -493,8 +504,10 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         // respuesta repetía «maría» en minúsculas.
         const needle = String(args.text ?? '').trim();
         if (!needle) return reply('cancel necesita text: una palabra del recordatorio.', true);
-        const hits = mine().filter((r) =>
-          foldAccents(reminderText(r)).includes(foldAccents(needle)),
+        const hits = exactlyNamed(
+          mine().filter((r) => foldAccents(reminderText(r)).includes(foldAccents(needle))),
+          needle,
+          reminderText,
         );
         if (hits.length === 0)
           return reply(`No encuentro ningún recordatorio con "${needle}".`, true);
@@ -811,7 +824,11 @@ export function pickReminder(
   }
   // Sin tildes en ningún lado: «jose» encuentra «Llamar a José» (en el móvil se escribe así).
   const needle = foldAccents(want);
-  const hits = rows.filter((r) => foldAccents(reminderText(r.routine)).includes(needle));
+  const hits = exactlyNamed(
+    rows.filter((r) => foldAccents(reminderText(r.routine)).includes(needle)),
+    want,
+    (r) => reminderText(r.routine),
+  );
   if (hits.length === 0)
     return { ok: false, error: `No encuentro ningún recordatorio con «${want}».` };
   if (hits.length > 1) {
