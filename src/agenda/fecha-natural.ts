@@ -27,7 +27,7 @@ const DAY =
   String.raw`|(?:el\s+)?(?:proximo\s+)?(${DIAS.join('|')})(?:\s+que\s+viene)?` +
   String.raw`|(\d{4})-(\d{1,2})-(\d{1,2})` +
   String.raw`|(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?` +
-  String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}))?(?:\s+de\s+(\d{4}))?)`;
+  String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}|sept|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\.?)?(?:\s+de\s+(\d{4}))?)`;
 const TIME = String.raw`(?:a\s+las?\s+(\d{1,2})(?:[:.](\d{2})|(?![:.]?\d))|(\d{1,2})[:.](\d{2}))(?:\s*h)?(?:\s+de\s+la\s+(manana|tarde|noche|madrugada))?(?:\s*([ap])\.?\s?m\.?(?![a-z]))?`;
 const RE = new RegExp(
   String.raw`^\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?${DAY}\s*,?\s*${TIME}[\s,:|.-]+(\S.*)$`,
@@ -186,7 +186,8 @@ export function parseFechaCalendario(
   } else if (m[9]) {
     d = Number(m[9]);
     if (m[10]) {
-      mo = MESES.indexOf(m[10]) + 1;
+      // «el 10 de nov», «el 3 de sept.»: el mes abreviado, como se escribe en el móvil.
+      mo = MESES.findIndex((name) => name.startsWith(m[10]?.slice(0, 3) ?? '')) + 1;
       if (m[11]) y = Number(m[11]);
       else if (mo < today.month || (mo === today.month && d < today.day)) y += 1;
     } else if (d < today.day) {
