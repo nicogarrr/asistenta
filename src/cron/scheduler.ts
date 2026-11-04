@@ -216,6 +216,13 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
         'g',
       ),
       '$1 $3 $2',
+    )
+    // «a las 9'30» o «a las 9,30»: los minutos tras apóstrofo o coma se perdían y sonaba a las
+    // 9:00. Con coma solo si no puede ser otra hora (24–59 o 00): «a las 9,15» puede ser una
+    // lista y se pregunta más abajo.
+    .replace(/\b(a las? \d{1,2})['’](\d{2})(?!\d)/g, '$1:$2')
+    .replace(/\b(a las? \d{1,2}),([0-5]\d)(?!\d)/g, (w: string, at: string, mm: string) =>
+      Number(mm) >= 24 || mm === '00' ? `${at}:${mm}` : w,
     );
 
   // A time of day is the strongest signal. `a las 8`, `a las 8:30`, `a las 20h`.
@@ -261,11 +268,15 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       if (bare) list = true;
     }
     if (list) {
+      // El último de la lista, con «y» o con otra coma («a las 9,10,11»: antes el 11 se perdía).
       const last = new RegExp(
-        `^\\s*\\by\\s+${CLOCK}(?!\\s*(?:min|minutos?|veces|dias|semanas)\\b)`,
+        `^(?:\\s*\\by\\s+|\\s*,\\s*)${CLOCK}(?!\\s*(?:min|minutos?|veces|dias|semanas)\\b)`,
       ).exec(rest);
       if (last && !take(last)) return null;
     }
+    // «a las 9,15 pastilla», «a las 9,5»: ¿9:15 o a las 9 y a las 15? Antes sonaba a las 9:00
+    // sin avisar; se pregunta.
+    if (/^,\d/.test(rest)) return null;
     // «a las 9 pastilla y a las 21 otra», «a las 7 riega y otra vez a las 8 de la tarde»:
     // la segunda hora llega más tarde en la frase. Antes se perdía (o, con «de la
     // tarde», movía la primera toma a la tarde); ahora cuenta como otra toma.
