@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { type DaemonControl, DaemonNotRunningError, isMissingFile } from './daemon-control.js';
+import { watchOrPoll } from './watch-or-poll.js';
 import { windowsNative, windowsOwnership } from './windows-control-native.js';
 
 const HEX = /^[a-f0-9]{64}$/;
@@ -104,6 +105,13 @@ function removeOwned(state: string, leaf: string) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
 }
+/**
+ * Respaldo del buzón de parada. La petición de `pa stop` se ve al momento por eventos de la
+ * carpeta (`fs.watch`); este sondeo solo cubre un evento perdido. Antes era un sondeo cada
+ * 250 ms: 4 despertares por segundo, todo el día, para una orden que llega casi nunca.
+ * `pa stop` espera hasta 30 s, así que 2 s en el peor caso no cambia nada.
+ */
+export const CONTROL_POLL_MS = 2_000;
 /** Pruebas de parada y temporales de más de 10 min: `pa stop` solo espera 30 s por la suya. */
 export const CONTROL_LEFTOVER_MS = 10 * 60_000;
 const LEFTOVER = /^[a-f0-9]{64}\.(stopped|tmp)$/;
@@ -169,7 +177,7 @@ export async function openWindowsDaemonControl(
     await ownership.release();
     throw error;
   }
-  const timer = setInterval(() => {
+  const check = () => {
     if (!published || closed || stopping) return;
     try {
       if (!ownership.alive()) throw new Error('Propiedad Windows perdida.');
@@ -191,7 +199,10 @@ export async function openWindowsDaemonControl(
         console.error('Solicitud de control Windows rechazada; no se confirma parada.');
       }
     }
-  }, 250);
+  };
+  // Vigilancia por eventos + respaldo lento. El respaldo no lleva unref, como el sondeo de
+  // antes: mientras el daemon vive, su buzón de parada también.
+  const timer = watchOrPoll(dir(state), check, CONTROL_POLL_MS);
   return {
     instanceId: id,
     ready() {
@@ -203,7 +214,7 @@ export async function openWindowsDaemonControl(
     async close(clean?: boolean) {
       if (closed) return;
       closed = true;
-      clearInterval(timer);
+      timer.close();
       try {
         if (published) {
           const current = record(state);
