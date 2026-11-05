@@ -58,6 +58,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'reminder', threadAllow: true },
   { name: 'latido', threadAllow: true },
   { name: 'tareas', threadAllow: true },
+  { name: 'compra', threadAllow: true, note: 'Lista de la compra del chat.' },
   { name: 'temas', threadAllow: true },
   {
     name: 'correo_reglas',

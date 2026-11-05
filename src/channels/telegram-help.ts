@@ -42,6 +42,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: '<pregunta>',
         description: 'pregunta rápida sin parar lo que hago',
       },
+      {
+        command: 'compra',
+        args: '[cosas]',
+        description: 'lista de la compra con botones para tachar',
+      },
       { command: 'estado', description: 'cómo estoy: herramientas y errores de hoy' },
       {
         command: 'funciones',
@@ -56,7 +61,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'modelo',
         args: '[número|nombre|normal]',
-        description: 've o cambia el modelo de esta conversación',
+        description: 've o cambia el modelo',
       },
       {
         command: 'borrar_chat',
@@ -65,7 +70,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'proyecto',
         args: '<carpeta>|quitar',
-        description: 'liga una carpeta: su ASISTENTA.md entra en el contexto',
+        description: 'liga una carpeta (su ASISTENTA.md)',
       },
     ],
   },
@@ -101,8 +106,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'cron',
         args: '[add|del|entrega]',
-        description:
-          'programa, pausa, prueba o borra rutinas; «entrega» decide si su salida va al chat, a un fichero o a ninguno',
+        description: 'programa, pausa, prueba o borra rutinas; «entrega»: chat, fichero o nada',
       },
       {
         command: 'disparador',
@@ -201,7 +205,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'correo',
         args: '[estado|lista|responder]',
-        description: 'estado del correo, últimos mensajes y responder',
+        description: 'últimos correos y responder',
       },
     ],
   },
