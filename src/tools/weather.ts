@@ -1,5 +1,10 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { fetchWeatherDays, type WeatherConfig, weatherCodeEs } from '../briefing-daily.js';
+import {
+  fetchWeatherDays,
+  fetchWeatherLine,
+  type WeatherConfig,
+  weatherCodeEs,
+} from '../briefing-daily.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
@@ -181,6 +186,77 @@ const rainy = (h: WeatherHour): boolean => (h.rainProb ?? 0) >= 50 || (h.rainMm 
 const mm = (n: number): string =>
   new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n);
 
+/** Un tramo seguido de horas con lluvia probable. */
+export interface RainSpan {
+  start: WeatherHour;
+  last: WeatherHour;
+  /** Probabilidad máxima del tramo, en %. */
+  peak: number;
+}
+
+/** Tramos seguidos de horas con lluvia, en orden. */
+export function rainSpans(hours: readonly WeatherHour[]): RainSpan[] {
+  const out: RainSpan[] = [];
+  let cur: RainSpan | undefined;
+  for (const h of hours) {
+    if (rainy(h)) {
+      if (cur) {
+        cur.last = h;
+        cur.peak = Math.max(cur.peak, h.rainProb ?? 0);
+      } else cur = { start: h, last: h, peak: h.rainProb ?? 0 };
+    } else if (cur) {
+      out.push(cur);
+      cur = undefined;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** La hora en que acaba un tramo («18:00»): la siguiente a su última hora con lluvia. */
+const spanEnd = (last: WeatherHour): string =>
+  `${String((Number(last.time.slice(11, 13)) + 1) % 24).padStart(2, '0')}:00`;
+
+/**
+ * Para el resumen de la mañana: «lluvia probable de 15:00 a 18:00» con las horas que quedan
+ * de HOY (las de mañana no). Como mucho dos tramos, para que quepa en una línea; vacío si
+ * no se espera lluvia.
+ */
+export function rainTodayText(hours: readonly WeatherHour[]): string {
+  const today = hours[0]?.time.slice(0, 10);
+  if (!today) return '';
+  const spans = rainSpans(hours.filter((h) => h.time.slice(0, 10) === today));
+  if (spans.length === 0) return '';
+  const parts = spans.slice(0, 2).map((sp) => {
+    const end = spanEnd(sp.last);
+    return end === '00:00'
+      ? `desde las ${sp.start.time.slice(11, 16)} hasta la noche`
+      : `de ${sp.start.time.slice(11, 16)} a ${end}`;
+  });
+  return `lluvia probable ${parts.join(' y ')}${spans.length > 2 ? ' (y más tarde)' : ''}`;
+}
+
+/**
+ * La línea del tiempo del resumen de la mañana: la del día («Tiempo en Gijón: 8–17 °C,
+ * lluvia (60 %)») más, si se espera, cuándo llueve hoy («; lluvia probable de 15:00 a
+ * 18:00.»). Las dos consultas van a la vez; si falla la de horas, queda la del día.
+ */
+export async function briefingWeatherLine(
+  cfg: WeatherConfig,
+  fetchFn: typeof fetch = fetch,
+): Promise<string | null> {
+  const [line, hours] = await Promise.all([
+    fetchWeatherLine(cfg, fetchFn),
+    fetchWeatherHours(cfg, 24, fetchFn).catch((err: unknown) => {
+      log.warn('tiempo: sin previsión por horas para el resumen', { err: String(err) });
+      return [] as WeatherHour[];
+    }),
+  ]);
+  if (!line) return null;
+  const rain = rainTodayText(hours);
+  return rain ? `${line}; ${rain}.` : line;
+}
+
 /**
  * El texto hora a hora: primero cuándo llueve (tramos), que es lo que se suele preguntar,
  * y luego cada hora (de 2 en 2 si son más de 24).
@@ -197,26 +273,9 @@ export function hourlyText(hours: readonly WeatherHour[], label?: string): strin
     const next = `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, '0')}-${String(at.getUTCDate()).padStart(2, '0')}`;
     return day === next ? `mañana ${hh}` : `${day.slice(8, 10)}/${day.slice(5, 7)} ${hh}`;
   };
-  const spans: string[] = [];
-  let start: WeatherHour | undefined;
-  let last: WeatherHour | undefined;
-  let peak = 0;
-  const close = () => {
-    if (!start || !last) return;
-    const endHour = (Number(last.time.slice(11, 13)) + 1) % 24;
-    const end = `${String(endHour).padStart(2, '0')}:00`;
-    spans.push(`de ${when(start.time)} a ${end} (hasta ${Math.round(peak)} %)`);
-    start = undefined;
-    peak = 0;
-  };
-  for (const h of hours) {
-    if (rainy(h)) {
-      if (!start) start = h;
-      last = h;
-      peak = Math.max(peak, h.rainProb ?? 0);
-    } else close();
-  }
-  close();
+  const spans = rainSpans(hours).map(
+    (sp) => `de ${when(sp.start.time)} a ${spanEnd(sp.last)} (hasta ${Math.round(sp.peak)} %)`,
+  );
   const head = `Tiempo hora a hora${label ? ` en ${label}` : ''} (próximas ${hours.length} h):`;
   const rain = spans.length
     ? `Lluvia probable ${spans.join('; ')}.`
