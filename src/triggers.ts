@@ -90,6 +90,11 @@ const MAIL_STOPWORDS = new Set([
   'que',
 ]);
 
+/** «o»/«u»/«or» entre dos palabras: cualquiera de las dos vale («de renfe o iberia»). */
+const MAIL_OR = new Set(['o', 'u', 'or']);
+/** Separador de alternativas dentro de un mismo valor («renfe|iberia»). */
+const MAIL_ALT = '|';
+
 export function parseMailMatch(match: string): MailMatch {
   const out: MailMatch = { from: [], subject: [], any: [] };
   // Comillas del móvil («“billete de tren”», ««billete de tren»») y «de: renfe» con espacio:
@@ -99,21 +104,40 @@ export function parseMailMatch(match: string): MailMatch {
   const parts = [...match.matchAll(re)].map((m) => ({
     key: (m[1] ?? '').toLowerCase(),
     quoted: m[2] !== undefined,
+    comma: m[2] === undefined && /,$/.test(m[3] ?? ''),
     // «de renfe, asunto billete»: la coma pegada no es parte de lo que se busca.
     value: (m[2] ?? (m[3] ?? '').replace(/[,;.:!?)]+$/, '')).trim().toLocaleLowerCase('es'),
   }));
+  type Part = (typeof parts)[number];
+  const plain = (q: Part | undefined): q is Part => !!q && !q.key && !q.quoted && !!q.value;
+  const isOr = (q: Part | undefined) => plain(q) && MAIL_OR.has(q.value);
+  // «renfe, iberia o ouigo»: una lista con comas que acaba en «o» son alternativas.
+  const listEndsInOr = (j: number): boolean => {
+    while (plain(parts[j]) && parts[j]?.comma && !isOr(parts[j])) j++;
+    return plain(parts[j]) && !isOr(parts[j]) && isOr(parts[j + 1]);
+  };
+  // Último valor guardado: a él se suman las alternativas que vienen tras «o».
+  let last: { field: 'from' | 'subject' | 'any'; index: number } | null = null;
+  let alternative = false;
   for (let i = 0; i < parts.length; i++) {
-    const p = parts[i] as (typeof parts)[number];
+    const p = parts[i] as Part;
     if (!p.value) continue;
+    // «de renfe o iberia»: antes «o» se buscaba como texto y renfe E iberia hacían falta a la
+    // vez, así que el disparador no saltaba nunca. Ahora vale cualquiera de las dos.
+    if (isOr(p)) {
+      if (last && i + 1 < parts.length) alternative = true;
+      continue;
+    }
     let key = p.key;
     let value = p.value;
     // «de renfe», «del banco», «asunto billete» sin dos puntos: antes se buscaban «de» o
     // «del» como texto (un correo sin «del» no saltaba nunca) en vez del remitente.
     const next = parts[i + 1];
-    if (!key && !p.quoted && next && !next.key && next.value) {
-      // Solo al principio: en medio («billete de tren») el «de» es parte de la frase.
+    if (!key && !p.quoted && next && !next.key && next.value && !MAIL_OR.has(next.value)) {
+      // Solo al principio (o tras «o»: «de renfe o de iberia»): en medio («billete de tren»)
+      // el «de» es parte de la frase.
       const as =
-        i === 0 && (value === 'de' || value === 'del' || value === 'from')
+        (i === 0 || alternative) && (value === 'de' || value === 'del' || value === 'from')
           ? 'de'
           : value === 'asunto' || value === 'subject'
             ? 'asunto'
@@ -124,11 +148,34 @@ export function parseMailMatch(match: string): MailMatch {
         i++;
       }
     }
-    if (key === 'de' || key === 'from') out.from.push(value);
-    else if (key === 'asunto' || key === 'subject') out.subject.push(value);
-    else if (p.quoted || !MAIL_STOPWORDS.has(value)) out.any.push(value);
+    const field: 'from' | 'subject' | 'any' =
+      key === 'de' || key === 'from'
+        ? 'from'
+        : key === 'asunto' || key === 'subject'
+          ? 'subject'
+          : 'any';
+    if (alternative && last && (field === last.field || field === 'any')) {
+      // La alternativa va al mismo sitio que la palabra anterior: «de renfe o iberia».
+      const arr = out[last.field];
+      arr[last.index] = `${arr[last.index]}${MAIL_ALT}${value}`;
+      alternative = false;
+      const cur = parts[i] as Part;
+      if (cur.comma && listEndsInOr(i + 1)) alternative = true;
+      continue;
+    }
+    alternative = false;
+    if (field === 'any' && !p.quoted && MAIL_STOPWORDS.has(value)) continue;
+    out[field].push(value);
+    last = { field, index: out[field].length - 1 };
+    const cur = parts[i] as Part;
+    if (!cur.quoted && cur.comma && listEndsInOr(i + 1)) alternative = true;
   }
   return out;
+}
+
+/** «renfe|iberia» → cualquiera de las dos está en el texto. */
+function hasAny(text: string, value: string): boolean {
+  return value.split(MAIL_ALT).some((v) => v !== '' && text.includes(v));
 }
 
 export function mailMatches(match: string, mail: { from: string; subject: string }): boolean {
@@ -137,9 +184,9 @@ export function mailMatches(match: string, mail: { from: string; subject: string
   const from = mail.from.toLocaleLowerCase('es');
   const subject = mail.subject.toLocaleLowerCase('es');
   return (
-    want.from.every((v) => from.includes(v)) &&
-    want.subject.every((v) => subject.includes(v)) &&
-    want.any.every((v) => from.includes(v) || subject.includes(v))
+    want.from.every((v) => hasAny(from, v)) &&
+    want.subject.every((v) => hasAny(subject, v)) &&
+    want.any.every((v) => hasAny(from, v) || hasAny(subject, v))
   );
 }
 
