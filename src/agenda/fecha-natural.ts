@@ -27,7 +27,7 @@ const DAY =
   String.raw`|(?:el\s+)?(?:proximo\s+)?(${DIAS.join('|')})(?:\s+que\s+viene)?` +
   String.raw`|(\d{4})-(\d{1,2})-(\d{1,2})` +
   String.raw`|(?:el\s+)?(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?` +
-  String.raw`|(?:el\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}|sept|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\.?)?(?:\s+de\s+(\d{4}))?)`;
+  String.raw`|(?:el\s+)?(?:proximo\s+)?(?:dia\s+)?(\d{1,2})(?:\s+de\s+(${MESES.join('|')}|sept|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\.?)?(?:\s+de\s+(\d{4}))?)`;
 const TIME = String.raw`(?:a\s+las?\s+(\d{1,2})(?:[:.](\d{2})|(?![:.]?\d))|(\d{1,2})[:.](\d{2}))(?:\s*h)?(?:\s+de\s+la\s+(manana|tarde|noche|madrugada))?(?:\s*([ap])\.?\s?m\.?(?![a-z]))?`;
 const RE = new RegExp(
   String.raw`^\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?${DAY}\s*,?\s*${TIME}[\s,:|.-]+(\S.*)$`,
@@ -163,13 +163,50 @@ const DIA_Y_NUMERO = new RegExp(
   `${LEAD}(?:el\\s+)?(${DIAS.join('|')})\\s*,?\\s+(?=(?:dia\\s+)?\\d{1,2}(?!\\d)(?![:.]\\d))`,
 );
 
+/** La hora que se pone a una parte del día dicha sin hora (como los recordatorios). */
+const FRANJA_HORA: Readonly<Record<string, string>> = {
+  manana: '9:00',
+  tarde: '17:00',
+  noche: '21:00',
+};
+const DAY_SIN_GRUPOS = DAY.replace(/\((?!\?)/g, '(?:');
+const FRANJA = new RegExp(
+  `${LEAD}(?:(${DAY_SIN_GRUPOS})\\s*,?\\s+por\\s+la|esta)\\s+(manana|tarde|noche)(?![a-z])\\s*,?`,
+);
+const ALGUNA_HORA = new RegExp(
+  `\\ba\\s+las?\\s+(?:\\d|${Object.keys(PALABRAS).join('|')})|\\d[:.]\\d{2}|\\bmediodia\\b`,
+);
+
+/**
+ * «mañana por la mañana gimnasio», «el viernes por la tarde pádel», «esta tarde compra»:
+ * sin hora, la de esa parte del día (9:00, 17:00, 21:00), la misma que ponen los
+ * recordatorios. Antes se volvía a preguntar sin decir qué faltaba. Si hay una hora en el
+ * texto, manda esa.
+ */
+/** ¿Rellenaría franjaSinHora una hora? Los recordatorios llevan su propia franja. */
+export function franjaSinHoraDicha(text: string): boolean {
+  const t = fold(text.normalize('NFC').trim());
+  return (
+    !ALGUNA_HORA.test(t) && /(?:^|\s)(?:por\s+la|esta)\s+(?:manana|tarde|noche)(?![a-z])/.test(t)
+  );
+}
+
+function franjaSinHora(text: string): string {
+  if (ALGUNA_HORA.test(text)) return text;
+  return text.replace(
+    FRANJA,
+    (_w, lead: string, day: string | undefined, part: string) =>
+      `${lead}${day ?? 'hoy'} a las ${FRANJA_HORA[part]} `,
+  );
+}
+
 /**
  * Formas de decir el día que se reescriben antes de leer: «esta noche a las 10» y «el
  * viernes 6». Devuelve el texto y, si se dijo, el día de la semana, que tiene que cuadrar
  * con la fecha (si no, se pregunta otra vez en vez de adivinar).
  */
 function diaHablado(text: string): { text: string; weekday: number | null } {
-  const esta = text.replace(
+  const esta = franjaSinHora(text).replace(
     ESTA,
     (_w, lead: string, part: string, time: string) => `${lead}hoy ${time} de la ${part}`,
   );

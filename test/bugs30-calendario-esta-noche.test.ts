@@ -27,6 +27,10 @@ describe('/calendario: «esta noche cine a las 22» (la parte del día delante, 
   it('las formas que ya valían siguen igual', () => {
     const r = parseFechaCalendario('esta noche a las 10 cena', NOW, TZ);
     expect(r && { when: at(r.start), title: r.title }).toEqual({ when: '5, 22:00', title: 'cena' });
-    expect(parseFechaCalendario('esta noche cine', NOW, TZ)).toBeNull();
+    const sinHora = parseFechaCalendario('esta noche cine', NOW, TZ);
+    expect(sinHora && { when: at(sinHora.start), title: sinHora.title }).toEqual({
+      when: '5, 21:00',
+      title: 'cine',
+    });
   });
 });

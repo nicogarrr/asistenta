@@ -43,12 +43,46 @@ const DIA_SI_NO =
 const SEMANA_SI_NO =
   /\b(?:(?:una |cada )?semana si,? (?:y )?(?:otra|semana) no|en semanas alternas)\b/;
 const DAY_NAME = /\b(?:los |el )?(?:lunes|martes|miercoles|jueves|viernes|sabados?|domingos?)\b/;
+const WEEKDAY_SAID = '(lunes|martes|miercoles|jueves|viernes|sabados?|domingos?)';
+/**
+ * «cada dos lunes», «cada 2 viernes», «lunes alternos», «un lunes sí y otro no»: cada dos
+ * semanas ese día. Antes «cada dos lunes a las 9» sonaba todos los días a las 9.
+ */
+const CADA_N_DIA = new RegExp(`\\bcada (${NUMBER}) ${WEEKDAY_SAID}\\b`);
+const DIA_ALTERNO = new RegExp(
+  `\\b(?:(?:los |en |cada )?${WEEKDAY_SAID} alternos|(?:un |cada )?${WEEKDAY_SAID} si,? (?:y )?(?:otro|\\w+) no)\\b`,
+);
 
 const fold = (text: string): string => foldAccents(text).toLowerCase().replace(/\s+/g, ' ');
 
 /** Dónde lo dice y qué cadencia, o null si no pide «cada N días/semanas». */
-function find(text: string): { cadencia: Cadencia; start: number; end: number } | null {
+function find(
+  text: string,
+): { cadencia: Cadencia; start: number; end: number; swap?: string } | null {
   const t = fold(text);
+  const w = CADA_N_DIA.exec(t);
+  if (w) {
+    const said = w[1] ?? '';
+    const n = /^\d+$/.test(said) ? Number(said) : (NUMBER_WORD[said] ?? 0);
+    if (n < 2 || n > 8) return null;
+    const day = (w[2] ?? '').replace(/(sabado|domingo)s$/, '$1');
+    return {
+      cadencia: { n, unidad: 'semana' },
+      start: w.index,
+      end: w.index + w[0].length,
+      swap: `cada ${day}`,
+    };
+  }
+  const a = DIA_ALTERNO.exec(t);
+  if (a) {
+    const day = (a[1] ?? a[2] ?? '').replace(/(sabado|domingo)s$/, '$1');
+    return {
+      cadencia: { n: 2, unidad: 'semana' },
+      start: a.index,
+      end: a.index + a[0].length,
+      swap: `cada ${day}`,
+    };
+  }
   const m = CADA_N.exec(t);
   if (m) {
     const said = m[1] ?? '';
@@ -86,7 +120,7 @@ export function sinCadencia(text: string): { cadencia: Cadencia; text: string } 
   const found = find(text);
   if (!found) return null;
   const t = fold(text);
-  const swap = found.cadencia.unidad === 'dia' ? 'todos los dias' : 'cada semana';
+  const swap = found.swap ?? (found.cadencia.unidad === 'dia' ? 'todos los dias' : 'cada semana');
   return {
     cadencia: found.cadencia,
     text: `${t.slice(0, found.start)}${swap}${t.slice(found.end)}`.replace(/\s+/g, ' ').trim(),

@@ -406,6 +406,14 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   // «cada 2 días», «cada dos semanas», «el último día de cada mes»: a cron cannot say
   // them simply. Before, they became «every day»; now the caller asks.
   if (/\bcada (?:\d{1,3}|[a-z]+) (?:dias|semanas|meses)\b/.test(normalised)) return null;
+  // «cada dos lunes», «lunes alternos», «un lunes sí y otro no»: cada dos semanas ese día
+  // (lo lee parseNaturalConCadencia). Antes «cada dos lunes a las 9» sonaba todos los días.
+  if (
+    /\bcada (?:\d|dos|tres|cuatro) (?:lunes|martes|miercoles|jueves|viernes|sabados?|domingos?)\b|\b(?:lunes|martes|miercoles|jueves|viernes|sabados?|domingos?) (?:alternos|si,? (?:y )?(?:otro|\w+) no)\b/.test(
+      normalised,
+    )
+  )
+    return null;
   // «durante una semana», «hasta el viernes», «hasta fin de mes»: un cron no tiene fin y la
   // rutina sonaba para siempre. Se pregunta («hasta las 20» o «hasta el 25 de diciembre»
   // dentro de la tarea no son un fin).
