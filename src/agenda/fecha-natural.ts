@@ -396,3 +396,26 @@ function parseDirecto(
   }
   return { start, title };
 }
+
+/**
+ * /calendario con solo la hora: «a las 18 llamada con Juan», «a las 9:30 dentista». Hoy si
+ * aún no ha pasado y, si no, mañana. Antes contestaba «No he pillado la fecha o la hora».
+ * Solo para /calendario: los recordatorios ya tienen su propia regla para «a las 5».
+ */
+export function parseFechaCalendarioDicha(
+  text: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): { start: Date; title: string } | null {
+  const direct = parseFechaCalendario(text, now, timeZone);
+  if (direct) return direct;
+  const original = text.normalize('NFC').trim();
+  const folded = fold(original);
+  const lead = (LEAD_RE.exec(folded)?.[1] ?? '').length;
+  if (!/^a\s+las?\s+\S/.test(folded.slice(lead))) return null;
+  const head = original.slice(0, lead);
+  const body = original.slice(lead);
+  const hoy = parseFechaCalendario(`${head}hoy ${body}`, now, timeZone);
+  if (hoy && hoy.start.getTime() > now.getTime()) return hoy;
+  return parseFechaCalendario(`${head}mañana ${body}`, now, timeZone) ?? hoy;
+}
