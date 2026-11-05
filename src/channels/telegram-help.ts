@@ -228,7 +228,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: 'buscar <texto> | instalar <url>',
         description: 'busca o instala una skill',
       },
-      { command: 'evolucion', args: '[idea <texto>|ahora]', description: 'la auto-mejora semanal' },
+      {
+        command: 'evolucion',
+        args: '[idea <texto>|ahora|revisar]',
+        description: 'la auto-mejora semanal',
+      },
       {
         command: 'actualizacion',
         description: 'si me actualizo sola desde main y cómo fue la última vez',

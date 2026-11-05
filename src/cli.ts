@@ -175,7 +175,19 @@ import { applyConfiguredTimeZone, localDay, localTimeZone, wallHourMinute } from
 import { Store } from './db.js';
 import { announceDropped, DROPPED_NOTICE_EVERY_MS } from './dropped-notice.js';
 import { ASK_QUEUED, ASK_QUEUED_BUSY, handleFeatureAsk } from './evolve/ask.js';
+import {
+  applyCandidate,
+  candidateFromReport,
+  discardCandidate,
+  findCandidate,
+  fullPatchText,
+  gitIn,
+  latestCandidate,
+  reviewButtons,
+  reviewMessage,
+} from './evolve/review.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
+import { repoRoot } from './evolve/worktree.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { createProximoFestivo } from './festivos-rutinas.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -5303,6 +5315,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await telegram
         .send({ channel: 'telegram', account: telegram.account, chatId, text: out.text })
         .catch((err: unknown) => log.warn('evolve report failed', { err }));
+      // Revisar antes de aplicar: la ficha del candidato con «Ver parche / Aplicar /
+      // Descartar». Nada entra en la copia sin ese toque.
+      const candidate = candidateFromReport(paths.state, out.report);
+      if (candidate) {
+        const review = reviewMessage(candidate);
+        await telegram
+          .send({
+            channel: 'telegram',
+            account: telegram.account,
+            chatId,
+            text: review.text,
+            buttons: review.buttons,
+          })
+          .catch((err: unknown) => log.warn('evolve review failed', { err }));
+      }
     } finally {
       evolving = false;
     }
@@ -5409,6 +5436,55 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
   };
 
+  /**
+   * «Revisar antes de aplicar» (botones de la ficha o `/evolucion revisar|parche|aplicar|
+   * descartar [id]`): ver el candidato, su parche entero, aplicarlo como commit local o
+   * descartarlo. Aplicar y descartar solo el dueño, en su chat privado.
+   */
+  const reviewEvolveCandidate = async (
+    inbound: Inbound,
+    action: string,
+    id: string,
+  ): Promise<void> => {
+    if ((action === 'aplicar' || action === 'descartar') && !isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Solo el dueño, en su chat privado, puede aplicar o descartar cambios.', {
+        quote: true,
+      });
+      return;
+    }
+    const candidate = id ? findCandidate(paths.state, id) : latestCandidate(paths.state);
+    if (!candidate) {
+      await say(
+        inbound,
+        id
+          ? 'Ese candidato ya no está pendiente (aplicado, descartado o de otra copia).'
+          : 'No hay ningún cambio de la auto-mejora pendiente de revisar.',
+        { quote: true },
+      );
+      return;
+    }
+    try {
+      if (action === 'revisar') {
+        const review = reviewMessage(candidate);
+        await say(inbound, review.text, { quote: true, buttons: review.buttons });
+      } else if (action === 'parche') {
+        const patch = readFileSync(candidate.patchFile, 'utf8');
+        await say(inbound, fullPatchText(candidate, patch), {
+          quote: true,
+          buttons: reviewButtons(candidate.id).slice(1),
+        });
+      } else if (action === 'aplicar') {
+        const r = await applyCandidate(candidate, gitIn(repoRoot()));
+        await say(inbound, r.text, { quote: true });
+      } else {
+        const r = await discardCandidate(candidate, gitIn(repoRoot()));
+        await say(inbound, r.text, { quote: true });
+      }
+    } catch (err) {
+      await say(inbound, failedReply('No he podido hacerlo', err), { quote: true });
+    }
+  };
+
   const cmdEvolucion = async (inbound: Inbound, args: string): Promise<void> => {
     const a = args.trim();
     if (/^idea\b/i.test(a)) {
@@ -5418,6 +5494,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       } catch (err) {
         await say(inbound, failedReply('No la he anotado', err), { quote: true });
       }
+      return;
+    }
+    const review = /^(revisar|parche|aplicar|descartar)\b\s*(\S*)$/i.exec(a);
+    if (review) {
+      await reviewEvolveCandidate(inbound, (review[1] as string).toLowerCase(), review[2] ?? '');
       return;
     }
     if (/^ahora$/i.test(a)) {
