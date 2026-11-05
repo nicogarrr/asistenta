@@ -40,6 +40,11 @@ export interface TurnOutput {
   specialist?(name: string): void;
   /** Un especialista pidió permiso y no se le dio ninguno: no hizo nada. */
   specialistDenied?(name: string): void;
+  /**
+   * El turno no llegó al modelo por la red o porque el servicio estaba caído. El panel
+   * no tiene la cola de reintentos de Telegram: lo reintenta él solo (page.ts).
+   */
+  outage?(): void;
 }
 
 /** Un archivo enviado por un turno: los bytes y el nombre con que se descarga. */
@@ -59,6 +64,8 @@ export interface PanelChatReply {
   text: string;
   images?: string[];
   files?: PanelFileLink[];
+  /** Falló por la red o el modelo caído: el panel lo reintenta solo. */
+  outage?: true;
 }
 
 /** Cuántos archivos y de qué tamaño (cada uno) devuelve como mucho un turno del panel. */
@@ -178,6 +185,7 @@ export async function runPanelChat<T extends PanelChatThread>(
     const specialists: string[] = [];
     const deniedSpecialists: string[] = [];
     let dropped = 0;
+    let outage = false;
     const direct = deps.command?.(thread, text) ?? null;
     if (direct !== null) return { text: direct };
     deps.remember(thread, text);
@@ -204,6 +212,9 @@ export async function runPanelChat<T extends PanelChatThread>(
       specialistDenied: (name) => {
         deniedSpecialists.push(name);
       },
+      outage: () => {
+        outage = true;
+      },
     });
     const worked = specialistNote(specialists, deniedSpecialists);
     if (worked) notes.push(worked);
@@ -212,6 +223,7 @@ export async function runPanelChat<T extends PanelChatThread>(
     const result: PanelChatReply = { text: reply };
     if (images.length > 0) result.images = images;
     if (files.length > 0) result.files = files;
+    if (outage) result.outage = true;
     return result;
   });
   return out ?? { text: '' };

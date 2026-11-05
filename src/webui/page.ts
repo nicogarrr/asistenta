@@ -1267,6 +1267,8 @@ ${renderFormatScript()}
         // desactivado. Mientras Asistenta responde, el texto se queda en el campo.
         if (chatOcupado) return;
         chatOcupado = true;
+        // Un mensaje nuevo manda: el reintento solo que hubiera pendiente sobra.
+        if (typeof cancelarReintento === 'function') cancelarReintento();
         // En el móvil (≤ 780 px), tras pulsar «Enviar», enfocar el campo abre el teclado
         // y tapa la respuesta: allí solo vuelve al campo si ya lo tenía (Enter).
         var volverAlCampo = document.activeElement === campo || !pantallaPequena();
@@ -1294,6 +1296,9 @@ ${renderFormatScript()}
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';
           if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
           avisoConexion(false);
+          if (datos && datos.outage && typeof programarReintento === 'function') {
+            programarReintento(espera, 0);
+          }
         } catch (error) {
           if (error && error.sinConexion) avisoConexion(true, true);
           espera.className = 'turno asistente fallo';
@@ -1375,9 +1380,11 @@ ${renderFormatScript()}
         turno.appendChild(caja);
       }
 
-      async function repetirUltimo() {
+      // intentoAuto: número del reintento solo (sin red); sin él, lo pidió Nico.
+      async function repetirUltimo(intentoAuto) {
         if (chatOcupado) return;
         chatOcupado = true;
+        cancelarReintento();
         // Sin reloj: «Pensando… 0 s» se quedaba congelado hasta la respuesta.
         var espera = anadirTurno('asistente esperando', 'Asistenta', 'Pensando…');
         espera.setAttribute('data-reintento', 'true');
@@ -1390,6 +1397,12 @@ ${renderFormatScript()}
           if (typeof pintarArchivos === 'function') pintarArchivos(espera, datos);
           avisoConexion(false);
           chatOcupado = false;
+          if (datos && datos.outage) {
+            var auto = typeof intentoAuto === 'number';
+            // Un reintento solo que vuelve a fallar no deja otro turno: cambia el aviso.
+            if (auto && notaReintento && typeof espera.remove === 'function') espera.remove();
+            programarReintento(espera, auto ? intentoAuto : 0);
+          }
           devolverFoco(espera);
         } catch (error) {
           chatOcupado = false;
@@ -1413,6 +1426,39 @@ ${renderFormatScript()}
           espera.appendChild(otraVez);
           devolverFoco(otraVez);
         }
+      }
+
+      // Sin internet o con el modelo caído el turno no llegaba al modelo y el panel se
+      // quedaba ahí: como en Telegram, ahora lo reintenta solo (1, 2, 5, 10 y 15 min).
+      // Un mensaje nuevo o «Reintentar» lo cancela; cerrar la página también.
+      var ESPERAS_SIN_RED = [60, 120, 300, 600, 900];
+      var reintentoSolo = null;
+      var notaReintento = null;
+      function cancelarReintento() {
+        if (reintentoSolo === null) return;
+        window.clearTimeout(reintentoSolo);
+        reintentoSolo = null;
+      }
+      function programarReintento(turno, intento) {
+        cancelarReintento();
+        var segundos = ESPERAS_SIN_RED[intento];
+        var texto =
+          segundos === undefined
+            ? 'Sigo sin poder hablar con el modelo, así que dejo de reintentarlo yo solo. Pulsa Reintentar o escríbemelo cuando vuelva la conexión.'
+            : 'Lo reintento yo solo en ' +
+              (segundos < 60 ? segundos + ' s' : segundos / 60 + ' min') +
+              ' (si me escribes otra cosa, lo dejo).';
+        if (intento > 0 && notaReintento) notaReintento.textContent = texto;
+        else {
+          notaReintento = nodo('p', 'muted reintento-solo', texto);
+          notaReintento.setAttribute('role', 'status');
+          turno.appendChild(notaReintento);
+        }
+        if (segundos === undefined) return;
+        reintentoSolo = window.setTimeout(function () {
+          reintentoSolo = null;
+          repetirUltimo(intento + 1);
+        }, segundos * 1000);
       }
 
       // Al pulsar «Reintentar» el botón se desactiva y el foco del teclado se pierde
