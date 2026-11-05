@@ -59,6 +59,6 @@ Sale `var/Asistenta-Instalador-<versión>.exe`. El script baja el Node portable 
 
 ## Lo que aún no hace
 
-- Dictado: mientras exista `dictado.grabando` en la carpeta de datos, el punto se pone naranja (gancho para el dictado por voz).
+- Dictado: mientras exista `dictado.grabando` en la carpeta de datos, el punto se pone naranja (lo escribe el dictado por voz, `PA_DICTADO=1`, mientras graba). La bandeja solo lo mira cada segundo si el dictado está encendido (`dictado.activo`); si no, no se despierta cada segundo.
 
 `instalar.bat` y `levantar.bat` siguen funcionando igual para quien prefiera la carpeta con Node propio.
