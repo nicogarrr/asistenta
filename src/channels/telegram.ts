@@ -451,6 +451,11 @@ export class TelegramChannel implements ChannelAdapter {
     const forwarded = forwardedLabel(msg);
     if (forwarded && inbound.text) inbound.text = `${forwarded}\n${inbound.text}`;
     if (forwarded) inbound.forwardedFrom = forwarded;
+    // Una ubicación o un sitio compartido llega como texto con su enlace de mapa, para
+    // poder preguntar «¿qué hay cerca?» o «¿cuánto tardo en llegar?» sin escribir la
+    // dirección. El texto de un reenvío ya va marcado arriba; aquí no hay texto propio.
+    const located = sharedLocationText(msg);
+    if (located && !inbound.text) inbound.text = forwarded ? `${forwarded}\n${located}` : located;
     const replyQuote = msg.reply_to_message
       ? replyQuoteNote(msg.reply_to_message, ctx.me?.id)
       : null;
@@ -2381,7 +2386,7 @@ export const EDITED_MESSAGE_NOTE =
 
 /**
  * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre
- * lo que manda una persona (sticker, vídeo, GIF, ubicación, contacto, encuesta,
+ * lo que manda una persona (sticker, vídeo, GIF, contacto, encuesta,
  * dado, historia, juego, factura, contenido de pago, lista de tareas):
  * los mensajes de servicio de un grupo (alguien entra, se fija un mensaje) siguen
  * sin respuesta.
@@ -2390,8 +2395,6 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('sticker' in msg) return 'Aún no sé ver stickers. Si quieres algo, escríbemelo.';
   if ('video' in msg || 'animation' in msg)
     return 'Aún no puedo ver vídeos ni GIF. Cuéntame qué hay o mándame una captura.';
-  if ('location' in msg || 'venue' in msg)
-    return 'Aún no sé leer ubicaciones compartidas. Escríbeme el sitio o la dirección.';
   if ('contact' in msg)
     return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
   if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
@@ -2405,6 +2408,42 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('checklist' in msg)
     return 'Aún no sé leer listas de tareas de Telegram. Escríbemelas como texto.';
   return null;
+}
+
+/**
+ * Una ubicación compartida (o un sitio, «venue») como texto que el asistente entiende:
+ * el nombre y la dirección si Telegram los trae, las coordenadas y un enlace de mapa.
+ * Antes se contestaba «aún no sé leer ubicaciones» y había que escribir el sitio a
+ * mano. Empieza por «[», así que nunca se toma por un comando. null si no es una
+ * ubicación o las coordenadas no son válidas.
+ */
+export function sharedLocationText(msg: object): string | null {
+  const m = msg as {
+    location?: { latitude?: unknown; longitude?: unknown; live_period?: unknown };
+    venue?: {
+      location?: { latitude?: unknown; longitude?: unknown };
+      title?: unknown;
+      address?: unknown;
+    };
+  };
+  const loc = m.venue?.location ?? m.location;
+  const lat = Number(loc?.latitude);
+  const lon = Number(loc?.longitude);
+  if (!loc || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  const clean = (v: unknown): string =>
+    typeof v === 'string' ? sliceSafe(v.replace(/[\s[\]«»]+/g, ' ').trim(), 120).trim() : '';
+  const title = clean(m.venue?.title);
+  const address = clean(m.venue?.address);
+  const coords = `${Number(lat.toFixed(6))}, ${Number(lon.toFixed(6))}`;
+  const link = `https://www.google.com/maps?q=${Number(lat.toFixed(6))},${Number(lon.toFixed(6))}`;
+  const place = [title ? `«${title}»` : '', address].filter(Boolean).join(', ');
+  const live =
+    !m.venue && typeof m.location?.live_period === 'number' && m.location.live_period > 0
+      ? ' (en directo; solo veo el punto de partida)'
+      : '';
+  const label = m.venue ? 'Sitio compartido' : 'Ubicación compartida';
+  return `[${label}${live}: ${place ? `${place} — ` : ''}${coords} — ${link}]`;
 }
 
 /**
@@ -2441,7 +2480,7 @@ export function replyQuoteNote(reply: object, botId?: number): string | null {
     caption?: string;
     from?: { id?: number; first_name?: string; last_name?: string };
   };
-  const raw = (r.text ?? r.caption ?? '').replace(/\s+/g, ' ').trim();
+  const raw = (r.text ?? r.caption ?? sharedLocationText(reply) ?? '').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
   const cut = sliceSafe(raw, 300);
   const quoted = cut.length < raw.length ? `${cut.trimEnd()}…` : cut;
