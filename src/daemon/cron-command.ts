@@ -32,7 +32,7 @@ import {
 import { type RoutineRunner, validateSchedule } from '../routines.js';
 import { foldAccents, sliceSafe } from '../text.js';
 import { isReminder } from '../tools/reminder.js';
-import type { PreguntaOpts } from './pregunta-pendiente.js';
+import { type PreguntaOpts, SI_RESPUESTA } from './pregunta-pendiente.js';
 
 const DAY_MS = 86_400_000;
 
@@ -178,7 +178,8 @@ export interface CronCommandDeps {
   ask?: (opts: PreguntaOpts) => void;
 }
 
-const SI = /^(?:s[ií]|vale|venga|ok|okay|claro|dale|hazlo|porfa|por favor)[.!]*$/i;
+/** «sí», «sí, hazlo», «vale, gracias»… (la misma lectura que el resto de preguntas). */
+const SI = SI_RESPUESTA;
 
 const EJEMPLO_RUTINA = '«cada mañana a las 8 el resumen del día»';
 
