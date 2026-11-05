@@ -19,6 +19,28 @@ const TEMPORARY =
 /** Coletillas que no cambian el dato. */
 const TRAILER = /\s*,?\s*(?:gracias|porfa|por favor|vale|ok)\s*[.!]*$/i;
 
+/** «…, apúntalo», «…, guárdalo porfa»: piden guardar el dato, no son otro pedido. */
+const SAVE_TRAILER =
+  /\s*,\s*(?:ap[uú]ntalo|gu[aá]rdalo|ap[uú]ntatelo|gu[aá]rdatelo|que no se te olvide)\s*$/i;
+
+/**
+ * Lo que va tras una coma y convierte la frase en un encargo: un imperativo con
+ * pronombre («ayúdame», «mándale», «pídeme», «escríbele»), un imperativo suelto
+ * («busca», «llama a…») o «puedes/necesito/quiero…».
+ */
+const REQUEST_AFTER_COMMA =
+  /^(?:y\s+)?(?:\p{L}*[áéíóú]\p{L}*(?:me|te|le|les|lo|la|los|las|nos|selo|sela)|(?:ayuda|manda|env[ií]a|escribe|busca|llama|pon|haz|mira|abre|pide|reserva|compra|cancela|crea|programa|prepara|dime|dile|cuenta|av[ií]sa|recuerda|apunta|a[nñ]ade|quita|borra|calcula|traduce|explica|revisa|contesta|responde|comprueba|averigua|encuentra|consigue|organiza|ponme|hazme|dame)\b|(?:puedes|podr[ií]as|necesito|quiero|quisiera|me gustar[ií]a que|haz el favor|por favor)\b)/iu;
+
+/** Un dato admite una coma (dos trozos); más ya es otra cosa. */
+function commaIsPartOfFact(plain: string): boolean {
+  if (/;|:|[.!]\s+\p{L}/u.test(plain)) return false;
+  const parts = plain.split(',');
+  if (parts.length === 1) return true;
+  if (parts.length > 2) return false;
+  const tail = (parts[1] ?? '').trim();
+  return tail.length >= 2 && !REQUEST_AFTER_COMMA.test(tail);
+}
+
 const STATED: readonly RegExp[] = [
   // «recuerda que…», «ten en cuenta que…», «apunta que…» (no «recuérdame…»: eso es un aviso)
   /^(?:recuerda|acuérdate|acuerdate|ten en cuenta|apunta|que sepas)\s+(?:de\s+)?que\s+\S/i,
@@ -41,6 +63,8 @@ export function statedFact(text: string): string | null {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(TRAILER, '')
+    .replace(SAVE_TRAILER, '')
+    .replace(TRAILER, '')
     .replace(/[.!]+$/, '');
   if (one.length < 8 || one.length > 140) return null;
   // «antes de las 9 de la mañana» es una hora, no «mañana»: no la hace pasajera.
@@ -49,10 +73,12 @@ export function statedFact(text: string): string | null {
   // Otra frase detrás («…, ayúdame con…», «…. Mira esto») es otro pedido.
   // «antes de las 8:30» es una hora, no otra frase: antes los dos puntos la descartaban y
   // esas horas de silencio no se apuntaban nunca.
+  // Una coma con un complemento detrás («…el Dr. García, en Getafe») es parte del dato:
+  // antes cualquier coma lo descartaba y esos datos no se apuntaban nunca.
   const plain = one
     .replace(/\b(?:dr|dra|sr|sra|d|dña)\.\s/giu, '')
     .replace(/(\d):(?=\d{2}\b)/g, '$1h');
-  if (/,|;|:|[.!]\s+\p{L}/u.test(plain)) return null;
+  if (!commaIsPartOfFact(plain)) return null;
   if (!STATED.some((re) => re.test(one))) return null;
   return one.charAt(0).toUpperCase() + one.slice(1);
 }
