@@ -134,6 +134,27 @@ const MIN_CHECK_INTERVAL_MS = 100;
 const WINDOW_SECONDS = 3;
 
 /**
+ * Modo ahorro (`PA_AHORRO=1`): con ruido en la sala (tele, música) cada comprobación es una
+ * pasada de whisper-small (~3–4 s de CPU), y con la ventana de 3 s cada 1,5 s todo el audio
+ * se transcribe dos veces. En ahorro se comprueba cada 3 s con una ventana de 4,5 s: la
+ * mitad de pasadas (el coste de whisper no depende de si son 3 o 4,5 s de audio) y 1,5 s de
+ * solape, más que lo que dura decir «asistenta», así que la palabra siempre cae entera en
+ * alguna ventana. A cambio, puede tardar hasta 1,5 s más en reaccionar. Sin la variable,
+ * todo igual que siempre.
+ */
+export function wakeTiming(env: NodeJS.ProcessEnv = process.env): {
+  checkIntervalMs: number;
+  windowSeconds: number;
+} {
+  const ahorro = ['1', 'true', 'on', 'si', 'sí'].includes(
+    (env.PA_AHORRO ?? '').trim().toLowerCase(),
+  );
+  return ahorro
+    ? { checkIntervalMs: 3_000, windowSeconds: 4.5 }
+    : { checkIntervalMs: DEFAULT_CHECK_INTERVAL_MS, windowSeconds: WINDOW_SECONDS };
+}
+
+/**
  * Stage-1 gate, RMS in float [-1, 1]. See the module comment for the measured
  * noise floors this sits between. This is deliberately ~5x `looksSilent`'s
  * 0.01 in audio.ts: that one rejects digital silence for note playback, while
@@ -752,7 +773,7 @@ export class WakeWordListener {
   #owwCarry = new Float32Array(0);
 
   #lock = new Mutex();
-  #ring = new SampleRing(WHISPER_SAMPLE_RATE * WINDOW_SECONDS);
+  #ring: SampleRing;
   #running = false;
   #captureActive = false;
   #timer: ReturnType<typeof setTimeout> | null = null;
@@ -784,9 +805,11 @@ export class WakeWordListener {
   constructor(opts: WakeWordOptions = {}) {
     this.#word = opts.word ?? DEFAULT_WORD;
     this.#sensitivity = Math.max(0, Math.min(1, opts.sensitivity ?? DEFAULT_SENSITIVITY));
+    const timing = wakeTiming();
+    this.#ring = new SampleRing(Math.round(WHISPER_SAMPLE_RATE * timing.windowSeconds));
     this.#checkIntervalMs = Math.max(
       MIN_CHECK_INTERVAL_MS,
-      Math.trunc(opts.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS),
+      Math.trunc(opts.checkIntervalMs ?? timing.checkIntervalMs),
     );
     this.#onWake = opts.onWake;
     this.#onError = opts.onError;
