@@ -113,6 +113,11 @@ export interface ReminderDeps {
   /** Registers new routines with the running scheduler (RoutineRunner.sync). */
   sync: () => void;
   now?: () => number;
+  /**
+   * La próxima vez que de verdad suena (liveNextOf con RoutineRunner.status()): «cada 2
+   * días» y «excepto festivos» se saltan días que el cron sí tiene. Sin esto, el cron.
+   */
+  nextOf?: (r: Routine) => Date | null;
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -812,7 +817,7 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       if (args.action === 'list') {
         // Same words as /recordatorios («cada lunes a las 08:30», «lun 05/10 08:30»):
         // with the raw cron the model read «30 8 * * 1» back to the owner.
-        const rows = reminderRows(mine());
+        const rows = reminderRows(mine(), deps.nextOf);
         if (rows.length === 0) return reply('No hay recordatorios programados.');
         const lines = rows.map(({ routine: r, next }) => {
           const when = next
@@ -841,7 +846,7 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         // Dos con el mismo texto («pastilla» a las 9 y a las 21): el modelo solo podía
         // cancelar por texto y la pregunta no decía la hora de cada uno. Ahora la dice y
         // `at` elige el de esa hora (con `at`, nunca borra uno que suena a otra hora).
-        const rows = reminderRows(found);
+        const rows = reminderRows(found, deps.nextOf);
         const at = args.at === undefined ? '' : String(args.at).trim();
         const hits = at ? rows.filter((r) => firesAt(r.next, at)) : rows;
         if (hits.length === 0)
@@ -1218,6 +1223,22 @@ export function dentroDeEs(ms: number, now?: number): string {
 export interface ReminderRow {
   routine: Routine;
   next: Date | null;
+}
+
+/**
+ * La próxima vez que suena cada recordatorio según el planificador (RoutineRunner.status()):
+ * en «cada 2 días» o «excepto festivos» el cron tiene días que se saltan, y /recordatorios
+ * decía «mañana» cuando mañana no tocaba. Si el planificador no lo tiene, el cron.
+ */
+export function liveNextOf(
+  status: () => readonly { scope: string; name: string; next: string | null }[],
+): (r: Routine) => Date | null {
+  return (r) => {
+    const live = status().find((s) => s.scope === r.scope && s.name === r.name)?.next;
+    const at = live ? new Date(live) : null;
+    if (at && !Number.isNaN(at.getTime())) return at;
+    return r.schedule ? nextScheduleRun(r.schedule) : null;
+  };
 }
 
 /**
