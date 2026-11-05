@@ -188,6 +188,14 @@ export const TELEGRAM_COMMANDS = [
     command: 'steer',
     description: 'Corregir lo que estoy haciendo sin pararlo',
   },
+  {
+    command: 'btw',
+    description: 'Pregunta rápida sin esperar a que acabe',
+  },
+  {
+    command: 'compra',
+    description: 'Lista de la compra con botones para tachar',
+  },
   // Memoria y perfil.
   {
     command: 'memory',
