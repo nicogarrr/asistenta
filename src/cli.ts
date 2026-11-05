@@ -2543,7 +2543,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         semanticRecall,
         sessions,
       ),
-      createDocsTool(docMemory, scope),
+      createDocsTool(docMemory, scope, {
+        // «Guarda mi carpeta de apuntes en mis documentos»: solo el dueño en su chat privado.
+        folderAllowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
       createDecisionTool({
         ledger: decisionLedger,
         workstreams,

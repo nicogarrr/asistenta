@@ -1626,6 +1626,12 @@ export class Gate {
         const action = argString(c.args, 'action');
         return action === 'screenshot' || action === 'move' ? 'lee' : null;
       }
+      // Importar una carpeta del PC a «mis documentos» lee ficheros FUERA de la carpeta de
+      // trabajo (lo que `read` no puede): la Gate pregunta cada vez con la ruta. Las demás
+      // acciones de `documents` siguen como lectura (más abajo).
+      case 'documents':
+        if (argString(c.args, 'action') === 'import_folder') return null;
+        break;
       case 'tv': {
         const action = argString(c.args, 'action');
         return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
