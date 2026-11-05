@@ -698,6 +698,7 @@ import {
   SkillUsage,
   toolUseCounts,
   USO_VENTANA_MS,
+  usoPanel,
   usoText,
 } from './uso-funciones.js';
 import { Mutex } from './utils.js';
@@ -2216,6 +2217,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           creado: (id) => creados.leer(id),
           pagina: (id) =>
             panelPagina(paginasVivas, join(paths.state, 'salidas'), id, localTimeZone()),
+          // Funciones → «Lo que más usas»: lo mismo que /funciones uso (auditoría + usos de habilidades).
+          uso: async () => {
+            let lines: Parameters<typeof toolUseCounts>[0] = [];
+            try {
+              const { readCallAudit } = await import('./audit/query.js');
+              lines = readCallAudit();
+            } catch (err) {
+              log.warn('panel uso: auditoría ilegible', { err: String(err) });
+            }
+            const now = Date.now();
+            return usoPanel({
+              tools: toolUseCounts(lines, now - USO_VENTANA_MS),
+              toolText: (tool) => TOOL_ABILITIES[tool]?.text ?? null,
+              skills: skills.list(),
+              skillUse: skillUsage.all(),
+              now,
+            });
+          },
           // Tarjeta Contexto: qué ocupa cada conversación y cuánto falta para resumir
           // (solo números y nombres de herramientas, nunca el texto).
           contexto: () =>

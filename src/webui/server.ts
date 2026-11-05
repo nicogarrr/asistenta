@@ -50,6 +50,8 @@ export interface WebUiDeps {
    * con tope (ver mapa-memoria.ts). Si falta o devuelve null, 503.
    */
   mapaMemoria?(scope?: string): unknown | Promise<unknown>;
+  /** Tarjeta Funciones → «Lo que más usas» (uso-funciones.ts usoPanel). Si falta, 503. */
+  uso?(): unknown | Promise<unknown>;
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(
     text: string,
@@ -135,6 +137,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'pagina'; id: string }
   | { method: 'GET'; kind: 'creado'; id: string }
   | { method: 'GET'; kind: 'funciones' }
+  | { method: 'GET'; kind: 'uso' }
   | { method: 'GET'; kind: 'contexto' }
   | { method: 'GET'; kind: 'mapaMemoria' }
   | { method: 'GET'; kind: 'status' }
@@ -271,6 +274,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'paginas' };
     case '/api/funciones':
       return { method: 'GET', kind: 'funciones' };
+    case '/api/uso':
+      return { method: 'GET', kind: 'uso' };
     case '/api/contexto':
       return { method: 'GET', kind: 'contexto' };
     case '/api/mapa-memoria':
@@ -393,6 +398,11 @@ async function respondApi(
         break;
       case 'funciones':
         payload = panelFunciones();
+        break;
+      case 'uso':
+        payload = deps.uso ? await deps.uso() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Uso aún no disponible');
         break;
       case 'contexto':
         payload = deps.contexto ? await deps.contexto() : null;
