@@ -42,7 +42,9 @@ describe('recordatorio: la hora dicha por el dueño manda', () => {
     expect(madrid(whenFromWords('pasado mañana a las 10 y media', NOW))).toBe('2026-11-07 10:30');
     // Sin día: hoy si aún no ha pasado; si ya pasó, mañana.
     expect(madrid(whenFromWords('a las 18:00', NOW))).toBe('2026-11-05 18:00');
-    expect(madrid(whenFromWords('a las 7', NOW))).toBe('2026-11-06 07:00');
+    // «a las 7» a las 10 de la mañana: las 19:00 de hoy (agente2-a-las-5), no las 7:00 de mañana.
+    expect(madrid(whenFromWords('a las 7', NOW))).toBe('2026-11-05 19:00');
+    expect(madrid(whenFromWords('a las 7 de la mañana', NOW))).toBe('2026-11-06 07:00');
     expect(whenFromWords('cuando puedas', NOW)).toBeNull();
     expect(whenFromWords('', NOW)).toBeNull();
   });

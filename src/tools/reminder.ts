@@ -153,9 +153,13 @@ export function parseLocalStamp(raw: string): Date | null {
 
 /**
  * La hora tal como la dijo el dueño («mañana a las 9,30», «el viernes a las 8 de la tarde»,
- * «dentro de 2 horas», «a las 7»), leída con el mismo lector que /calendario. Sin día,
- * «a las 7» es hoy si aún no ha pasado y si no, mañana. null si no se entiende: entonces
- * vale la fecha que calculó el modelo.
+ * «dentro de 2 horas», «a las 7»), leída con el mismo lector que /calendario. null si no se
+ * entiende: entonces vale la fecha que calculó el modelo.
+ *
+ * Una hora de 1 a 11 sin «de la mañana/tarde/noche» («a las 5», «a las cinco y media») tiene
+ * dos lecturas. Sin día es la próxima de las dos: a las 10 de la mañana «a las 5» son las
+ * 17:00 de hoy (antes, las 5:00 de mañana) y a las 20:00 «a las 9» son las 21:00. Otro día
+ * («mañana a las 5»), de 1 a 6 es por la tarde y de 7 a 11 por la mañana.
  */
 export function whenFromWords(
   said: string,
@@ -177,12 +181,69 @@ export function whenFromWords(
     if (!got || (opts.exact && got.title !== 'recordatorio')) return null;
     return got.start;
   };
+  const soon = (d: Date | null): boolean =>
+    d !== null && d.getTime() - now.getTime() >= MIN_REMINDER_MS;
+  const twin = (d: Date | null): Date | null =>
+    d && hourIsAmbiguous(text, d, timeZone) ? afternoonOf(d, timeZone) : null;
   const direct = read(text);
-  if (direct) return direct;
+  if (direct) {
+    const pm = twin(direct);
+    if (!pm) return direct;
+    // «hoy a las 5» a las 10: las 17:00, no una hora que ya pasó.
+    if (!soon(direct)) return soon(pm) ? pm : direct;
+    // Otro día: de 1 a 6 sin más es por la tarde.
+    const sameDay = localDay(direct) === localDay(now);
+    if (!sameDay && wallClock(direct, timeZone).hour <= 6) return pm;
+    return direct;
+  }
   if (!/^a\s+las?\s/i.test(text)) return null;
   const today = read(`hoy ${text}`);
-  if (today && today.getTime() - now.getTime() >= MIN_REMINDER_MS) return today;
+  if (soon(today)) return today;
+  const todayPm = twin(today);
+  if (soon(todayPm)) return todayPm;
   return read(`mañana ${text}`);
+}
+
+/** Lo que dice de qué parte del día es: con esto la hora ya no tiene dos lecturas. */
+const DAY_PART =
+  /\b(?:de la (?:mañana|manana|madrugada|tarde|noche)|de madrugada|del mediod[ií]a|por la (?:mañana|manana|tarde|noche)|esta (?:mañana|manana|tarde|noche)|a\.?m\.?|p\.?m\.?|horas?)\b|\d\s*h\b/iu;
+
+/**
+ * ¿«a las 5» puede ser las 5:00 o las 17:00? Solo si la hora leída va de 1 a 11, no dice la
+ * parte del día y no se escribió como en 24 h («05:00»).
+ */
+export function hourIsAmbiguous(text: string, read: Date, timeZone?: string): boolean {
+  const hour = wallClock(read, timeZone).hour;
+  if (hour < 1 || hour > 11) return false;
+  if (DAY_PART.test(text)) return false;
+  if (/\b0\d(?::\d{2})?\b/.test(text)) return false;
+  return true;
+}
+
+/** La misma hora doce horas después, en el reloj de pared (también en cambio de hora). */
+function afternoonOf(d: Date, timeZone?: string): Date {
+  const want = wallClock(d, timeZone).hour + 12;
+  let at = d.getTime() + 12 * 3_600_000;
+  const got = wallClock(new Date(at), timeZone).hour;
+  if (got !== want) at += (want - got) * 3_600_000;
+  return new Date(at);
+}
+
+/**
+ * ¿La fecha del modelo es la otra lectura de la misma hora dicha («a las 5» → 5:00 o 17:00)?
+ * Entonces no hay nada que corregir: el modelo eligió una de las dos.
+ */
+export function sameHourOtherHalf(
+  words: Date,
+  model: Date,
+  said: string,
+  timeZone?: string,
+): boolean {
+  const text = said.normalize('NFC').replace(/\s+/g, ' ').trim();
+  const gap = Math.abs(words.getTime() - model.getTime());
+  if (Math.abs(gap - 12 * 3_600_000) > 3_600_000) return false;
+  const [am, pm] = words < model ? [words, model] : [model, words];
+  return hourIsAmbiguous(text, am, timeZone) && localDay(am) === localDay(pm);
 }
 
 /** Palabras que dicen que se repite: sin ellas «mañana a las 9» no es una rutina diaria. */
@@ -736,7 +797,12 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       }
       // Las palabras del dueño mandan: el modelo a veces se equivocaba de día o de hora al
       // pasar «mañana a las 9,30» o «el viernes» a una fecha (un día de más, las 9:00).
-      if (fromWords && Math.abs(fromWords.getTime() - when.getTime()) >= 60_000) {
+      // Si el modelo eligió la otra lectura de la misma hora («a las 5» → 5:00 o 17:00), vale.
+      if (
+        fromWords &&
+        Math.abs(fromWords.getTime() - when.getTime()) >= 60_000 &&
+        !(when !== fromWords && sameHourOtherHalf(fromWords, when, saidWords))
+      ) {
         if (args.at !== undefined || args.in_minutes !== undefined) {
           corrected = ` Lo he puesto a la hora que dijiste («${saidWords}»), no a ${stamp(when)}.`;
         }
