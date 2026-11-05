@@ -398,9 +398,12 @@ export function sameHourOtherHalf(
   return hourIsAmbiguous(text, am, timeZone) && localDay(am) === localDay(pm);
 }
 
-/** Palabras que dicen que se repite: sin ellas «mañana a las 9» no es una rutina diaria. */
+/**
+ * Palabras que dicen que se repite: sin ellas «mañana a las 9» no es una rutina diaria.
+ * «de lunes a viernes a las 7:30» también (antes se ignoraba y valía el cron del modelo).
+ */
 const REPEATS =
-  /\b(?:cada|todos los|todas las|diario|diariamente|a diario|semanal(?:mente)?|mensual(?:mente)?|entre semana|laborables?|los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos|fines de semana|findes))\b/;
+  /\b(?:cada|todos los|todas las|diario|diariamente|a diario|semanal(?:mente)?|mensual(?:mente)?|entre semana|laborables?|de (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo) a (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)|los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos|fines de semana|findes))\b/;
 
 /**
  * El horario repetido tal como lo dijo el dueño («cada lunes a las 9,30», «los laborables a
