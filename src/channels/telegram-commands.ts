@@ -192,6 +192,10 @@ export const TELEGRAM_COMMANDS = [
     command: 'btw',
     description: 'Pregunta rápida sin esperar a que acabe',
   },
+  {
+    command: 'compra',
+    description: 'Lista de la compra con botones para tachar',
+  },
   // Memoria y perfil.
   {
     command: 'memory',

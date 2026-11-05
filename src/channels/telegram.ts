@@ -1,6 +1,7 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { UPDATE_CALLBACK_PREFIX } from '../autoupdate-boton.js';
 import { BoundedMap } from '../bounded-map.js';
+import { COMPRA_CALLBACK_PREFIX } from '../compra.js';
 import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
 import { sliceSafe } from '../text.js';
@@ -1063,6 +1064,13 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // Lista de la compra: tachar/destachar edita el mismo mensaje; nunca toca
+    // aprobaciones. De quién es la lista lo decide el daemon.
+    if (data.startsWith(COMPRA_CALLBACK_PREFIX)) {
+      await this.#onFuncionesPress(ctx, handlers, data, userId, handlers.onCompraButton);
+      return;
+    }
+
     // Botón que equivale a teclear una orden (p. ej. «Dejar de vigilar» en
     // /vigilando): entra como si quien pulsa la hubiera escrito en ese chat, por el
     // mismo camino y con los mismos permisos. Solo órdenes de una lista cerrada;
@@ -1280,13 +1288,14 @@ export class TelegramChannel implements ChannelAdapter {
     handlers: ChannelHandlers,
     data: string,
     userId: number,
+    onPress: ChannelHandlers['onFuncionesButton'] = handlers.onFuncionesButton,
   ): Promise<void> {
     await ctx.answerCallbackQuery().catch(() => {});
     const chatId = ctx.callbackQuery?.message?.chat?.id;
     const messageId = ctx.callbackQuery?.message?.message_id;
-    if (chatId === undefined || !handlers.onFuncionesButton) return;
-    const view = await handlers
-      .onFuncionesButton({
+    if (chatId === undefined || !onPress) return;
+    const view = await onPress
+      .call(handlers, {
         channel: 'telegram',
         chatId: String(chatId),
         userId: String(userId),

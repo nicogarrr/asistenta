@@ -489,6 +489,14 @@ import {
   fireCommandRoutine,
   isCommandRoutine,
 } from './command-routine.js';
+import {
+  CompraStore,
+  compraIntent,
+  compraPress,
+  createCompraTool,
+  itemsFromText,
+  runCompraIntent,
+} from './compra.js';
 import { fetchGoQuota } from './core/go-quota.js';
 import { dailyBudgetExceeded, recentTurns, recordUsage, usageReport } from './core/usage.js';
 import {
@@ -2680,6 +2688,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createLuzTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
+      // «añade leche», «ya he comprado el pan»: la lista de la compra de este chat (/compra con botones).
+      createCompraTool(new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey)),
       createMailRulesTool({ account: () => loadMailAccount() }),
       createGoalTool({
         goals: goalStore,
@@ -7020,6 +7030,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, reply, { quote: true });
   };
 
+  /** /compra [cosas|limpiar|vaciar]: la lista de la compra con un botón por cosa para tachar. */
+  const cmdCompra = async (inbound: Inbound, args: string): Promise<void> => {
+    const store = new CompraStore(join(paths.state, 'lista-compra.json'), chatKey(inbound));
+    const a = args.trim();
+    const intent = !a
+      ? ({ kind: 'show' } as const)
+      : /^(?:limpiar|limpia|tachados)$/i.test(a)
+        ? ({ kind: 'clearDone' } as const)
+        : /^(?:vaciar|vacia|vacía|borrar)$/i.test(a)
+          ? ({ kind: 'clearAll' } as const)
+          : ({ kind: 'add', items: itemsFromText(a) } as const);
+    const view = runCompraIntent(store, intent);
+    await say(inbound, view.text, { quote: true, buttons: view.buttons });
+  };
+
   const cmdStop = async (inbound: Inbound): Promise<void> => {
     const chatKey_ = chatKey(inbound);
     const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
@@ -8896,6 +8921,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     { names: ['steer', 'corrige'], run: (inbound, args) => cmdSteer(inbound, args) },
     { names: ['btw', 'almargen'], run: (inbound, args) => cmdBtw(inbound, args) },
+    { names: ['compra', 'lista'], run: (inbound, args) => cmdCompra(inbound, args) },
     { names: ['pendientes', 'followups'], run: (inbound) => cmdFollowups(inbound) },
     { names: ['entreno_hoy'], run: (inbound) => cmdGym(inbound, 'hoy') },
     { names: ['ultimo'], run: (inbound) => cmdGym(inbound, 'ultimo') },
@@ -9046,6 +9072,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ),
       };
     },
+    onCompraButton: async (press) =>
+      compraPress(
+        new CompraStore(join(paths.state, 'lista-compra.json'), `${press.channel}:${press.chatId}`),
+        press.data,
+      ),
     onUpdateButton: async (press) => {
       const { createUpdateButton } = await import('./autoupdate-boton.js');
       const { autostartRepo } = await import('./autostart.js');
@@ -9211,6 +9242,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               const reply = snoozeReminder(store, fired, when, new Date());
               routineRunner.sync();
               await say(inbound, reply, { quote: true });
+              return;
+            }
+          }
+          // «añade leche y pan a la lista», «¿qué falta en la lista?»: al momento, con botones.
+          {
+            const intent = isOwnerDm(inbound, vigilanteOwnerId) ? compraIntent(inbound.text) : null;
+            if (intent) {
+              const store = new CompraStore(join(paths.state, 'lista-compra.json'), chatKey_);
+              const view = runCompraIntent(store, intent);
+              await say(inbound, view.text, { quote: true, buttons: view.buttons });
               return;
             }
           }

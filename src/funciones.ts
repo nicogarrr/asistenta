@@ -251,6 +251,7 @@ export const TOOL_ABILITIES: Readonly<
     text: 'busco y leo tus correos; respondo, reenvío o escribo solo si apruebas el borrador exacto',
   },
   tareas: { area: 'agenda', text: 'apunto tus tareas de la semana y te digo qué tienes' },
+  compra: { area: 'agenda', text: 'llevo tu lista de la compra y la tachas con botones' },
   repartos: {
     area: 'agenda',
     text: 'te digo dónde están tus paquetes leyendo los correos de envío',

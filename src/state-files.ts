@@ -144,6 +144,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'últimas 300 respuestas del bot en Telegram (recortadas), para que una reacción 👎/🤔 tras reiniciar sepa a qué responde',
     backup: 'file',
   },
+  {
+    name: 'lista-compra.json',
+    what: 'lista de la compra por chat (/compra, botones para tachar)',
+    backup: 'file',
+  },
   { name: 'actions.jsonl', what: 'registro de acciones hechas por el agente', backup: 'file' },
   {
     name: 'dropped-reminders.jsonl',
