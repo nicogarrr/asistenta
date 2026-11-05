@@ -151,8 +151,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'memory', description: 'lo que recuerdo de esta conversación' },
       {
         command: 'memoria',
-        args: '[buscar|olvidar|exportar]',
-        description: 'ver, buscar u olvidar recuerdos',
+        args: '[buscar|olvidar|exportar|importar]',
+        description: 'tus recuerdos',
       },
       { command: 'buscar', args: '<texto>', description: 'busca en conversaciones pasadas' },
       { command: 'perfil', args: '[guardar|olvidar]', description: 'tu perfil estructurado' },
