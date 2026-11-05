@@ -669,5 +669,7 @@ function panelReply(answer: Record<string, unknown> & { text: string }): Record<
   const out: Record<string, unknown> = { text: answer.text };
   if (images.length > 0) out.images = images;
   if (files.length > 0) out.files = files;
+  // El turno falló por la red o el modelo caído: la página lo reintenta sola.
+  if (answer.outage === true) out.outage = true;
   return out;
 }

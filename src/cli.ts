@@ -7689,6 +7689,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (retrying) text2 = delay === null ? AUTO_RETRY_GAVE_UP : '';
         else if (delay !== null) text2 = `${text2} ${autoRetryNote(delay)}`;
       }
+      // El panel no tiene la cola de reintentos de Telegram: se le dice que fue la red
+      // y la página lo reintenta sola (src/webui/page.ts, programarReintento).
+      if (out && autoRetryOn && !result.text.trim() && isOutageError(result.error)) out.outage?.();
       if (out) out.answer(text2);
       else if (text2) await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
