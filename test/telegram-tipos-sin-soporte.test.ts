@@ -60,9 +60,10 @@ describe('mensajes que Asistenta aún no sabe leer', () => {
     expect(replies).toEqual(['Aún no sé ver stickers. Si quieres algo, escríbemelo.']);
   });
 
-  it('un dado también avisa', async () => {
+  it('un dado ya no avisa: llega como texto (tg26)', async () => {
     const dice = await receive({ dice: { emoji: '🎲', value: 3 } });
-    expect(dice.replies[0]).toMatch(/dados/);
+    expect(dice.replies).toEqual([]);
+    expect(dice.got[0]?.text).toBe('[Dado 🎲: salió un 3]');
   });
 
   it('un vídeo sin texto avisa', async () => {
@@ -97,10 +98,10 @@ describe('mensajes que Asistenta aún no sabe leer', () => {
     expect(replies).toHaveLength(0);
   });
 
-  it('un dado y una historia reenviada también avisan', async () => {
+  it('un dado llega como texto (tg26) y una historia reenviada avisa', async () => {
     const dice = await receive({ dice: { emoji: '🎲', value: 4 } });
-    expect(dice.got).toHaveLength(0);
-    expect(dice.replies).toEqual(['Aún no juego a los dados. Si quieres algo, escríbemelo.']);
+    expect(dice.got.map((i) => i.text)).toEqual(['[Dado 🎲: salió un 4]']);
+    expect(dice.replies).toEqual([]);
     const story = await receive({ story: { chat: { id: 3, type: 'channel' }, id: 9 } });
     expect(story.got).toHaveLength(0);
     expect(story.replies).toEqual([

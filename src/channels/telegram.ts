@@ -17,7 +17,13 @@ import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import { sharedKindText } from './telegram-compartido.js';
 import { SentTexts } from './telegram-enviados.js';
-import { addedEmojis, reactionMood, reactionText } from './telegram-reacciones.js';
+import {
+  addedEmojis,
+  REACTION_LOG_MSG,
+  REACTION_NEGATIVE_LOG_MSG,
+  reactionMood,
+  reactionText,
+} from './telegram-reacciones.js';
 import {
   choiceText,
   QUICK_REPLY_DONE,
@@ -282,6 +288,15 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => {});
   }
 
+  #dropOpenQuickReply(chatId: string, onlyMessageId?: number): void {
+    const open = this.#openQuickReplies.get(chatId);
+    if (open === undefined) return;
+    if (onlyMessageId !== undefined && onlyMessageId !== open) return;
+    this.#openQuickReplies.delete(chatId);
+    // Pulsado: el propio botón ya deja «✓ …»; no se borra aquí.
+    if (onlyMessageId === undefined) this.#clearKeyboard(Number(chatId), open);
+  }
+
   isReady(): boolean {
     return this.#ready;
   }
@@ -442,6 +457,9 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // Contesta escribiendo: los botones «Sí/No» / «¿A o B?» que quedaban ya no valen.
+    this.#dropOpenQuickReply(String(ctx.chat?.id ?? ''));
+
     // Voice notes are carried through as audio, not transcribed here. Transcription
     // is CPU-bound and slow on first use (the model has to load from disk), and
     // doing it in the message handler would block every other chat behind a
@@ -550,9 +568,9 @@ export class TelegramChannel implements ChannelAdapter {
       !inbound.audioFileId &&
       !inbound.documentFileId
     ) {
-      this.#holdAlbum(`${inbound.chatId}:${albumId}`, inbound, handlers, addressed, () =>
+      this.#holdAlbum(`${inbound.chatId}:${albumId}`, inbound, handlers, addressed, (note) =>
         ctx
-          .reply(ALBUM_VIDEO_NOTE, {
+          .reply(note, {
             message_thread_id: msg.message_thread_id,
             reply_to_message_id: msg.message_id,
           } as never)
@@ -691,6 +709,13 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   /** Álbumes de fotos a la espera de su última foto (chat:media_group_id). */
+  /**
+   * Por chat, el último mensaje con botones «Sí/No» o «¿A o B?» aún sin contestar. Si
+   * Nico contesta escribiendo (o con una nota de voz), esos botones ya no valen y se
+   * quitan: antes seguían ahí y un toque tardío mandaba una respuesta vieja.
+   */
+  readonly #openQuickReplies = new Map<string, number>();
+
   readonly #albumHeld = new Map<
     string,
     {
@@ -698,7 +723,7 @@ export class TelegramChannel implements ChannelAdapter {
       timer: ReturnType<typeof setTimeout>;
       /** Vídeos del álbum (no se ven) y su aviso, que sale una sola vez. */
       videos?: number;
-      videoNotice?: () => Promise<unknown>;
+      videoNotice?: (text: string) => Promise<unknown>;
       /** En un grupo: alguna pieza del álbum menciona al bot o le responde. */
       addressed: boolean;
     }
@@ -714,7 +739,7 @@ export class TelegramChannel implements ChannelAdapter {
     inbound: Inbound,
     handlers: ChannelHandlers,
     addressed: boolean,
-    videoNotice?: () => Promise<unknown>,
+    videoNotice?: (text: string) => Promise<unknown>,
   ): void {
     const held = this.#albumHeld.get(key);
     const timer = setTimeout(() => this.#flushAlbum(key, handlers), ALBUM_WAIT_MS);
@@ -797,7 +822,9 @@ export class TelegramChannel implements ChannelAdapter {
       first.text = withVideoMark(first.text, first.forwardedFrom);
     if (held.videos) {
       // Un solo aviso por álbum. Si solo traía vídeos sin texto, no hay turno.
-      void held.videoNotice?.();
+      // Si otro vídeo del álbum sí se oyó, «no puedo ver vídeos» era falso: se matiza.
+      const someHeard = first.audioIsVideo || first.albumAudios?.some((a) => a.video);
+      void held.videoNotice?.(someHeard ? ALBUM_VIDEO_PARTIAL_NOTE : ALBUM_VIDEO_NOTE);
       if (!first.text && !first.photoFileId && !first.audioFileId && !first.documentFileId) return;
       first.albumVideos = held.videos;
     }
@@ -827,11 +854,13 @@ export class TelegramChannel implements ChannelAdapter {
     if (added.length === 0) return;
     const emoji = added.find((e) => reactionMood(e) === 'negativa');
     if (!emoji) {
-      handlers.log('info', 'telegram reaction', { emoji: added.join(' '), messageId });
+      handlers.log('info', REACTION_LOG_MSG, { emoji: added.join(' '), messageId });
       return;
     }
     if (this.#reactedTurns.has(key)) return;
     this.#reactedTurns.set(key, true);
+    // Cuenta para «Tus reacciones de hoy» de /estado (solo el mensaje, sin el texto citado).
+    handlers.log('info', REACTION_NEGATIVE_LOG_MSG, { emoji, messageId });
     const inbound: Inbound = {
       channel: this.name,
       account: this.account,
@@ -969,6 +998,7 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
     await ctx.answerCallbackQuery({ text }).catch(() => {});
+    this.#dropOpenQuickReply(String(message.chat.id), message.message_id);
     void this.#throttled(() =>
       withTimeout(
         this.#bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
@@ -1603,6 +1633,8 @@ export class TelegramChannel implements ChannelAdapter {
           bindMoreButtons(outbound.buttons, String(chatId), () =>
             this.#clearKeyboard(chatId, sentId),
           );
+          if (hasOpenQuickReply(outbound.buttons))
+            this.#openQuickReplies.set(String(chatId), sentId);
         }
         onSent?.(String(sentId));
         this.#sentTexts.set(`${String(chatId)}:${sentId}`, {
@@ -2313,6 +2345,13 @@ function decisionLabel(choice: ApprovalChoice): string {
  * inside it, so there is exactly one place that decides approve vs deny.
  */
 
+/** Botones de respuesta rápida aún por pulsar («Sí/No», opciones de «¿A o B?»). */
+export function hasOpenQuickReply(buttons: Array<{ action: string }> | undefined): boolean {
+  return (buttons ?? []).some(
+    (b) => b.action.startsWith(QUICK_REPLY_PREFIX) && b.action !== QUICK_REPLY_DONE,
+  );
+}
+
 export function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
   const kb = new InlineKeyboard();
   // Hasta dos botones van en una fila; con más, filas de dos. Los cuatro botones de
@@ -2621,6 +2660,9 @@ const ALBUM_MAX_PHOTOS = 10;
 /** Aviso único de un álbum con vídeos: las fotos y el texto sí se leen. */
 export const ALBUM_VIDEO_NOTE =
   'Aún no puedo ver vídeos ni GIF: del álbum te contesto a las fotos y al texto.';
+/** Igual, cuando otro vídeo del mismo álbum sí se ha oído (los de más de 20 MB o un GIF no). */
+export const ALBUM_VIDEO_PARTIAL_NOTE =
+  'Alguno de los vídeos del álbum no lo he podido oír (pesa más de 20 MB o es un GIF); te contesto con lo demás.';
 
 /**
  * Las actualizaciones que pide el bot a Telegram: las que escucha `start()`. La lista
@@ -2664,7 +2706,6 @@ export function unsupportedKindNote(msg: object): string | null {
   if ('contact' in msg)
     return 'Aún no sé leer contactos compartidos. Escríbeme el nombre y el número.';
   if ('poll' in msg) return 'Aún no sé leer encuestas. Escríbeme la pregunta.';
-  if ('dice' in msg) return 'Aún no juego a los dados. Si quieres algo, escríbemelo.';
   if ('story' in msg) return 'Aún no puedo ver historias. Cuéntame qué hay o mándame una captura.';
   if ('game' in msg) return 'Aún no sé jugar a juegos de Telegram. Si quieres algo, escríbemelo.';
   if ('invoice' in msg)
