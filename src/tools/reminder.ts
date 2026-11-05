@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
+import { parseFechaCalendario } from '../agenda/fecha-natural.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { scheduleEs } from '../cron/describe-es.js';
 import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
@@ -70,6 +71,12 @@ const Params = lazySchema(() =>
       Type.String({
         description:
           "create, one time: local date and time as YYYY-MM-DDTHH:MM (24h, the user's timezone). Work it out from the <now> block. cancel: when several share the text, the time of the one to remove (HH:MM or YYYY-MM-DDTHH:MM).",
+      }),
+    ),
+    said: Type.Optional(
+      Type.String({
+        description:
+          'create, one time: the user\'s own words for WHEN, verbatim ("mañana a las 9,30", "el viernes a las 8 de la tarde", "dentro de 2 horas"). Always pass it with at or in_minutes: the tool reads it itself and, if it disagrees with at, the user\'s words win.',
       }),
     ),
     in_minutes: Type.Optional(
@@ -141,6 +148,31 @@ export function parseLocalStamp(raw: string): Date | null {
   const w = wallClock(date, zone);
   if (w.year !== y || w.month !== mo || w.day !== d || w.hour !== h || w.minute !== mi) return null;
   return date;
+}
+
+/**
+ * La hora tal como la dijo el dueño («mañana a las 9,30», «el viernes a las 8 de la tarde»,
+ * «dentro de 2 horas», «a las 7»), leída con el mismo lector que /calendario. Sin día,
+ * «a las 7» es hoy si aún no ha pasado y si no, mañana. null si no se entiende: entonces
+ * vale la fecha que calculó el modelo.
+ */
+export function whenFromWords(said: string, now: Date, timeZone?: string): Date | null {
+  const text = said
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?¡¿]+$/u, '')
+    // «a las 9,30»: la coma de los minutos, como se escribe en el móvil.
+    .replace(/\b(\d{1,2}),(\d{2})\b/g, '$1:$2');
+  if (!text || text.length > 80) return null;
+  const read = (t: string): Date | null =>
+    parseFechaCalendario(`${t} recordatorio`, now, timeZone)?.start ?? null;
+  const direct = read(text);
+  if (direct) return direct;
+  if (!/^a\s+las?\s/i.test(text)) return null;
+  const today = read(`hoy ${text}`);
+  if (today && today.getTime() - now.getTime() >= MIN_REMINDER_MS) return today;
+  return read(`mañana ${text}`);
 }
 
 /** Cron pinned to one minute, day and month: fires once a year, and we delete it after. */
@@ -483,7 +515,9 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
     description: [
       'Reminders the user asked for: a message in this chat at the time they said.',
       'action=create with text plus ONE of: at (YYYY-MM-DDTHH:MM local), in_minutes (>= 2),',
-      'or schedule (5-field cron, for repeating ones like every Monday 8:30; add until',
+      "or schedule (5-field cron). For one-time reminders also pass said: the user's own words",
+      'for when, verbatim («mañana a las 9,30»); the tool reads them and they win over at.',
+      'Repeating: schedule (5-field cron, like every Monday 8:30; add until',
       '(YYYY-MM-DD, last day) when it should stop). Spanish night hours: «12 de la noche» or',
       '«medianoche» is 00:00 (the night after that day), «la una de la noche» is 01:00,',
       '«las 3 de la noche» is 03:00, «9 de la noche» is 21:00.',
@@ -553,6 +587,11 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       if (!text) return reply('create necesita text.', true);
       if (text.length > MAX_TEXT) return reply(`El texto pasa de ${MAX_TEXT} caracteres.`, true);
       const given = [args.at, args.in_minutes, args.schedule].filter((v) => v !== undefined);
+      // Solo `said` («mañana a las 9,30») también vale: la hora la saca la herramienta.
+      const saidWords =
+        args.schedule === undefined && typeof args.said === 'string' ? args.said.trim() : '';
+      const fromWords = saidWords ? whenFromWords(saidWords, new Date(now())) : null;
+      if (given.length === 0 && fromWords) given.push(saidWords);
       if (given.length !== 1) {
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
@@ -616,13 +655,26 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       }
 
       let when: Date;
+      let corrected = '';
       if (args.in_minutes !== undefined) {
         if (!Number.isFinite(args.in_minutes)) return reply('in_minutes no es un número.', true);
         when = new Date(now() + Math.round(args.in_minutes) * 60_000);
-      } else {
+      } else if (args.at !== undefined) {
         const parsed = parseLocalStamp(String(args.at));
-        if (!parsed) return reply('at debe ser YYYY-MM-DDTHH:MM (hora local, fecha real).', true);
-        when = parsed;
+        if (!parsed && !fromWords) {
+          return reply('at debe ser YYYY-MM-DDTHH:MM (hora local, fecha real).', true);
+        }
+        when = parsed ?? (fromWords as Date);
+      } else {
+        when = fromWords as Date;
+      }
+      // Las palabras del dueño mandan: el modelo a veces se equivocaba de día o de hora al
+      // pasar «mañana a las 9,30» o «el viernes» a una fecha (un día de más, las 9:00).
+      if (fromWords && Math.abs(fromWords.getTime() - when.getTime()) >= 60_000) {
+        if (args.at !== undefined || args.in_minutes !== undefined) {
+          corrected = ` Lo he puesto a la hora que dijiste («${saidWords}»), no a ${stamp(when)}.`;
+        }
+        when = fromWords;
       }
       if (when.getTime() - now() < MIN_REMINDER_MS) {
         return reply(
@@ -644,7 +696,9 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         schedule: onceCron(when),
       });
       deps.sync();
-      return reply(`Recordatorio programado para ${stamp(when)} (hora local): ${text}.`);
+      return reply(
+        `Recordatorio programado para ${stamp(when)} (hora local): ${text}.${corrected}`,
+      );
     },
   };
 }
