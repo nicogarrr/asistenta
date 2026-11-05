@@ -1626,6 +1626,12 @@ export class Gate {
         const action = argString(c.args, 'action');
         return action === 'screenshot' || action === 'move' ? 'lee' : null;
       }
+      // Importar una carpeta del PC a «mis documentos» lee ficheros FUERA de la carpeta de
+      // trabajo (lo que `read` no puede): la Gate pregunta cada vez con la ruta. Las demás
+      // acciones de `documents` siguen como lectura (más abajo).
+      case 'documents':
+        if (argString(c.args, 'action') === 'import_folder') return null;
+        break;
       case 'tv': {
         const action = argString(c.args, 'action');
         return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
@@ -1700,6 +1706,8 @@ export class Gate {
       // «Hazme una gráfica / pásamelo en Excel o PDF»: genera el archivo en memoria con los
       // datos del turno y lo manda a esta misma conversación; sin red y sin tocar el disco.
       case 'entregable':
+      // «¿Cuánto he gastado este mes?»: lee la tabla local de cobros del Ojo; sin red ni escritura.
+      case 'gastos':
         return 'lee';
       // «¿A qué hora pongo la lavadora?»: precio de la luz del servicio fijo de Red Eléctrica.
       // El aviso de cada noche guarda (o quita) una rutina local del dueño.
@@ -2926,6 +2934,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'pagina_viva',
   'entregable',
   'github_avisos',
+  'gastos',
   'aire',
   'trafico',
   'luz',

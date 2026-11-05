@@ -626,6 +626,7 @@ import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createGasolinerasTool } from './tools/gasolineras.js';
+import { createGastosTool } from './tools/gastos.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createLuzTool } from './tools/luz.js';
@@ -2565,7 +2566,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         semanticRecall,
         sessions,
       ),
-      createDocsTool(docMemory, scope),
+      createDocsTool(docMemory, scope, {
+        // «Guarda mi carpeta de apuntes en mis documentos»: solo el dueño en su chat privado.
+        folderAllowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
       createDecisionTool({
         ledger: decisionLedger,
         workstreams,
@@ -2670,6 +2674,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
         onChange: () => ensureGithubAvisos(),
         everyMs: () => githubAvisosConf?.everyMs ?? githubAvisosEveryMs(),
+      }),
+      // «¿Cuánto he gastado este mes?»: los cobros que el Ojo ya apunta del correo; solo el dueño.
+      createGastosTool({
+        db: memoryDb,
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
       }),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
       // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
