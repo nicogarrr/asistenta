@@ -14,6 +14,7 @@ import { TV_CALLBACK_PREFIX } from '../tv/tv-chat-command.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
+import { sharedKindText } from './telegram-compartido.js';
 import {
   bindMoreButtons,
   COMMAND_CALLBACK_PREFIX,
@@ -455,6 +456,10 @@ export class TelegramChannel implements ChannelAdapter {
     const forwarded = forwardedLabel(msg);
     if (forwarded && inbound.text) inbound.text = `${forwarded}\n${inbound.text}`;
     if (forwarded) inbound.forwardedFrom = forwarded;
+    // Un contacto, una encuesta o un sticker con emoji llegan como texto que el asistente
+    // entiende (telegram-compartido.ts), en vez del «Aún no sé leer…» de antes.
+    const shared = inbound.text ? null : sharedKindText(msg);
+    if (shared) inbound.text = forwarded ? `${forwarded}\n${shared}` : shared;
     // Una ubicación o un sitio compartido llega como texto con su enlace de mapa, para
     // poder preguntar «¿qué hay cerca?» o «¿cuánto tardo en llegar?» sin escribir la
     // dirección. El texto de un reenvío ya va marcado arriba; aquí no hay texto propio.
