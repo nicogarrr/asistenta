@@ -415,10 +415,24 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     ).test(normalised)
   )
     return null;
-  if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
-  // «a final de mes a las 9», «a fin de cada mes»: antes sonaba todos los días. Se pregunta.
-  // shortcut: no hay cron simple para el fin de mes; mejorar si se pide mucho.
-  if (/\b(?:fin|final|finales) de (?:cada |todos los )?mes(?:es)?\b/.test(normalised)) return null;
+  // «el último día de cada mes a las 20», «a fin de mes a las 9», «cada final de mes»: el
+  // día «L» de croner (28, 29, 30 o 31 según el mes). Antes se preguntaba «no entiendo ese
+  // horario». «A finales de mes» (no dice qué día), «el último día laborable» o con un día
+  // de la semana delante, se sigue preguntando.
+  const lastDay =
+    /\bultimo dia (?:de cada|de todos los|del|de) mes(?:es)?\b/.test(normalised) ||
+    /\b(?:a |al |cada |los )(?:fin|final|finales?) de (?:cada |todos los )?mes(?:es)?\b/.test(
+      ` ${normalised}`,
+    );
+  if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised) && !lastDay)
+    return null;
+  if (/\b(?:fin|final|finales) de (?:cada |todos los )?mes(?:es)?\b/.test(normalised) && !lastDay)
+    return null;
+  if (lastDay) {
+    if (/\bfinales\b|\blaborable|\bhabil/.test(normalised)) return null;
+    if (new RegExp(`\\b(?:${DAY})\\b`).test(normalised)) return null;
+    return { schedule: `${minute} ${hasTime ? hours : 8} L * *`, prompt: text.trim() };
+  }
   // «a partir de marzo», «hasta marzo», «hasta el 15 de marzo», «desde el 1 de diciembre»:
   // un cron no tiene inicio ni fin y la rutina sonaba ya y para siempre. Se pregunta. Un
   // rango («de marzo a mayo») ya se ha leído antes; una fecha dentro de la tarea («cuenta
