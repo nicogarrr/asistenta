@@ -1700,6 +1700,8 @@ export class Gate {
       // «Hazme una gráfica / pásamelo en Excel o PDF»: genera el archivo en memoria con los
       // datos del turno y lo manda a esta misma conversación; sin red y sin tocar el disco.
       case 'entregable':
+      // «¿Cuánto he gastado este mes?»: lee la tabla local de cobros del Ojo; sin red ni escritura.
+      case 'gastos':
         return 'lee';
       // «¿A qué hora pongo la lavadora?»: precio de la luz del servicio fijo de Red Eléctrica.
       // El aviso de cada noche guarda (o quita) una rutina local del dueño.
@@ -2926,6 +2928,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'pagina_viva',
   'entregable',
   'github_avisos',
+  'gastos',
   'aire',
   'trafico',
   'luz',

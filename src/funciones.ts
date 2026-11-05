@@ -270,6 +270,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'investigar',
     text: 'te hago una gráfica, un Excel, un PDF o un Word con tus datos y te lo mando',
   },
+  gastos: {
+    area: 'compras',
+    text: 'te digo cuánto has gastado por mes o por comercio, según tus recibos',
+  },
   divisas: {
     area: 'compras',
     text: 'te paso dinero de una moneda a otra con el cambio oficial del BCE',
