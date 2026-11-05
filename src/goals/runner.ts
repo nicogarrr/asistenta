@@ -17,6 +17,7 @@
  *
  * This class never throws: a goal tick cannot be what takes the scheduler down.
  */
+import { isOutageError } from '../core/friendly-error.js';
 import { localDay } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { log } from '../log.js';
@@ -25,6 +26,9 @@ import { type GoalWorkstreamProjection, projectGoal } from './projection.js';
 import type { Goal, GoalStore } from './store.js';
 
 export const GOAL_ROUTINE_PREFIX = 'objetivo:';
+
+/** Resultado apuntado de un intento que falló por la red o el servicio del modelo. */
+export const GOAL_OUTCOME_OUTAGE = 'sin-red';
 
 export const goalRoutineName = (id: string): string => `${GOAL_ROUTINE_PREFIX}${id}`;
 
@@ -216,7 +220,20 @@ export class GoalRunner {
     }
 
     if (result.error) {
-      this.#deps.goals.noteTick(goal.id, 'error', day);
+      // Sin internet o con el modelo caído: el intento no llegó a hacer nada. No gasta
+      // el cupo del día (un corte de unas horas paraba el objetivo hasta mañana) y un
+      // corte suelto no avisa: el aviso «falló en su último intento» salía al volver la
+      // red, cuando ya iba bien. Si el siguiente intento también falla, avisa como antes.
+      if (isOutageError(result.error)) {
+        const again = current.lastOutcome === GOAL_OUTCOME_OUTAGE;
+        this.#deps.goals.noteTick(goal.id, GOAL_OUTCOME_OUTAGE, day, { count: false });
+        if (!again) {
+          log.warn('goal tick outage, retry on next tick', { goal: goal.id, err: result.error });
+          return;
+        }
+      } else {
+        this.#deps.goals.noteTick(goal.id, 'error', day);
+      }
       await this.#deps.notifier.report(goal, 'error', result.error);
       return;
     }
