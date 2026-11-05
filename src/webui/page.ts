@@ -737,6 +737,23 @@ ${renderFormatScript()}
           token = (window.localStorage.getItem(CLAVE_TOKEN) || '').trim();
         } catch (error) {}
       }
+      // Mini App de Telegram (/panel): Telegram firma quién abre la página y con eso
+      // el PC devuelve el token, sin pegarlo a mano. Fuera de Telegram no hace nada.
+      var datosTelegram = new URLSearchParams((window.location.hash || '').slice(1)).get('tgWebAppData');
+      if (!token && datosTelegram) {
+        fetch('/api/miniapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: datosTelegram })
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (d && typeof d.token === 'string' && d.token) {
+              window.location.replace(window.location.pathname + '?token=' + encodeURIComponent(d.token));
+            }
+          })
+          .catch(function () {});
+      }
 
       var aviso = document.getElementById('aviso');
 

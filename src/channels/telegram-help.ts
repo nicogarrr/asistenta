@@ -248,6 +248,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         command: 'actualizacion',
         description: 'si me actualizo sola desde main',
       },
+      { command: 'tailscale', description: 'panel y voz en el móvil (/panel, /voz)' },
     ],
   },
   {

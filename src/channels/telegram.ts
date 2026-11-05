@@ -2405,6 +2405,7 @@ export function buildKeyboard(buttons: Array<{ label: string; action: string }>)
     if (i > 0 && i % perRow === 0) kb.row();
     // «url:https://…»: botón que abre el enlace (las noticias de «Tus temas»).
     if (b.action.startsWith('url:')) kb.url(b.label, b.action.slice(4));
+    else if (b.action.startsWith('webapp:')) kb.webApp(b.label, b.action.slice(7));
     else kb.text(b.label, b.action);
   });
   return kb;
@@ -2664,6 +2665,9 @@ export function usableButtons<T extends { label: string; action: string }>(butto
     // Un botón-enlace lleva la URL, no un callback: https y como mucho 2048 bytes.
     if (b.action?.startsWith('url:'))
       return /^url:https:\/\/\S+$/.test(b.action) && Buffer.byteLength(b.action, 'utf8') <= 2052;
+    // «webapp:https://…»: abre una Mini App de Telegram (el panel por Tailscale).
+    if (b.action?.startsWith('webapp:'))
+      return /^webapp:https:\/\/\S+$/.test(b.action) && Buffer.byteLength(b.action, 'utf8') <= 2055;
     const bytes = Buffer.byteLength(b.action ?? '', 'utf8');
     return bytes >= 1 && bytes <= 64;
   });

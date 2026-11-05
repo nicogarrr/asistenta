@@ -54,7 +54,10 @@ describe('panel: humo del script de la página', () => {
   it('cada ruta /api que pide el script existe en el servidor con ese método', async () => {
     const posts = new Set([...script.matchAll(/enviar\('(\/api\/[^']*)'/g)].map((m) => m[1] ?? ''));
     const rutas = new Set(
-      [...script.matchAll(/'(\/api\/[^'?]*)/g)].map((m) => m[1] ?? '').filter((r) => r !== '/api/'),
+      [...script.matchAll(/'(\/api\/[^'?]*)/g)]
+        .map((m) => m[1] ?? '')
+        // /api/miniapp es la puerta SIN token (firma de Telegram): test/integra1-tailscale.test.ts.
+        .filter((r) => r !== '/api/' && r !== '/api/miniapp'),
     );
     expect(rutas.size).toBeGreaterThan(6);
     const panel = await startWebUi({
