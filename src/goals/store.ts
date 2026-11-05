@@ -292,9 +292,11 @@ export class GoalStore {
    * the first tick of a new day resets it, so MAX_TICKS_PER_DAY never strands
    * a goal forever - it just stops a spinning day.
    */
-  noteTick(id: string, outcome: string, dayKey: string): void {
+  noteTick(id: string, outcome: string, dayKey: string, opts: { count?: boolean } = {}): void {
     const goal = this.#mustRead(id);
     const sameDay = goal.ticksDay === dayKey;
+    // `count: false`: un intento que no llegó al modelo (sin red) no gasta el cupo del día.
+    const counted = opts.count === false ? 0 : 1;
     this.#db
       .prepare(
         `UPDATE goals SET last_outcome = ?, last_tick_at = ?, ticks_day = ?, ticks_today = ?, updated_at = ? WHERE id = ?`,
@@ -303,7 +305,7 @@ export class GoalStore {
         outcome,
         new Date().toISOString(),
         dayKey,
-        sameDay ? goal.ticksToday + 1 : 1,
+        sameDay ? goal.ticksToday + counted : counted,
         new Date().toISOString(),
         id,
       );
