@@ -167,6 +167,12 @@ export function wakeTiming(env: NodeJS.ProcessEnv = process.env): {
  */
 const ENERGY_GATE_RMS = 0.05;
 
+/** Tramo de 100 ms para medir si el audio nuevo de verdad es silencio (ver `alreadySeen`). */
+const FRAME_SAMPLES = 1_600;
+
+/** Final de ventana (300 ms) que tiene que estar en silencio para dar la palabra por vista entera. */
+const TAIL_SAMPLES = 4_800;
+
 /** A transcriber that keeps failing is stopped, not retried every interval forever. */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -685,6 +691,12 @@ class SampleRing {
   #buf: Float32Array;
   #head = 0;
   #filled = 0;
+  /** Muestras recibidas desde que se creó el anillo (nunca baja; clear() no lo toca). */
+  #total = 0;
+  /** `#total` cuando se copió la última ventana que llegó a whisper; null si no hay ninguna vigente. */
+  #seenAt: number | null = null;
+  /** Si esa ventana terminaba en silencio (la palabra no quedó cortada por el final). */
+  #seenTailQuiet = false;
 
   constructor(capacity: number) {
     this.#buf = new Float32Array(capacity);
@@ -704,6 +716,57 @@ class SampleRing {
     if (first < src.length) this.#buf.set(src.subarray(first), 0);
     this.#head = (this.#head + src.length) % cap;
     this.#filled = Math.min(this.#filled + samples.length, cap);
+    this.#total += samples.length;
+  }
+
+  /**
+   * RMS más alto de los tramos de 100 ms entre las `count` muestras más nuevas. Por tramos y
+   * no de media: una sílaba corta y fuerte dentro de 3 s de silencio se diluiría en la media.
+   */
+  #maxFrameRms(count: number): number {
+    const n = Math.min(count, this.#filled);
+    if (n <= 0) return 0;
+    const cap = this.#buf.length;
+    const start = (this.#head - n + cap) % cap;
+    let max = 0;
+    for (let at = 0; at < n; at += FRAME_SAMPLES) {
+      const len = Math.min(FRAME_SAMPLES, n - at);
+      let sum = 0;
+      for (let i = 0; i < len; i++) {
+        const sample = this.#buf[(start + at + i) % cap] ?? 0;
+        sum += sample * sample;
+      }
+      const rms = Math.sqrt(sum / len);
+      if (rms > max) max = rms;
+    }
+    return max;
+  }
+
+  /** La ventana actual va a whisper: apunta hasta dónde se ha visto y cómo acababa. */
+  markSeen(gate: number): void {
+    this.#seenAt = this.#total;
+    this.#seenTailQuiet = this.#maxFrameRms(TAIL_SAMPLES) < gate;
+  }
+
+  /** Esa pasada falló: su ventana no cuenta como vista. */
+  forgetSeen(): void {
+    this.#seenAt = null;
+  }
+
+  /**
+   * Consumo: ¿la ventana actual ya la vio whisper entera? Sí cuando no ha llegado audio
+   * nuevo desde la última pasada, o cuando todo lo nuevo es silencio y la ventana anterior
+   * también acababa en silencio: entonces la ventana de ahora es un trozo de la anterior más
+   * silencio, y la palabra (si estaba) ya se vio completa, sin cortar por ningún extremo.
+   * Pasa tras cada frase dicha en una sala tranquila: la frase sigue en el anillo 3 s y antes
+   * se transcribía otra vez entera, con el mismo resultado.
+   */
+  alreadySeen(gate: number): boolean {
+    if (this.#seenAt === null) return false;
+    const fresh = this.#total - this.#seenAt;
+    if (fresh === 0) return true;
+    if (fresh >= this.#filled || !this.#seenTailQuiet) return false;
+    return this.#maxFrameRms(fresh) < gate;
   }
 
   /**
@@ -745,6 +808,7 @@ class SampleRing {
   clear(): void {
     this.#head = 0;
     this.#filled = 0;
+    this.#seenAt = null;
   }
 
   get size(): number {
@@ -1061,7 +1125,10 @@ export class WakeWordListener {
       }
       if (this.#ring.size === 0) return;
       if (this.#ring.rms() < ENERGY_GATE_RMS) return;
+      // Consumo: la misma frase seguía en la ventana y se transcribía otra vez para nada.
+      if (this.#ring.alreadySeen(ENERGY_GATE_RMS)) return;
       const window = this.#ring.snapshot();
+      this.#ring.markSeen(ENERGY_GATE_RMS);
 
       let text: string;
       try {
@@ -1071,6 +1138,7 @@ export class WakeWordListener {
       } catch (err) {
         // Un fallo de la sesión anterior no cuenta para la nueva.
         if (generation !== this.#generation) return;
+        this.#ring.forgetSeen();
         this.#consecutiveFailures++;
         this.#reportError(err);
         if (this.#consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
