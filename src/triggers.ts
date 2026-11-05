@@ -69,19 +69,64 @@ export interface MailMatch {
  * contiene «billete de tren» y «urgente» está en el remitente o en el asunto.
  * También valen from:/subject:. Determinista: nada de modelo.
  */
+/** Palabras de enlace que no se buscan en el correo («correos de Renfe con billete»). */
+const MAIL_STOPWORDS = new Set([
+  'de',
+  'del',
+  'el',
+  'la',
+  'los',
+  'las',
+  'un',
+  'una',
+  'y',
+  'e',
+  'con',
+  'en',
+  'al',
+  'a',
+  'por',
+  'para',
+  'que',
+]);
+
 export function parseMailMatch(match: string): MailMatch {
   const out: MailMatch = { from: [], subject: [], any: [] };
   // Comillas del móvil («“billete de tren”», ««billete de tren»») y «de: renfe» con espacio:
   // antes partían la frase en palabras sueltas o dejaban «de:» como texto que buscar, y el
   // disparador no saltaba nunca.
   const re = /(?:(de|from|asunto|subject):\s*)?(?:["“”«]([^"“”«»]*)["“”»]|(\S+))/gi;
-  for (const m of match.matchAll(re)) {
-    const value = (m[2] ?? m[3] ?? '').trim().toLocaleLowerCase('es');
-    if (!value) continue;
-    const key = (m[1] ?? '').toLowerCase();
+  const parts = [...match.matchAll(re)].map((m) => ({
+    key: (m[1] ?? '').toLowerCase(),
+    quoted: m[2] !== undefined,
+    // «de renfe, asunto billete»: la coma pegada no es parte de lo que se busca.
+    value: (m[2] ?? (m[3] ?? '').replace(/[,;.:!?)]+$/, '')).trim().toLocaleLowerCase('es'),
+  }));
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i] as (typeof parts)[number];
+    if (!p.value) continue;
+    let key = p.key;
+    let value = p.value;
+    // «de renfe», «del banco», «asunto billete» sin dos puntos: antes se buscaban «de» o
+    // «del» como texto (un correo sin «del» no saltaba nunca) en vez del remitente.
+    const next = parts[i + 1];
+    if (!key && !p.quoted && next && !next.key && next.value) {
+      // Solo al principio: en medio («billete de tren») el «de» es parte de la frase.
+      const as =
+        i === 0 && (value === 'de' || value === 'del' || value === 'from')
+          ? 'de'
+          : value === 'asunto' || value === 'subject'
+            ? 'asunto'
+            : '';
+      if (as) {
+        key = as;
+        value = next.value;
+        i++;
+      }
+    }
     if (key === 'de' || key === 'from') out.from.push(value);
     else if (key === 'asunto' || key === 'subject') out.subject.push(value);
-    else out.any.push(value);
+    else if (p.quoted || !MAIL_STOPWORDS.has(value)) out.any.push(value);
   }
   return out;
 }
