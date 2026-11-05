@@ -74,8 +74,15 @@ export function clipOutput(text: string): string {
  */
 export class RoutineHistory {
   readonly #path: string;
-  constructor(path: string) {
+  readonly #createdAtOf: ((scope: string, name: string) => string | undefined) | undefined;
+  /**
+   * `createdAtOf`: cuándo se creó la rutina que hoy lleva ese nombre. Con él, `list` no
+   * enseña ejecuciones de antes: borrar «resumen» y crear otra «resumen» ya no hereda el
+   * historial (ni el «❌ la última falló») de la vieja.
+   */
+  constructor(path: string, createdAtOf?: (scope: string, name: string) => string | undefined) {
     this.#path = path;
+    this.#createdAtOf = createdAtOf;
   }
 
   #read(): Record<string, RoutineRun[]> {
@@ -140,7 +147,10 @@ export class RoutineHistory {
 
   /** Ejecuciones de una rutina, la más reciente primero. */
   list(scope: string, name: string): RoutineRun[] {
-    return this.#read()[keyOf(scope, name)] ?? [];
+    const runs = this.#read()[keyOf(scope, name)] ?? [];
+    const born = Date.parse(this.#createdAtOf?.(scope, name) ?? '');
+    // Un segundo de margen: la primera ejecución puede apuntarse en el mismo instante.
+    return Number.isFinite(born) ? runs.filter((r) => r.at >= born - 1000) : runs;
   }
 
   /** Olvida el historial de una rutina borrada. */
@@ -154,8 +164,11 @@ export class RoutineHistory {
 }
 
 /** El historial de rutinas de una carpeta de estado (sin estado propio: lee el fichero). */
-export function routineHistoryAt(stateDir: string): RoutineHistory {
-  return new RoutineHistory(join(stateDir, 'rutinas-historial.json'));
+export function routineHistoryAt(
+  stateDir: string,
+  createdAtOf?: (scope: string, name: string) => string | undefined,
+): RoutineHistory {
+  return new RoutineHistory(join(stateDir, 'rutinas-historial.json'), createdAtOf);
 }
 
 const ENTREGA_ES: Record<RoutineDelivery, string> = {
