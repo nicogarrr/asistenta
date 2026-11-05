@@ -198,6 +198,19 @@ export class LlegadaStore {
   }
 
   /**
+   * Un punto compartido (sin directo, o un sitio del mapa): puede no ser donde está Nico,
+   * así que solo se apunta como «última» para «guarda esto como…»; no mueve los avisos.
+   */
+  puntoCompartido(chatId: string, at: { latitude: number; longitude: number }): void {
+    const data = this.#read();
+    data.ultima = {
+      ...(data.ultima ?? {}),
+      [chatId]: { latitude: at.latitude, longitude: at.longitude, at: this.#now() },
+    };
+    this.#write(data);
+  }
+
+  /**
    * Una posición nueva de Nico en este chat: la apunta como «última» (para «guarda
    * esto como…»), arma los avisos y devuelve (y borra) los que acaban de cumplirse:
    * al entrar en el sitio (llegar) o al salir de él (salir).

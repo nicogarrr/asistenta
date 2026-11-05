@@ -254,6 +254,11 @@ export interface ChannelHandlers {
     userId: string;
     latitude: number;
     longitude: number;
+    /**
+     * false = un punto compartido (ubicación sin directo o un sitio del mapa): puede no ser
+     * donde está Nico, así que no mueve los avisos; solo vale para «guarda esto como…».
+     */
+    live?: boolean;
   }): void | Promise<void>;
   /**
    * Botón de la lista de la compra (callback `compra:…`, ver src/compra.ts): tacha o

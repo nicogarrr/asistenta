@@ -288,7 +288,7 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => {});
   }
 
-  #reportPosition(chatId: string, userId: number, loc: unknown): void {
+  #reportPosition(chatId: string, userId: number, loc: unknown, live: boolean): void {
     const handlers = this.#handlers;
     const l = loc as { latitude?: unknown; longitude?: unknown } | undefined;
     const latitude = Number(l?.latitude);
@@ -302,6 +302,7 @@ export class TelegramChannel implements ChannelAdapter {
         userId: String(userId),
         latitude,
         longitude,
+        live,
       }),
     ).catch((err: unknown) => {
       handlers.log('warn', 'location update failed', { error: String(err) });
@@ -477,9 +478,21 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
-    // Una ubicación (en directo o no) también es una posición para los avisos al llegar.
-    if ('location' in msg && !('venue' in msg) && !isGroup) {
-      this.#reportPosition(String(ctx.chat?.id ?? ''), user.id, msg.location);
+    // Una ubicación en directo es una posición para los avisos al llegar/salir. Un punto
+    // compartido (sin directo, o un sitio del mapa) puede no ser donde está Nico: no mueve
+    // los avisos, solo sirve para «guarda esto como el gimnasio» (src/llegada.ts).
+    if (('location' in msg || 'venue' in msg) && !isGroup) {
+      const m = msg as {
+        venue?: { location?: unknown };
+        location?: { live_period?: unknown };
+      };
+      const live = !m.venue && typeof m.location?.live_period === 'number';
+      this.#reportPosition(
+        String(ctx.chat?.id ?? ''),
+        user.id,
+        m.venue?.location ?? m.location,
+        live,
+      );
     }
     // Contesta escribiendo: los botones «Sí/No» / «¿A o B?» que quedaban ya no valen.
     this.#dropOpenQuickReply(String(ctx.chat?.id ?? ''));
@@ -929,7 +942,7 @@ export class TelegramChannel implements ChannelAdapter {
     // Ubicación en directo: cada movimiento llega como edición. Va a los avisos al
     // llegar (src/llegada.ts); nunca es un «mensaje editado».
     if ('location' in msg && !('venue' in msg)) {
-      this.#reportPosition(String(ctx.chat.id), user.id, msg.location);
+      this.#reportPosition(String(ctx.chat.id), user.id, msg.location, true);
       return;
     }
     if ('location' in msg || 'venue' in msg) return;
