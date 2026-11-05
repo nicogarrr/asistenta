@@ -520,6 +520,7 @@ import {
   funcionesButtons,
   funcionesButtonText,
   funcionesText,
+  TOOL_ABILITIES,
 } from './funciones.js';
 import {
   crearLlegada,
@@ -679,6 +680,14 @@ import {
   tvChatCommand,
 } from './tv/tv-chat-command.js';
 import { setUndoDir, undoLast } from './undo.js';
+import {
+  archivarText,
+  isArchiveConfirm,
+  SkillUsage,
+  toolUseCounts,
+  USO_VENTANA_MS,
+  usoText,
+} from './uso-funciones.js';
 import { Mutex } from './utils.js';
 import {
   initVault,
@@ -1883,6 +1892,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
   const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  // Usos de cada habilidad aprendida (/funciones uso, archivar las que no se usan).
+  const skillUsage = new SkillUsage(join(paths.state, 'skills', '.uso.json'));
   // «Esto ya lo he hecho 3 veces, ¿lo guardo como habilidad?» (src/skills/repeats.ts).
   const skillRepeats = new RepeatTracker(join(paths.state, 'habilidades-repetidas.json'));
   // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
@@ -2728,6 +2739,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createServiceTool({ services: adoptedServices, servicesDir: join(paths.state, 'services') }),
       createSkillsTool({
         store: skills,
+        onUse: (id) => skillUsage.record(id),
         semantic: semanticRecall,
         repeats: skillRepeats,
         // Auto-chequeo con lo que hay de verdad (correo, calendario, herramientas).
@@ -7443,6 +7455,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** /funciones [área]: lo que sé hacer por áreas; el dueño en privado lo ve todo. */
   const cmdFunciones = async (inbound: Inbound, args: string): Promise<void> => {
     const view = { owner: isOwnerDm(inbound, vigilanteOwnerId) };
+    // «/funciones uso» y «/funciones archivar [sí]»: lo que más usas y lo que no (dueño).
+    const [sub = '', ...restWords] = args.trim().split(/\s+/);
+    const subFold = foldAccents(sub.toLowerCase());
+    if (view.owner && (subFold === 'uso' || subFold === 'usos' || subFold === 'archivar')) {
+      const now = Date.now();
+      if (subFold === 'archivar') {
+        const text = archivarText(
+          skills.list(),
+          skillUsage.all(),
+          now,
+          isArchiveConfirm(restWords.join(' ')),
+          (id) => skills.setDisabled(id, true),
+        );
+        await say(inbound, text, { quote: true });
+        return;
+      }
+      let lines: Parameters<typeof toolUseCounts>[0] = [];
+      try {
+        const { readCallAudit } = await import('./audit/query.js');
+        lines = readCallAudit();
+      } catch (err) {
+        log.warn('funciones uso: auditoría ilegible', { err: String(err) });
+      }
+      const text = usoText({
+        tools: toolUseCounts(lines, now - USO_VENTANA_MS),
+        toolText: (tool) => TOOL_ABILITIES[tool]?.text ?? null,
+        skills: skills.list(),
+        skillUse: skillUsage.all(),
+        now,
+      });
+      await say(inbound, text, { quote: true });
+      return;
+    }
     const area = findArea(args);
     await say(inbound, funcionesText(view, args), {
       quote: true,
