@@ -542,10 +542,59 @@ export interface SttDeps {
   now?: () => number;
 }
 
+/**
+ * Consumo: el modelo grande de las notas de voz (turbo, ~3 GB de RAM) se quedaba en memoria
+ * para siempre tras la primera nota. Tras este rato sin notas se descarga; la siguiente nota
+ * lo vuelve a cargar del disco (unos segundos, sin descargar nada). whisper-small no se toca
+ * nunca: lo usa la palabra de activación, que tiene que contestar al momento.
+ */
+export const BIG_MODEL_IDLE_MS = 10 * 60_000;
+let notesBusy = 0;
+let lastNoteAt = 0;
+let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Descarga de la RAM los modelos de notas (no small) si no hay notas en curso ni recientes. */
+export async function releaseIdleWhisper(
+  now: number = Date.now(),
+  idleMs: number = BIG_MODEL_IDLE_MS,
+): Promise<string[]> {
+  if (notesBusy > 0 || now - lastNoteAt < idleMs) return [];
+  const released: string[] = [];
+  for (const [model, memo] of [...inflight]) {
+    if (model === SMALL_STT_MODEL) continue;
+    inflight.delete(model);
+    released.push(model);
+    try {
+      const pipe = (await memo) as unknown as { dispose?: () => Promise<unknown> };
+      await pipe.dispose?.();
+    } catch {
+      // Una carga que falló ya no ocupa nada; una que no se deja liberar la recoge el GC.
+    }
+    log.info('stt big model released after idle', {
+      model,
+      idleMin: Math.round(idleMs / 60_000),
+    });
+  }
+  return released;
+}
+
+function scheduleRelease(): void {
+  if (releaseTimer) clearTimeout(releaseTimer);
+  releaseTimer = setTimeout(() => {
+    releaseTimer = null;
+    void releaseIdleWhisper().catch(() => undefined);
+  }, BIG_MODEL_IDLE_MS + 1_000);
+  releaseTimer.unref?.();
+}
+
 /** Solo para tests: vuelve al estado de un proceso recién arrancado. */
 export function resetSttStateForTests(): void {
   readyModels.clear();
   inflight.clear();
+  notesBusy = 0;
+  lastNoteAt = 0;
+  if (releaseTimer) clearTimeout(releaseTimer);
+  releaseTimer = null;
   bigFailedAt = 0;
   downloadNoticeGiven = false;
 }
@@ -569,6 +618,8 @@ function pickModel(deps: SttDeps): { model: string; notice?: string } {
       .then(() => {
         readyModels.add(preferred);
         log.info('stt big model ready', { model: preferred });
+        lastNoteAt = (deps.now ?? Date.now)();
+        scheduleRelease();
       })
       .catch((err: unknown) => {
         bigFailedAt = (deps.now ?? Date.now)();
@@ -591,6 +642,21 @@ export async function transcribeVoiceNote(
   input: Buffer,
   opts: { mimeType?: string } = {},
   deps: SttDeps = {},
+): Promise<SttResult> {
+  notesBusy++;
+  try {
+    return await transcribeVoiceNoteNow(input, opts, deps);
+  } finally {
+    notesBusy--;
+    lastNoteAt = (deps.now ?? Date.now)();
+    scheduleRelease();
+  }
+}
+
+async function transcribeVoiceNoteNow(
+  input: Buffer,
+  opts: { mimeType?: string },
+  deps: SttDeps,
 ): Promise<SttResult> {
   if (input.length === 0) throw new SttError('la nota de voz llegó vacía');
 
