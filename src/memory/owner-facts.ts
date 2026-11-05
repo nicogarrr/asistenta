@@ -41,6 +41,10 @@ function commaIsPartOfFact(plain: string): boolean {
   return tail.length >= 2 && !REQUEST_AFTER_COMMA.test(tail);
 }
 
+/** Raíces de profesiones: «soy médico», «soy ingeniera informática». */
+const PROFESION =
+  '(?:médic|medic|enfermer|profesor|maestr|abogad|ingenier|programador|desarrollador|informátic|informatic|arquitect|camarer|funcionari|policía|policia|bomber|autónom|autonom|electricista|fontaner|carpinter|dentista|psicólog|psicolog|farmacéutic|farmaceutic|veterinari|periodista|diseñador|disenador|contable|economista|comercial|estudiante|fisioterapeuta|cociner|médica|mecánic|mecanic|administrativ|empresari|jubilad|investigador|científic|cientific)';
+
 const STATED: readonly RegExp[] = [
   // Horas de silencio dichas de otra forma (owner-quiet.ts): «Por favor, no me escribas…», «no quiero que me escribas…», «nunca me escribas…», «no me notifiques…».
   /^(?:por favor,?\s+)?(?:no|nunca)\s+(?:quiero que\s+)?me\s+(?:escribas|notifiques|mandes|envíes|envies|hables|avises|despiertes|molestes)\s+\S/i,
@@ -62,6 +66,14 @@ const STATED: readonly RegExp[] = [
   // «mi madre cumple años el 6 de noviembre», «nuestro aniversario es el 8 de junio».
   /^(?:el\s+|nuestro\s+|mi\s+)?(?:cumple(?:años|anos)?|aniversario|santo|onomástica|onomastica)(?:\s+(?:de|del)\s+.{2,40}?)?\s+(?:es|cae)\s+el\s+\d{1,2}(?:\s+de\s+\p{L}+|[/-]\d{1,2})$/iu,
   /^(?:mis?\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,2}|\p{Lu}\p{L}+(?:\s+\p{Lu}\p{L}+)?)\s+cumple(?:\s+años|\s+anos)?\s+el\s+\d{1,2}(?:\s+de\s+\p{L}+|[/-]\d{1,2})$/u,
+  // edad, profesión y costumbres: «tengo 34 años», «soy médico», «soy ingeniera informática»,
+  // «trabajo desde casa los viernes», «uso gafas».
+  /^tengo\s+\d{1,3}\s+años$/i,
+  new RegExp(`^soy\\s+(?:un\\s+|una\\s+)?${PROFESION}[\\p{L}]*(?:\\s+[\\p{L}-]+){0,3}$`, 'iu'),
+  /^trabajo\s+(?:desde casa|en remoto|a turnos|de noche|por las (?:mañanas|tardes|noches))(?:\s+\S|$)/i,
+  /^(?:uso|llevo)\s+(?:gafas|lentillas|audífonos|audifonos)(?:\s+\S|$)/i,
+  // «mi hermana nació el 29 de febrero», «Javi nació el 3/5»: es su cumpleaños.
+  /^(?:mis?\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,2}|\p{Lu}\p{L}+(?:\s+\p{Lu}\p{L}+)?)\s+naci[óo]\s+el\s+\d{1,2}(?:\s+de\s+\p{L}+(?:\s+de\s+\d{4})?|[/-]\d{1,2})$/u,
   // preferencias sobre cómo tratarle
   /^(?:no me (?:escribas|mandes|envíes|envies|llames|hables|avises|despiertes|molestes)|prefiero|me gusta|no me gusta|me encanta|odio)\s+\S/i,
 ];
@@ -204,6 +216,10 @@ export function factKey(fact: string): string | null {
     /^(?:el )?cumple(?:anos)? (?:de|del) (.+?) (?:es|cae) el /.exec(t)?.[1] ??
     /^(.+?) cumple(?: anos)? el \d/.exec(t)?.[1];
   if (birthday) return `cumple|${birthday.toLowerCase()}`;
+  const born = /^(.+?) nacio el \d/.exec(t)?.[1];
+  if (born) return `cumple|${born.toLowerCase()}`;
+  if (/^tengo \d{1,3} anos$/.test(t)) return 'edad';
+  if (new RegExp(`^soy (?:un |una )?${foldAccents(PROFESION)}`).test(t)) return 'profesion';
   const self = /^(me llamo|vivo en|trabajo (?:en|de)|soy del|soy de|naci el)\s/.exec(t)?.[1];
   if (self) return self.startsWith('trabajo') ? 'trabajo' : self;
   // «estoy divorciado» deja viejo «estoy casado con Ana».
@@ -254,6 +270,18 @@ export function forgetRequest(text: string): ForgetRequest | null {
       t,
     );
   if (m?.[1]) return { kind: 'match', query: m[1].replace(/^(?:la|el|los|las|mi|mis)\s+/i, '') };
+  // «ya no tengo coche», «ya no vivo en Madrid», «ya no soy vegetariano»: lo apuntado dejó de
+  // ser verdad. Antes lo llevaba el modelo, que no borra del perfil, y el dato viejo seguía.
+  const owned =
+    /^ya no tengo\s+(?:(?:un|una|el|la|los|las|mi|mis)\s+)?([\p{L}-]+(?:\s+[\p{L}-]+)?)$/iu.exec(
+      t,
+    )?.[1];
+  if (owned) return { kind: 'match', query: owned };
+  const was =
+    /^ya no\s+((?:vivo en|trabajo en|trabajo de|soy|juego al?|practico|estoy|uso|llevo)\s+.{2,60})$/iu.exec(
+      t,
+    )?.[1];
+  if (was) return { kind: 'match', query: was.replace(/(?<=\b(?:soy|estoy)\s+\S+?)[oa]$/iu, '') };
   // «olvida que mi dentista es el Dr. García», «borra que vivo en Getafe»: lo que sigue es un
   // dato de los que se apuntan. Antes no se reconocía y lo llevaba el modelo, que no borra del
   // perfil. De «mi(s) X es/vive…» se olvida todo lo de «mi X» (el valor puede haber cambiado).

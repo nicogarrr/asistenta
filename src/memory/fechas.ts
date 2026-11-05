@@ -94,12 +94,26 @@ function labelOf(text: string, dateMatch: string): string | null {
     .trim();
 }
 
+/**
+ * «Nací el 3 de mayo» es «mi cumpleaños es el 3 de mayo»; «mi hermana nació el 29 de
+ * febrero», «el cumple de mi hermana es el 29 de febrero». Antes, sin la palabra cumple, esas
+ * fechas no salían nunca.
+ */
+function bornAsBirthday(text: string): string {
+  const body = text.replace(/^\[(?:auto|dicho)\]\s*/i, '');
+  if (/^nac[ií]\s+el\s/i.test(body))
+    return body.replace(/^nac[ií]\s+el\s/i, 'Mi cumpleaños es el ');
+  const who = /^(.{2,40}?)\s+naci[óo]\s+el\s/iu.exec(body);
+  if (who?.[1]) return `El cumple de ${who[1]} es el ${body.slice(who[0].length)}`;
+  return text;
+}
+
 /** Las fechas que hay en lo apuntado; una por entrada, sin repetir la misma. */
 export function knownDates(entries: readonly string[]): KnownDate[] {
   const out: KnownDate[] = [];
   const seen = new Set<string>();
   for (const raw of entries) {
-    const text = raw.replace(/\s+/g, ' ').trim();
+    const text = bornAsBirthday(raw.replace(/\s+/g, ' ').trim());
     if (!text || text.length > 200) continue;
     const folded = foldAccents(text.toLowerCase());
     if (!KIND.test(folded)) continue;

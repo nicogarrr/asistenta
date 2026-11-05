@@ -179,15 +179,16 @@ export function buildContextNote(
   // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
   parts.push(buildNowNote());
-  // Cumpleaños y aniversarios que el dueño contó y caen en 7 días: el modelo se acuerda
-  // solo (antes estaban apuntados pero nada miraba el calendario). Nada si no toca.
+  // Cumpleaños y aniversarios que el dueño contó y caen hoy o mañana: el modelo se acuerda
+  // solo (antes estaban apuntados pero nada miraba el calendario). Nada si no toca. La semana
+  // entera ya sale en el resumen de la mañana; aquí, 7 días hacían que lo sacara cada turno.
   if (ownerView) {
     try {
       const texts = [
         ...(snapshot?.load().split(ENTRY_SEPARATOR) ?? []),
         ...memoryEntries.filter((e) => !e.supersededBy).map((e) => e.text),
       ];
-      const dates = upcomingDatesNote(upcomingDates(texts, new Date()));
+      const dates = upcomingDatesNote(upcomingDates(texts, new Date(), 1));
       if (dates) parts.push(dates);
     } catch (err) {
       log.warn('upcoming dates failed', { err: String(err) });

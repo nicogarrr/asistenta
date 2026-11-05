@@ -43,6 +43,8 @@ describe('fechas que Nico contó', () => {
       { label: 'tu aniversario con ana', month: 11, day: 8 },
       { label: 'cumple de javi', month: 11, day: 20 },
       { label: 'santo de tu padre', month: 11, day: 5 },
+      // «nació el» también es su cumpleaños (agente3-datos-y-ya-no).
+      { label: 'cumple de tu hermana', month: 2, day: 29 },
     ]);
   });
 
