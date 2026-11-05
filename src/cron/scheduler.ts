@@ -1,5 +1,6 @@
 import { skipsHolidays, withoutSkipHolidays } from '../festivos-rutinas.js';
 import { foldAccents } from '../text.js';
+import { cadenciaEncaja, sinCadencia } from './cadencia.js';
 /**
  * Turns how a person asks for a recurring job («resúmeme el día cada mañana a las 8»)
  * into a 5-field cron expression. A user who has to write `0 8 * * *` will simply not
@@ -37,7 +38,7 @@ export function parseCronAdd(
     if (!check.ok) return { ok: false, error: `Ese horario no vale: ${check.error}` };
     return { ok: true, schedule, prompt };
   }
-  const parsed = parseNatural(body);
+  const parsed = parseNatural(body) ?? parseNaturalConCadencia(body);
   if (!parsed) {
     return {
       ok: false,
@@ -675,6 +676,20 @@ export function parseNatural(text: string): { schedule: string; prompt: string }
       ? `${first}-${said.months.at(-1)}`
       : said.months.join(',');
   return { schedule: fields.join(' '), prompt: text.trim() };
+}
+
+/**
+ * «cada 2 días a las 9 riega», «cada dos semanas el lunes a las 9 la basura»: el cron de
+ * cada día (o de ese día de la semana) y la tarea con sus palabras enteras, que es donde
+ * RoutineRunner lee la cadencia al sonar (cron/cadencia.ts). null si no hay cadencia o si
+ * el horario no es una sola hora (y, por semanas, un solo día): entonces se pregunta.
+ */
+export function parseNaturalConCadencia(text: string): { schedule: string; prompt: string } | null {
+  const swapped = sinCadencia(text);
+  if (!swapped) return null;
+  const parsed = parseNatural(swapped.text);
+  if (!parsed || !cadenciaEncaja(swapped.cadencia, parsed.schedule)) return null;
+  return { schedule: parsed.schedule, prompt: text.trim() };
 }
 
 const DAY_VALUE: Record<string, number> = {

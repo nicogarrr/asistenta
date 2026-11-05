@@ -14,7 +14,7 @@ describe('/routine con el nombre dicho normal', () => {
   it('antes de dar la rutina por desconocida, la busca sin mayúsculas, tildes ni guiones', () => {
     const fallback = body.indexOf('const loose = routineNameAnswer(');
     expect(fallback).toBeGreaterThan(body.indexOf('if (!routine) {'));
-    expect(fallback).toBeLessThan(body.indexOf('const parsed = parseNatural(args.trim());'));
+    expect(fallback).toBeLessThan(body.indexOf('const parsed = parseNatural(args.trim())'));
     expect(body).toContain(
       'if (again && again !== args.trim()) return cmdRoutine(thread, inbound, again);',
     );
