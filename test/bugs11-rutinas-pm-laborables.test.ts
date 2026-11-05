@@ -26,9 +26,10 @@ describe('rutinas en lenguaje natural (bugs11)', () => {
     expect(at('cada finde a las 10 desayuno')).toBe('0 10 * * 0,6');
   });
 
-  it('«cada segundo martes» o «cada primer lunes de mes» se preguntan, no van todos los días', () => {
-    expect(at('cada segundo martes a las 10 reunión')).toBeNull();
-    expect(at('cada primer lunes de mes a las 9 reunión')).toBeNull();
+  // bugs28: ahora suenan solo esa semana del mes (croner «2#2», «1#1»), no todos los días.
+  it('«cada segundo martes» o «cada primer lunes de mes» no van todos los días', () => {
+    expect(at('cada segundo martes a las 10 reunión')).toBe('0 10 * * 2#2');
+    expect(at('cada primer lunes de mes a las 9 reunión')).toBe('0 9 * * 1#1');
     expect(at('el último viernes a las 18 informe')).toBeNull();
   });
 

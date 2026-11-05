@@ -7,8 +7,16 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 const num = (field: string, max: number): number | null =>
   /^\d{1,2}$/.test(field) && Number(field) <= max ? Number(field) : null;
 
+const NTH = ['', 'primer', 'segundo', 'tercer', 'cuarto', 'quinto'];
+
 function daysEs(dow: string): string | null {
   if (dow === '*') return 'cada día';
+  // «1#1» / «5#L»: el primer lunes / el último viernes de cada mes. Antes salía el cron crudo.
+  const nth = /^([0-7])#([1-5]|L)$/i.exec(dow);
+  if (nth) {
+    const which = nth[2]?.toUpperCase() === 'L' ? 'último' : NTH[Number(nth[2])];
+    return `el ${which} ${DAY[Number(nth[1]) % 7]} de cada mes`;
+  }
   if (dow === '1-5') return 'de lunes a viernes';
   const range = /^([0-6])-([0-6])$/.exec(dow);
   if (range && Number(range[1]) < Number(range[2]))
