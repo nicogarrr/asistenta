@@ -152,6 +152,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: '[pc|tele|off]',
         description: 'tus notas de voz suenan solas al llegar',
       },
+      { command: 'spotify', args: '[conectar]', description: 'tu Spotify; o «pon …»' },
       { command: 'deshacer', description: 'repone el último fichero que escribí' },
     ],
   },
@@ -248,7 +249,9 @@ export const HELP_SECTIONS: HelpSection[] = [
         command: 'actualizacion',
         description: 'si me actualizo sola desde main',
       },
-      { command: 'tailscale', description: 'panel y voz en el móvil (/panel, /voz)' },
+      { command: 'tailscale', description: 'si el panel y la voz van desde el móvil' },
+      { command: 'panel', description: 'el panel dentro de Telegram (con Tailscale)' },
+      { command: 'voz', description: 'hablar conmigo desde el móvil (con Tailscale)' },
     ],
   },
   {

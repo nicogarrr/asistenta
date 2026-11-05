@@ -164,6 +164,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'gráfica PNG, Excel o PDF con los datos que pasa el modelo: se genera en el PC sin red y solo va a esta conversación; la Gate decide.',
   },
   {
+    name: 'spotify',
+    note: 'Spotify por su API oficial (PKCE con PA_SPOTIFY_CLIENT_ID; el control exige Premium): mirar es lectura; poner, pausar o cambiar de altavoz no toca el PC ni dinero; solo el chat privado del dueño.',
+  },
+  {
     name: 'gastos',
     note: 'gastos por mes o comercio leídos de los cobros que el Ojo apunta del correo: lectura local (pagina=true guarda la página «Mis gastos» del panel, base local) y solo en el chat privado del dueño; la Gate decide.',
   },
