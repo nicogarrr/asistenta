@@ -17,6 +17,7 @@ import {
   looksLikeCommandAdd,
   parseCommandAdd,
 } from '../command-routine.js';
+import { horarioRutinaEs, programadaRutinaEs } from '../cron/cadencia.js';
 import { programadaEs, scheduleEs } from '../cron/describe-es.js';
 import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
 import { localDay, wallDateMinute } from '../datecontext.js';
@@ -553,8 +554,8 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     const sinFestivos = skipsHolidays(created.prompt) ? `, excepto ${festivosQueCuentan()}` : '';
     return [
       name !== base
-        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${scheduleEs(created.schedule ?? '') ?? created.schedule}${sinFestivos}.`
-        : `Rutina "${created.name}" ${programadaEs(created.schedule)}${sinFestivos}.`,
+        ? `Ya tenías una rutina llamada "${base}"; esta se guarda como "${name}" sin tocar la anterior. Horario: ${horarioRutinaEs(created) ?? created.schedule}${sinFestivos}.`
+        : `Rutina "${created.name}" ${programadaRutinaEs(created)}${sinFestivos}.`,
       `Tarea: ${created.prompt}`,
       `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
     ].join('\n');

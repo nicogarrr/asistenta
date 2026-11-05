@@ -1,5 +1,6 @@
 import { Cron } from 'croner';
 import { loadConfig } from './config.js';
+import { cadenciaDeRutina, fueraDeCadencia } from './cron/cadencia.js';
 import { localDay, localTimeZone } from './datecontext.js';
 import {
   type Routine,
@@ -577,7 +578,7 @@ export class RoutineRunner {
   status(): ScheduledRoutine[] {
     return [...this.#jobs.entries()].map(([key, held]) => {
       const [scope = '', name = ''] = key.split('\u0000');
-      const next = held.job.nextRun();
+      const next = this.#nextOnCadence(scope, name, held.job);
       return {
         scope,
         name,
@@ -588,6 +589,46 @@ export class RoutineRunner {
         missed: this.#missed.get(key) ?? null,
       };
     });
+  }
+
+  /**
+   * El próximo disparo que de verdad suena: en «cada 2 días» el de mañana se salta si hoy
+   * ya sonó, y «Próxima ejecución» no debe decir mañana.
+   */
+  #nextOnCadence(scope: string, name: string, job: Cron): Date | null {
+    const next = job.nextRun();
+    let routine: Routine | null = null;
+    try {
+      routine = this.#store.getRoutine(scope, name);
+    } catch {
+      return next;
+    }
+    const cadencia = routine ? cadenciaDeRutina(routine) : null;
+    if (!routine || !cadencia || !next) return next;
+    for (const run of job.nextRuns(cadencia.n + 2)) {
+      if (!fueraDeCadencia(cadencia, run, routine.lastRunAt)) return run;
+    }
+    return next;
+  }
+
+  /**
+   * «cada 2 días», «cada dos semanas el lunes» (cron/cadencia.ts): el cron suena cada día
+   * (o cada lunes) y aquí se salta el hueco que llega antes de tiempo desde la última vez.
+   * Queda como atendido, para que la recuperación tras un apagado no lo dé por perdido.
+   */
+  #offCadence(routine: Routine, slot: Date): boolean {
+    const cadencia = cadenciaDeRutina(routine);
+    if (!cadencia || !fueraDeCadencia(cadencia, slot, routine.lastRunAt)) return false;
+    const handled = `${routineKey(routine.scope, routine.name)}@${slot.toISOString()}`;
+    if (this.#handledSlots.size > 1000) this.#handledSlots.clear();
+    this.#handledSlots.add(handled);
+    log.info('routine skipped: not its turn yet («cada N días/semanas»)', {
+      scope: routine.scope,
+      name: routine.name,
+      slot: localStamp(slot),
+      lastRunAt: routine.lastRunAt,
+    });
+    return true;
   }
 
   isRunning(scope: string, name: string): boolean {
@@ -679,6 +720,7 @@ export class RoutineRunner {
             this.sync();
             return;
           }
+          if (this.#offCadence(fresh, slot ?? this.#now())) return;
           const lateMs = slot ? this.#now().getTime() - slot.getTime() : 0;
           if (slot && lateMs > CATCHUP_SETTLE_MS) {
             const slotIso = slot.toISOString();
@@ -753,6 +795,7 @@ export class RoutineRunner {
       const slotIso = missed.slot.toISOString();
       const handled = `${key}@${slotIso}`;
       if (this.#handledSlots.has(handled)) continue;
+      if (this.#offCadence(routine, missed.slot)) continue;
       if (this.#handledSlots.size > 1000) this.#handledSlots.clear();
       this.#handledSlots.add(handled);
       if (!missed.withinGrace) {
@@ -780,6 +823,7 @@ export class RoutineRunner {
    * (`fire`) no pasa por aquí: lo pide el dueño.
    */
   async #runScheduled(routine: Routine, slot: Date, late?: { scheduledFor: Date }): Promise<void> {
+    if (this.#offCadence(routine, slot)) return;
     if (skipsHolidays(`${routine.name} ${routine.prompt ?? ''}`)) {
       const day = localDay(slot);
       let holiday = false;

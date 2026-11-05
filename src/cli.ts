@@ -144,8 +144,8 @@ import {
 } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
-import { programadaEs } from './cron/describe-es.js';
-import { parseNatural } from './cron/scheduler.js';
+import { programadaRutinaEs } from './cron/cadencia.js';
+import { parseNatural, parseNaturalConCadencia } from './cron/scheduler.js';
 import {
   AUTO_RETRY_DELAYS_MS,
   AUTO_RETRY_GAVE_UP,
@@ -4418,7 +4418,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Not a stored name, so it may be how a person asks for a new one:
       // "/routine cada mañana a las 8 resumen del día". The Spanish schedule in
       // the words becomes a real cron routine instead of "no such routine".
-      const parsed = parseNatural(args.trim());
+      const parsed = parseNatural(args.trim()) ?? parseNaturalConCadencia(args.trim());
       if (parsed) {
         const created = store.saveRoutine({
           scope: thread.key,
@@ -4436,7 +4436,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await say(
           inbound,
           [
-            `Rutina "${created.name}" ${programadaEs(created.schedule)}.`,
+            `Rutina "${created.name}" ${programadaRutinaEs(created)}.`,
             `Tarea: ${created.prompt}`,
             `Próxima ejecución: ${nextRunLabel(created.schedule, live?.next)}.`,
             'La verás en tu agenda.',
