@@ -173,6 +173,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'avisos',
   'ignora',
   'ignorados',
+  'expertos',
 ]);
 
 export interface FuncionCommand extends HelpEntry {
@@ -273,6 +274,10 @@ export const TOOL_ABILITIES: Readonly<
   gastos: {
     area: 'compras',
     text: 'te digo cuánto has gastado por mes o por comercio, según tus recibos',
+  },
+  expertos: {
+    area: 'investigar',
+    text: 'respondo con tus apuntes por tema (derecho…) y cito archivo y página',
   },
   divisas: {
     area: 'compras',

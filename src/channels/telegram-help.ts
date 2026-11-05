@@ -106,7 +106,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'cron',
         args: '[add|del|entrega]',
-        description: 'programa, pausa, prueba o borra rutinas; «entrega»: chat, fichero o nada',
+        description: 'programa, pausa, prueba o borra rutinas',
       },
       {
         command: 'disparador',
@@ -188,8 +188,9 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'ocr',
         args: '[md|todo]',
-        description: 'como pie de un PDF o foto: texto seleccionable',
+        description: 'pie de un PDF o foto: texto seleccionable',
       },
+      { command: 'expertos', description: 'apuntes por tema' },
     ],
   },
   {
@@ -245,7 +246,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         command: 'actualizacion',
-        description: 'si me actualizo sola desde main y cómo fue la última vez',
+        description: 'si me actualizo sola desde main',
       },
     ],
   },
