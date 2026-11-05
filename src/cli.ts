@@ -23,6 +23,12 @@ import {
   eraseSummary,
 } from './erase-command.js';
 import {
+  GithubAvisos,
+  githubAvisosConfig,
+  githubTokenSource,
+  startGithubAvisos,
+} from './github-avisos.js';
+import {
   formatModelos,
   ModelChoiceStore,
   modelSwitchWarnings,
@@ -5650,6 +5656,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     timeZone: localTimeZone,
   });
   setInterval(() => void parcelCheckIn.tick().catch(() => null), 10 * 60 * 1000).unref();
+  // Avisos de GitHub (CI en rojo en main, PR/issue/comentario nuevos): apagado salvo
+  // PA_GITHUB_AVISOS=dueño/repo. Sin modelo; sondeo con ETag y espera larga (github-avisos.ts).
+  const githubAvisosConf = githubAvisosConfig();
+  if (githubAvisosConf) {
+    startGithubAvisos(
+      new GithubAvisos({
+        config: githubAvisosConf,
+        fetch,
+        kv: { get: (k) => store.kvGet(k), set: (k, v) => store.kvSet(k, v) },
+        send: async (text) => {
+          const owner = briefingOwner();
+          if (!owner) return false;
+          await telegram.send({
+            channel: 'telegram',
+            account: telegram.account,
+            chatId: owner,
+            text,
+          });
+          return true;
+        },
+        now: Date.now,
+        quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+        token: githubTokenSource(),
+      }),
+    );
+  }
 
   // Vigilante semántico de turnos (idea «Watchdog» del diseño super-agente), apagado
   // por defecto (PA_WATCHDOG=1). Dos fases: sospecha determinista (sin paso nuevo en
