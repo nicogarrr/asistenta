@@ -258,6 +258,7 @@ import {
   statedFact,
   supersededBy,
 } from './memory/owner-facts.js';
+import { answerOwnerQuestion } from './memory/owner-questions.js';
 import { ownerQuietHours } from './memory/owner-quiet.js';
 import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
@@ -5703,6 +5704,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         await say(inbound, reply, { quote: true });
         return true;
       }
+    }
+    // «¿quién es mi dentista?», «¿cómo se llama mi hermana?», «¿cuándo es el cumple de mi
+    // madre?»: si está apuntado, al momento y sin que el modelo lo invente.
+    const direct = answerOwnerQuestion(snapshot.load().split(ENTRY_SEPARATOR), text);
+    if (direct) {
+      await say(inbound, direct, { quote: true });
+      return true;
     }
     const forget = forgetRequest(text);
     if (forget) {
