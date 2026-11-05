@@ -149,6 +149,14 @@ describe('esquemas de herramientas perezosos', () => {
         dias: T.Optional(
           T.Integer({ minimum: 1, maximum: 7, description: 'Días de previsión desde hoy (1-7).' }),
         ),
+        horas: T.Optional(
+          T.Integer({
+            minimum: 1,
+            maximum: 48,
+            description:
+              'Previsión hora a hora para las próximas N horas (1-48), con cuándo empieza y para la lluvia. Para «¿llueve esta tarde?», «¿a qué hora para de llover?», «¿saco paraguas ahora?».',
+          }),
+        ),
         lugar: T.Optional(
           T.String({
             maxLength: 80,

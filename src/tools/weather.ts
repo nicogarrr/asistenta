@@ -1,5 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { fetchWeatherDays, type WeatherConfig } from '../briefing-daily.js';
+import { fetchWeatherDays, type WeatherConfig, weatherCodeEs } from '../briefing-daily.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 
@@ -7,6 +7,14 @@ const Params = lazySchema(() =>
   Type.Object({
     dias: Type.Optional(
       Type.Integer({ minimum: 1, maximum: 7, description: 'Días de previsión desde hoy (1-7).' }),
+    ),
+    horas: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 48,
+        description:
+          'Previsión hora a hora para las próximas N horas (1-48), con cuándo empieza y para la lluvia. Para «¿llueve esta tarde?», «¿a qué hora para de llover?», «¿saco paraguas ahora?».',
+      }),
     ),
     lugar: Type.Optional(
       Type.String({
@@ -113,6 +121,122 @@ const dayName = (date: string, i: number): string => {
   }).format(at);
 };
 
+export interface WeatherHour {
+  /** Hora local del sitio, «2026-11-05T14:00». */
+  time: string;
+  temp: number;
+  /** Probabilidad de lluvia en %, si la hay. */
+  rainProb?: number;
+  /** Lluvia prevista en mm, si la hay. */
+  rainMm?: number;
+  code?: number;
+}
+
+/** Previsión hora a hora desde la hora actual (Open-Meteo, hora local del sitio). */
+export async function fetchWeatherHours(
+  cfg: WeatherConfig,
+  hours: number,
+  fetchFn: typeof fetch = fetch,
+  timeoutMs = 8_000,
+): Promise<WeatherHour[]> {
+  const n = Math.min(48, Math.max(1, Math.round(hours) || 1));
+  const url =
+    'https://api.open-meteo.com/v1/forecast' +
+    `?latitude=${cfg.latitude}&longitude=${cfg.longitude}` +
+    '&hourly=temperature_2m,precipitation_probability,precipitation,weather_code' +
+    `&timezone=auto&forecast_hours=${n}`;
+  const res = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`el servicio del tiempo ha respondido ${res.status}`);
+  const body = (await res.json()) as {
+    hourly?: {
+      time?: string[];
+      temperature_2m?: Array<number | null>;
+      precipitation_probability?: Array<number | null>;
+      precipitation?: Array<number | null>;
+      weather_code?: Array<number | null>;
+    };
+  };
+  const h = body.hourly;
+  const out: WeatherHour[] = [];
+  const num = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  for (let i = 0; i < Math.min(n, h?.time?.length ?? 0); i++) {
+    const temp = num(h?.temperature_2m?.[i]);
+    const time = h?.time?.[i];
+    if (temp === undefined || typeof time !== 'string') continue;
+    out.push({
+      time,
+      temp,
+      rainProb: num(h?.precipitation_probability?.[i]),
+      rainMm: num(h?.precipitation?.[i]),
+      code: num(h?.weather_code?.[i]),
+    });
+  }
+  return out;
+}
+
+/** ¿Llueve esa hora? Probabilidad alta o lluvia medible. */
+const rainy = (h: WeatherHour): boolean => (h.rainProb ?? 0) >= 50 || (h.rainMm ?? 0) >= 0.2;
+
+const mm = (n: number): string =>
+  new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n);
+
+/**
+ * El texto hora a hora: primero cuándo llueve (tramos), que es lo que se suele preguntar,
+ * y luego cada hora (de 2 en 2 si son más de 24).
+ */
+export function hourlyText(hours: readonly WeatherHour[], label?: string): string {
+  const today = hours[0]?.time.slice(0, 10) ?? '';
+  const when = (t: string): string => {
+    const day = t.slice(0, 10);
+    const hh = t.slice(11, 16);
+    if (day === today) return hh;
+    // El día siguiente del calendario del sitio (aritmética de fechas, sin zona horaria).
+    const at = new Date(`${today}T12:00:00Z`);
+    at.setUTCDate(at.getUTCDate() + 1);
+    const next = `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, '0')}-${String(at.getUTCDate()).padStart(2, '0')}`;
+    return day === next ? `mañana ${hh}` : `${day.slice(8, 10)}/${day.slice(5, 7)} ${hh}`;
+  };
+  const spans: string[] = [];
+  let start: WeatherHour | undefined;
+  let last: WeatherHour | undefined;
+  let peak = 0;
+  const close = () => {
+    if (!start || !last) return;
+    const endHour = (Number(last.time.slice(11, 13)) + 1) % 24;
+    const end = `${String(endHour).padStart(2, '0')}:00`;
+    spans.push(`de ${when(start.time)} a ${end} (hasta ${Math.round(peak)} %)`);
+    start = undefined;
+    peak = 0;
+  };
+  for (const h of hours) {
+    if (rainy(h)) {
+      if (!start) start = h;
+      last = h;
+      peak = Math.max(peak, h.rainProb ?? 0);
+    } else close();
+  }
+  close();
+  const head = `Tiempo hora a hora${label ? ` en ${label}` : ''} (próximas ${hours.length} h):`;
+  const rain = spans.length
+    ? `Lluvia probable ${spans.join('; ')}.`
+    : `Sin lluvia prevista en las próximas ${hours.length} horas.`;
+  const step = hours.length > 24 ? 2 : 1;
+  const lines = hours
+    .filter((_, i) => i % step === 0)
+    .map((h) => {
+      const parts = [`${Math.round(h.temp)} °C`];
+      const sky = typeof h.code === 'number' ? weatherCodeEs(h.code) : '';
+      if (sky) parts.push(sky);
+      if ((h.rainProb ?? 0) >= 20)
+        parts.push(
+          `${Math.round(h.rainProb ?? 0)} % de lluvia${(h.rainMm ?? 0) >= 0.1 ? `, ${mm(h.rainMm ?? 0)} mm` : ''}`,
+        );
+      return `${when(h.time)}: ${parts.join(', ')}`;
+    });
+  return [head, rain, ...lines].join('\n');
+}
+
 /**
  * «¿Qué tiempo hace mañana?»: previsión del sitio configurado para el resumen diario
  * (Open-Meteo, gratis, sin clave). También de otra ciudad («¿llueve el sábado en Madrid?»,
@@ -127,7 +251,7 @@ export function createWeatherTool(
     name: 'tiempo',
     label: 'El tiempo',
     description:
-      'Weather forecast (today up to 7 days). Without arguments: the place configured in .env (PA_BRIEFING_LAT/LON). For another city or town pass `lugar` («Madrid», «Oviedo, Asturias»); for a location the user shared pass its `lat` and `lon`. Use for «qué tiempo hace», «¿llueve mañana en Madrid?», «¿hará frío el sábado en Londres?», «¿qué tiempo hace aquí?» after a shared location. Read-only.',
+      'Weather forecast (today up to 7 days, or hour by hour with `horas` for «¿llueve esta tarde?», «¿a qué hora para de llover?»). Without arguments: the place configured in .env (PA_BRIEFING_LAT/LON). For another city or town pass `lugar` («Madrid», «Oviedo, Asturias»); for a location the user shared pass its `lat` and `lon`. Use for «qué tiempo hace», «¿llueve mañana en Madrid?», «¿hará frío el sábado en Londres?», «¿qué tiempo hace aquí?» after a shared location. Read-only.',
     parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
@@ -153,6 +277,17 @@ export function createWeatherTool(
           cfg = config();
         }
         if (!cfg) return NO_PLACE;
+        if (typeof args.horas === 'number') {
+          let hours: WeatherHour[];
+          try {
+            hours = await fetchWeatherHours(cfg, args.horas, fetchFn);
+          } catch (err) {
+            log.warn('tiempo: fallo al consultar por horas', { err: String(err) });
+            return 'No pude consultar el tiempo ahora: el servicio no responde. Prueba en un rato.';
+          }
+          if (hours.length === 0) return 'El servicio del tiempo no ha devuelto datos ahora.';
+          return hourlyText(hours, cfg.label);
+        }
         let days: Awaited<ReturnType<typeof fetchWeatherDays>>;
         try {
           days = await fetchWeatherDays(cfg, args.dias ?? 3, fetchFn);
