@@ -462,6 +462,7 @@ import {
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 import { briefingDoctorLine, briefingHour, envOn } from './briefing-env.js';
+import { answerBtw, BTW_USAGE, btwFromText } from './btw.js';
 import { permisosListaReply } from './channels/permisos-lista.js';
 import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
 import {
@@ -6936,6 +6937,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, text, { quote: true });
   };
 
+  /**
+   * /btw <pregunta>: pregunta rápida al margen. Se contesta al momento, sin herramientas,
+   * sin esperar ni parar el turno en marcha y sin entrar en su historial (src/btw.ts).
+   */
+  const cmdBtw = async (inbound: Inbound, args: string): Promise<void> => {
+    const question = args.trim();
+    if (!question) {
+      await say(inbound, BTW_USAGE, { quote: true });
+      return;
+    }
+    const chatKey_ = chatKey(inbound);
+    const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
+    const busy = mine.find((t) => t.active);
+    const context = busy ?? mine.find((t) => t.name === 'main') ?? mine[0];
+    const reply = await answerBtw(question, {
+      llm: await researchLlm(),
+      messages: context?.agent.messages ?? [],
+      busy: Boolean(busy),
+      timeZone: localTimeZone(),
+    });
+    await say(inbound, reply, { quote: true });
+  };
+
   const cmdStop = async (inbound: Inbound): Promise<void> => {
     const chatKey_ = chatKey(inbound);
     const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
@@ -8809,6 +8833,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       run: (inbound) => say(inbound, undoLast(), { quote: true }).then(() => {}),
     },
     { names: ['steer', 'corrige'], run: (inbound, args) => cmdSteer(inbound, args) },
+    { names: ['btw', 'almargen'], run: (inbound, args) => cmdBtw(inbound, args) },
     { names: ['pendientes', 'followups'], run: (inbound) => cmdFollowups(inbound) },
     { names: ['entreno_hoy'], run: (inbound) => cmdGym(inbound, 'hoy') },
     { names: ['ultimo'], run: (inbound) => cmdGym(inbound, 'ultimo') },
@@ -9124,6 +9149,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               const reply = snoozeReminder(store, fired, when, new Date());
               routineRunner.sync();
               await say(inbound, reply, { quote: true });
+              return;
+            }
+          }
+          // «btw ¿qué hora es en Tokio?» con algo en marcha en este chat: al margen, como /btw.
+          {
+            const aside = isOwnerDm(inbound, vigilanteOwnerId) ? btwFromText(inbound.text) : null;
+            if (aside && [...threads.values()].some((t) => t.chatKey === chatKey_ && t.active)) {
+              await cmdBtw(inbound, aside);
               return;
             }
           }
