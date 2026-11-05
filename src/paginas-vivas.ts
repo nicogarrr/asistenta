@@ -30,6 +30,12 @@ export interface PaginaViva {
 }
 
 /** «Mis gastos de noviembre» → «mis-gastos-de-noviembre». */
+/** Una fila de tabla markdown: «| café | 2 € |». */
+const FILA_TABLA = /^\s*\|.*\|\s*$/;
+/** «café 2 €», «súper: 25,50€», «gasolina - 40 euros» → concepto e importe. */
+const IMPORTE_FINAL =
+  /^(.+?)\s*[:\-–—,]?\s+((?:\d+(?:[.,]\d+)?\s*(?:€|eur(?:os?)?)|€\s*\d+(?:[.,]\d+)?))$/iu;
+
 export function slugPagina(titulo: string): string {
   return (
     titulo
@@ -102,16 +108,44 @@ export class PaginasVivas {
     origen: string,
     now = Date.now(),
   ): PaginaViva | { error: string } {
-    const nueva = linea
+    const lineas = linea
       .split(/\r?\n/)
       .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => (/^(?:[-*•|#]|\d+[.)]\s)/.test(l) ? l : `- ${l}`))
+      .filter(Boolean);
+    if (!lineas.length) return { error: 'Dime qué apunto en la página.' };
+    const old = this.ver(titulo) ?? this.#parecida(titulo);
+    const previo = old?.contenido.replace(/\s+$/, '') ?? '';
+    // Si la página acaba en una tabla («| Concepto | Importe |»), la línea va como otra fila de
+    // la tabla; antes quedaba «- café 2 €» suelto debajo, fuera de la tabla.
+    const ultima = previo.split('\n').pop() ?? '';
+    const columnas = FILA_TABLA.test(ultima)
+      ? ultima.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').length
+      : 0;
+    const nueva = lineas
+      .map((l) => {
+        if (/^(?:[-*•|#]|\d+[.)]\s)/.test(l)) return l;
+        if (!columnas) return `- ${l}`;
+        const importe = columnas >= 2 ? IMPORTE_FINAL.exec(l) : null;
+        const celdas = importe?.[1] && importe[2] ? [importe[1], importe[2]] : [l];
+        while (celdas.length < columnas) celdas.push('');
+        return `| ${celdas.join(' | ')} |`.replace(/ {2}\|/g, ' |');
+      })
       .join('\n');
-    if (!nueva) return { error: 'Dime qué apunto en la página.' };
-    const old = this.ver(titulo);
-    const body = old ? `${old.contenido.replace(/\s+$/, '')}\n${nueva}` : nueva;
+    const body = old ? `${previo}\n${nueva}` : nueva;
     return this.guardar(old?.titulo ?? titulo, body, origen, now);
+  }
+
+  /**
+   * «la página de gastos» cuando la que hay se llama «Mis gastos» (o al revés): la misma
+   * página sin «mi/mis/la/el…» delante. Antes no se encontraba y se creaba otra «Gastos»
+   * con una sola línea. Solo si hay exactamente una así.
+   */
+  #parecida(titulo: string): PaginaViva | null {
+    const base = (s: string): string => s.replace(/^(?:(?:mi|mis|la|las|el|los|de|del)-)+/, '');
+    const want = base(slugPagina(titulo));
+    if (!want) return null;
+    const hits = this.lista().filter((p) => base(p.slug) === want);
+    return hits.length === 1 ? (hits[0] ?? null) : null;
   }
 
   ver(slugOrTitle: string): PaginaViva | null {
