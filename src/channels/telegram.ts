@@ -16,6 +16,7 @@ import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import { sharedKindText } from './telegram-compartido.js';
 import { addedEmojis, reactionMood, reactionText } from './telegram-reacciones.js';
+import { QUICK_REPLY_DONE, QUICK_REPLY_PREFIX, quickReplyText } from './telegram-respuestas.js';
 import {
   bindMoreButtons,
   COMMAND_CALLBACK_PREFIX,
@@ -925,6 +926,54 @@ export class TelegramChannel implements ChannelAdapter {
     await handlers.onMessage(inbound);
   }
 
+  /**
+   * Botón «Sí» / «No» bajo una respuesta que acababa en pregunta cerrada: entra como si
+   * el dueño lo hubiera escrito, en el hilo de esa respuesta. Los botones se cambian
+   * por uno solo con lo elegido («✓ Sí»), así se ve qué se contestó y no se contesta
+   * dos veces.
+   */
+  async #onQuickReply(ctx: Context, code: string): Promise<void> {
+    const handlers = this.#handlers;
+    const message = ctx.callbackQuery?.message;
+    const user = ctx.from;
+    const text = quickReplyText(code);
+    if (!handlers || !message || !user || !text) {
+      await ctx.answerCallbackQuery({ text: QUICK_REPLY_USED }).catch(() => {});
+      return;
+    }
+    await ctx.answerCallbackQuery({ text }).catch(() => {});
+    void this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
+          reply_markup: {
+            inline_keyboard: [[{ text: `✓ ${text}`, callback_data: QUICK_REPLY_DONE }]],
+          },
+        }),
+        20_000,
+        'editMessageReplyMarkup timed out',
+      ),
+    ).catch(() => {});
+    const chatId = String(message.chat.id);
+    const messageId = String(message.message_id);
+    const thread = (message as { message_thread_id?: number }).message_thread_id;
+    await handlers.onMessage({
+      channel: this.name,
+      account: this.account,
+      chatId,
+      threadId: thread ? String(thread) : undefined,
+      userId: String(user.id),
+      displayName: user.username ? `@${user.username}` : user.first_name,
+      text,
+      authorised: true,
+      isGroup: message.chat.type !== 'private',
+      // El id de la respuesta que llevaba los botones: un segundo toque es el mismo
+      // mensaje y el filtro de duplicados lo para.
+      messageId,
+      receivedAt: new Date().toISOString(),
+      replyToMessageId: this.#resolveReply(chatId, messageId),
+    });
+  }
+
   /** Returns a refusal message when the sender may not act, else null. */
   #authorise(userId: number, label: string, handlers: ChannelHandlers): string | null {
     if (!this.#options.allowedUserIds.includes(userId)) {
@@ -952,6 +1001,12 @@ export class TelegramChannel implements ChannelAdapter {
     // resuelve, consume ni toca una aprobación pendiente.
     if (data.startsWith(MORE_CALLBACK_PREFIX)) {
       await this.#onMorePress(ctx, data.slice(MORE_CALLBACK_PREFIX.length));
+      return;
+    }
+
+    // «Sí» / «No» de una respuesta que acababa en pregunta: equivale a escribirlo.
+    if (data.startsWith(QUICK_REPLY_PREFIX)) {
+      await this.#onQuickReply(ctx, data.slice(QUICK_REPLY_PREFIX.length));
       return;
     }
 
@@ -2540,6 +2595,9 @@ export const TELEGRAM_ALLOWED_UPDATES = [
   'callback_query',
   'message_reaction',
 ] as const;
+
+/** Botón de respuesta rápida ya usado (o que no se reconoce). */
+const QUICK_REPLY_USED = 'Ya está contestado.';
 
 /** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
 export const EDITED_MESSAGE_NOTE =
