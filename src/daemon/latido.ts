@@ -169,6 +169,16 @@ export class Latidos {
     return hit;
   }
 
+  /** Igual que `stop`, pero en todos los hilos de un chat (`chatKey` y `chatKey#hilo`). */
+  stopInChat(chatKey: string, needle = ''): Latido[] {
+    const scopes = new Set(
+      [...this.#items.values()]
+        .map((l) => l.scope)
+        .filter((s) => s === chatKey || s.startsWith(`${chatKey}#`)),
+    );
+    return [...scopes].flatMap((s) => this.stop(s, needle));
+  }
+
   /** Una comprobación (la llama el temporizador; pública para las pruebas). */
   async tick(id: string): Promise<void> {
     const l = this.#items.get(id);
@@ -247,6 +257,25 @@ export class Latidos {
       log.warn('latido save failed', { err: String(err) });
     }
   }
+}
+
+/**
+ * «Deja de vigilar», «para de vigilar lo de la web», «ya no hace falta que vigiles»: parar sin
+ * pasar por el modelo. Devuelve la palabra a buscar ('' = todos los del chat) o null si no
+ * es eso.
+ */
+export function latidoStopRequest(text: string): string | null {
+  const t = foldAccents(text.toLowerCase())
+    .replace(/\s+/g, ' ')
+    .replace(/[.!¡]+$/u, '')
+    .trim();
+  const m =
+    /^(?:ya\s+)?(?:(?:para|deja|dejar)\s+de\s+vigilar(?:lo|la|los)?|no\s+vigiles\s+mas|ya no hace falta que vigiles|para\s+(?:el|los)\s+latidos?|quita\s+(?:el|los)\s+latidos?)(?:\s+(?:lo de\s+|eso de\s+|el\s+|la\s+|los\s+|las\s+)?(.{2,60}))?$/.exec(
+      t,
+    );
+  if (!m) return null;
+  const rest = (m[1] ?? '').replace(/^(?:ya|eso|nada|mas)$/, '').trim();
+  return rest;
 }
 
 /** «cada 10 min, durante 3 h»: cómo se le dice a Nico. */
