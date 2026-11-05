@@ -458,8 +458,12 @@ export class TelegramChannel implements ChannelAdapter {
     if (located && !inbound.text) inbound.text = forwarded ? `${forwarded}\n${located}` : located;
     const replyQuote = msg.reply_to_message
       ? replyQuoteNote(msg.reply_to_message, ctx.me?.id)
-      : null;
+      : externalReplyNote(msg);
     if (replyQuote) inbound.replyQuote = replyQuote;
+    // Cita parcial: Nico selecciona un trozo del mensaje y responde a ese trozo. Sin
+    // esto, «¿y esto?» sobre una línea de una lista larga se contestaba sobre toda.
+    const quotePart = quotedPartNote(msg);
+    if (quotePart) inbound.replyQuotePart = quotePart;
 
     if (incomingAudio) {
       inbound.audioFileId = incomingAudio.file_id;
@@ -2500,6 +2504,50 @@ export function replyQuoteNote(reply: object, botId?: number): string | null {
     who = name ? `un mensaje de ${name}` : 'un mensaje';
   }
   return `[Respondiendo a ${who}: «${quoted}»]`;
+}
+
+/**
+ * El trozo concreto que Nico citó al responder (Telegram deja seleccionar una parte del
+ * mensaje: `quote`), en una línea y acotado. Empieza por «[», así que nunca se toma por
+ * un comando. null si la respuesta no cita una parte.
+ */
+export function quotedPartNote(msg: object): string | null {
+  const quote = (msg as { quote?: { text?: unknown } }).quote;
+  const text = typeof quote?.text === 'string' ? quote.text : '';
+  const raw = text.replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  const cut = sliceSafe(raw, 300);
+  const quoted = cut.length < raw.length ? `${cut.trimEnd()}…` : cut;
+  return `[Responde en concreto a esta parte: «${quoted}»]`;
+}
+
+/**
+ * Respuesta a un mensaje de OTRO chat (Telegram: «responder en otro chat»): no hay
+ * `reply_to_message`, solo `external_reply` con su origen. Dice de quién era, para que
+ * «¿qué opinas?» no parezca salir de la nada; el trozo citado va en `quotedPartNote`.
+ */
+export function externalReplyNote(msg: object): string | null {
+  const ext = (msg as { external_reply?: unknown }).external_reply as
+    | {
+        origin?: {
+          sender_user?: { first_name?: string; last_name?: string };
+          sender_user_name?: string;
+          sender_chat?: { title?: string };
+          chat?: { title?: string };
+        };
+        chat?: { title?: string };
+      }
+    | undefined;
+  if (!ext || typeof ext !== 'object') return null;
+  const o = ext.origin;
+  const user = o?.sender_user;
+  const raw = user
+    ? [user.first_name, user.last_name].filter(Boolean).join(' ')
+    : (o?.sender_user_name ?? o?.sender_chat?.title ?? o?.chat?.title ?? ext.chat?.title ?? '');
+  const name = sliceSafe(raw.replace(/[\s[\]«»]+/g, ' ').trim(), 60).trim();
+  return name
+    ? `[Respondiendo a un mensaje de ${name} de otro chat]`
+    : '[Respondiendo a un mensaje de otro chat]';
 }
 
 /** Aviso para un vídeo, GIF o contenido de pago que llega con texto: se contesta solo al texto. */
