@@ -9,6 +9,7 @@ import {
   WATCHDOG_USAGE,
 } from './cli-uso.js';
 import { resolveModelCaps } from './core/models.js';
+import { CreadosStore } from './creados.js';
 import {
   learnNameAnswer,
   PreguntasPendientes,
@@ -1837,6 +1838,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const pageWatches = new PageWatchStore(memoryDb);
   // Páginas vivas del panel (tarjeta «Páginas»): las crea el agente y las rehace una rutina.
   const paginasVivas = new PaginasVivas(memoryDb);
+  // Copia de las gráficas/Excel/PDF que genero, para bajarlas otra vez desde «Páginas».
+  const creados = new CreadosStore(join(paths.state, 'creados'));
   // Config de avisos de GitHub del .env; la vigilancia arranca más abajo (o al pedirla en el chat).
   const githubAvisosConf = githubAvisosConfig();
   let ensureGithubAvisos: () => void = () => {};
@@ -2195,7 +2198,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Tarjeta Paquetes: envíos leídos de los correos, solo lectura.
           repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
           // Tarjeta Páginas: páginas vivas y salidas de rutinas a fichero (solo texto, sin HTML).
-          paginas: () => panelPaginas(paginasVivas, join(paths.state, 'salidas'), localTimeZone()),
+          paginas: () =>
+            panelPaginas(paginasVivas, join(paths.state, 'salidas'), localTimeZone(), creados),
+          creado: (id) => creados.leer(id),
           pagina: (id) =>
             panelPagina(paginasVivas, join(paths.state, 'salidas'), id, localTimeZone()),
           // Tarjeta Contexto: qué ocupa cada conversación y cuánto falta para resumir
@@ -2650,8 +2655,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // «Hazme una gráfica de mis gastos», «pásamelo en Excel / en PDF»: el archivo se
       // genera en el PC (sin red) y va a esta conversación (al panel en un turno del panel).
       createEntregableTool({
-        sendPhoto: (png) =>
-          ctx
+        sendPhoto: (png) => {
+          creados.guardar(png, 'grafica.png');
+          return ctx
             .sendPhoto(png, () =>
               telegram
                 .sendPhotoBytes(chatNumberOf(thread.chatKey), png, inboundFor(thread).threadId)
@@ -2661,9 +2667,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             .catch((err: unknown) => {
               log.warn('entregable: no se pudo mandar la imagen', { err: String(err) });
               return false;
-            }),
-        sendDocument: (bytes, filename, caption) =>
-          ctx
+            });
+        },
+        sendDocument: (bytes, filename, caption) => {
+          creados.guardar(bytes, filename);
+          return ctx
             .sendFile({ bytes, name: filename }, () =>
               telegram
                 .sendDocumentBytes(
@@ -2679,7 +2687,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             .catch((err: unknown) => {
               log.warn('entregable: no se pudo mandar el archivo', { err: String(err) });
               return false;
-            }),
+            });
+        },
       }),
       // «Avísame cuando falle el CI de nicogarrr/asistenta»: avisos de GitHub sin tocar el .env.
       createGithubAvisosTool({

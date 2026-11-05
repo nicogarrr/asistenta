@@ -38,6 +38,8 @@ export interface WebUiDeps {
   paginas?(): unknown | Promise<unknown>;
   /** Una página en bloques de texto; null/undefined = no existe (404). Si falta, 503. */
   pagina?(id: string): unknown | Promise<unknown>;
+  /** Un archivo generado (gráfica, Excel, PDF…) para bajarlo desde «Páginas»; null = 404. */
+  creado?(id: string): { bytes: Buffer; mime: string; nombre: string } | null;
   /**
    * Tarjeta «Contexto»: de qué está hecho el contexto de cada conversación abierta
    * (solo números y nombres, ver contexto.ts). Si falta o devuelve null, 503.
@@ -131,6 +133,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'repartos' }
   | { method: 'GET'; kind: 'paginas' }
   | { method: 'GET'; kind: 'pagina'; id: string }
+  | { method: 'GET'; kind: 'creado'; id: string }
   | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'contexto' }
   | { method: 'GET'; kind: 'mapaMemoria' }
@@ -295,6 +298,11 @@ function matchApiRoute(pathname: string): ApiRoute | null {
     default:
       break;
   }
+  const creado = /^\/api\/creados\/([^/]+)$/.exec(pathname);
+  if (creado?.[1]) {
+    const id = safeDecode(creado[1]);
+    return id ? { method: 'GET', kind: 'creado', id } : null;
+  }
   const pagina = /^\/api\/paginas\/([^/]+)$/.exec(pathname);
   if (pagina?.[1]) {
     const id = safeDecode(pagina[1]);
@@ -357,6 +365,21 @@ async function respondApi(
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Paquetes aún no disponibles');
         break;
+      case 'creado': {
+        // Bytes tal cual, siempre como descarga (nunca se pinta en el panel).
+        const f = deps.creado ? deps.creado(route.id) : null;
+        if (!f) throw new HttpError(404, 'Archivo no encontrado');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', f.mime);
+        res.setHeader('Content-Length', f.bytes.length);
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${f.nombre.replace(/[^A-Za-z0-9._-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(f.nombre)}`,
+        );
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(f.bytes);
+        return;
+      }
       case 'paginas':
         payload = deps.paginas ? await deps.paginas() : null;
         if (payload === null || payload === undefined)

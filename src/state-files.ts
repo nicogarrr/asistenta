@@ -180,6 +180,13 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'tus scripts en eventos y sus aprobaciones (PA_SCRIPTS)',
     backup: 'dir',
   },
+  {
+    name: 'creados',
+    what: 'copia de las gráficas, Excel y PDF que te hago (tarjeta «Páginas», los 40 últimos)',
+    backup: false,
+    why: 'copias de lo ya enviado por Telegram; se rehacen pidiéndolas otra vez',
+    growth: 'no crece: creados.ts se queda con los 40 últimos y como mucho 50 MB',
+  },
   { name: 'audit', what: 'registro de auditoría de llamadas a herramientas', backup: 'dir' },
   { name: 'factory', what: 'herramientas de la fábrica (TOOL.md editables)', backup: 'dir' },
   { name: 'evolve', what: 'historial de intentos de auto-mejora', backup: 'dir' },

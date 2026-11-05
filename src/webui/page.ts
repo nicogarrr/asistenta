@@ -2295,6 +2295,28 @@ ${renderFormatScript()}
         return fila;
       }
 
+      // Bajar un archivo creado: la API pide la clave en la cabecera, así que va por fetch + blob.
+      async function descargarCreado(f, boton) {
+        if (!token) { pedirToken('Pon la clave del panel para bajar el archivo.'); return; }
+        boton.disabled = true;
+        try {
+          var r = await fetch('/api/creados/' + encodeURIComponent(f.id), { headers: { Authorization: 'Bearer ' + token } });
+          if (!r.ok) throw new Error(r.status === 404 ? 'Ese archivo ya no está (se guardan los 40 últimos).' : 'No se pudo bajar (' + r.status + ').');
+          var url = URL.createObjectURL(await r.blob());
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = f.nombre;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        } catch (error) {
+          mostrarAviso(error && error.message ? error.message : 'No se pudo bajar el archivo.');
+        } finally {
+          boton.disabled = false;
+        }
+      }
+
       async function cargarPaginas(silencio) {
         var contenedor = document.getElementById('panel-paginas');
         if (silencio !== true) pintarCarga(contenedor);
@@ -2309,6 +2331,20 @@ ${renderFormatScript()}
               lista.appendChild(filaPagina(p, '· ' + p.actualizada + ' · ' + p.origen));
             });
             contenedor.appendChild(lista);
+          }
+          if (Array.isArray(datos.archivos) && datos.archivos.length) {
+            contenedor.appendChild(nodo('p', 'muted', 'Archivos que te he hecho (gráficas, Excel, PDF…):'));
+            var lista3 = nodo('ul', 'tareas');
+            datos.archivos.forEach(function (f) {
+              var fila = nodo('li', 'texto');
+              var boton = nodo('button', 'mini', f.nombre);
+              boton.type = 'button';
+              boton.addEventListener('click', function () { descargarCreado(f, boton); });
+              fila.appendChild(boton);
+              fila.appendChild(document.createTextNode(' · ' + f.creado + ' · ' + Math.max(1, Math.round(f.bytes / 1024)) + ' KB'));
+              lista3.appendChild(fila);
+            });
+            contenedor.appendChild(lista3);
           }
           if (datos.salidas.length) {
             contenedor.appendChild(nodo('p', 'muted', 'Salidas de rutinas guardadas en fichero:'));

@@ -259,8 +259,20 @@ const fecha = (ms: number, timeZone?: string): string =>
   }).format(new Date(ms));
 
 /** Datos de la tarjeta «Páginas» del panel: páginas vivas y salidas de rutinas. */
-export function panelPaginas(store: PaginasVivas, salidasDir: string, timeZone?: string) {
+export function panelPaginas(
+  store: PaginasVivas,
+  salidasDir: string,
+  timeZone?: string,
+  /** Archivos generados (gráficas, Excel, PDF…): creados.ts. */
+  creados?: { lista(): Array<{ id: string; nombre: string; bytes: number; creado: number }> },
+) {
   return {
+    archivos: (creados?.lista() ?? []).slice(0, 20).map((f) => ({
+      id: f.id,
+      nombre: f.nombre,
+      bytes: f.bytes,
+      creado: fecha(f.creado, timeZone),
+    })),
     paginas: store.lista().map((p) => ({
       id: p.slug,
       titulo: p.titulo,
