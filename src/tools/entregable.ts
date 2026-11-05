@@ -8,6 +8,7 @@ import {
   type Tabla,
   textoCelda,
 } from '../entregables/datos.js';
+import { crearDocx } from '../entregables/docx.js';
 import { dibujarGrafica, MAX_PUNTOS, type TipoGrafica } from '../entregables/grafica.js';
 import { crearPdf } from '../entregables/pdf.js';
 import { crearXlsx } from '../entregables/xlsx.js';
@@ -26,15 +27,18 @@ export const MAX_COLUMNAS = 40;
 
 const Params = lazySchema(() =>
   Type.Object({
-    formato: Type.Union([Type.Literal('grafica'), Type.Literal('excel'), Type.Literal('pdf')], {
-      description: 'grafica = imagen PNG; excel = archivo .xlsx; pdf = documento PDF.',
-    }),
+    formato: Type.Union(
+      [Type.Literal('grafica'), Type.Literal('excel'), Type.Literal('pdf'), Type.Literal('word')],
+      {
+        description:
+          'grafica = imagen PNG; excel = archivo .xlsx; pdf = documento PDF; word = documento .docx.',
+      },
+    ),
     titulo: Type.String({
       maxLength: 120,
       description: 'Título (y nombre del archivo), p. ej. «Gastos de octubre».',
     }),
     columnas: Type.Array(Type.String({ maxLength: 80 }), {
-      minItems: 1,
       maxItems: MAX_COLUMNAS,
       description:
         'Cabecera. Para una gráfica: la primera columna son las etiquetas (mes, categoría) y las siguientes, las series de números.',
@@ -58,7 +62,8 @@ const Params = lazySchema(() =>
     texto: Type.Optional(
       Type.String({
         maxLength: 20_000,
-        description: 'Solo PDF: texto o resumen que va antes de la tabla.',
+        description:
+          'PDF y Word: texto o resumen que va antes de la tabla (en Word admite «# Encabezado», «- viñeta» y **negrita**).',
       }),
     ),
     con_grafica: Type.Optional(
@@ -66,7 +71,8 @@ const Params = lazySchema(() =>
     ),
     totales: Type.Optional(
       Type.Boolean({
-        description: 'Excel y PDF: añadir una fila «Total» con la suma de cada columna de números.',
+        description:
+          'Excel, PDF y Word: añadir una fila «Total» con la suma de cada columna de números.',
       }),
     ),
   }),
@@ -80,7 +86,7 @@ export interface EntregableDeps {
 }
 
 interface Args {
-  formato: 'grafica' | 'excel' | 'pdf';
+  formato: 'grafica' | 'excel' | 'pdf' | 'word';
   titulo: string;
   columnas: string[];
   filas: Celda[][];
@@ -121,7 +127,7 @@ export function createEntregableTool(deps: EntregableDeps): AgentTool<ReturnType
     name: 'entregable',
     label: 'Gráfica, Excel o PDF',
     description:
-      'Crea y manda a este chat una gráfica (imagen), un Excel (.xlsx) o un PDF con los datos que le pases. Úsala para «hazme una gráfica de mis gastos», «pásamelo en Excel», «ponlo en PDF». Reúne antes los datos (correo, documentos, lo que te haya dicho) y pásalos como columnas y filas; no inventes datos. Para una gráfica, agrupa (por mes, por categoría) si hay muchas filas.',
+      'Crea y manda a este chat una gráfica (imagen), un Excel (.xlsx), un PDF o un Word (.docx) con los datos que le pases. Úsala para «hazme una gráfica de mis gastos», «pásamelo en Excel», «ponlo en PDF», «hazme un Word con…». Reúne antes los datos (correo, documentos, lo que te haya dicho) y pásalos como columnas y filas; no inventes datos. Para una gráfica, agrupa (por mes, por categoría) si hay muchas filas.',
     parameters: Params(),
     execute: async (_id, raw) => {
       const a = raw as Args;
@@ -133,7 +139,12 @@ export function createEntregableTool(deps: EntregableDeps): AgentTool<ReturnType
         columnas: a.columnas ?? [],
         filas: (a.filas ?? []).filter((f) => Array.isArray(f)),
       };
-      if (tabla.columnas.length === 0) return responder('Necesito al menos una columna.');
+      // Un PDF o un Word pueden ser solo texto («pásame este resumen en Word»); gráfica y Excel no.
+      if (
+        tabla.columnas.length === 0 &&
+        (a.formato === 'grafica' || a.formato === 'excel' || !a.texto?.trim())
+      )
+        return responder('Necesito al menos una columna con datos.');
       if (tabla.filas.length > MAX_FILAS)
         return responder(`Son demasiadas filas (máximo ${MAX_FILAS}).`);
       const titulo = (a.titulo ?? '').trim() || 'Datos';
@@ -153,6 +164,14 @@ export function createEntregableTool(deps: EntregableDeps): AgentTool<ReturnType
             ok
               ? `Excel «${nombre}» enviado al chat (${tabla.filas.length} filas).`
               : `No he podido mandar «${nombre}» al chat.`,
+          );
+        }
+        if (a.formato === 'word') {
+          const bytes = crearDocx({ ...tabla, titulo, texto: a.texto, totales: a.totales });
+          const nombre = nombreArchivo(titulo, 'docx');
+          const ok = await deps.sendDocument(bytes, nombre, titulo);
+          return responder(
+            ok ? `Word «${nombre}» enviado al chat.` : `No he podido mandar «${nombre}» al chat.`,
           );
         }
         let imagen: Buffer | undefined;
