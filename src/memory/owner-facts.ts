@@ -58,6 +58,10 @@ const STATED: readonly RegExp[] = [
   // equipo y deporte: «soy del Atleti», «juego al pádel», «practico yoga».
   /^soy\s+del\s+\S/i,
   /^(?:juego\s+(?:al|a la|a)|practico)\s+\S/i,
+  // cumpleaños y aniversarios con fecha: «el cumple de mi madre es el 6 de noviembre»,
+  // «mi madre cumple años el 6 de noviembre», «nuestro aniversario es el 8 de junio».
+  /^(?:el\s+|nuestro\s+|mi\s+)?(?:cumple(?:años|anos)?|aniversario|santo|onomástica|onomastica)(?:\s+(?:de|del)\s+.{2,40}?)?\s+(?:es|cae)\s+el\s+\d{1,2}(?:\s+de\s+\p{L}+|[/-]\d{1,2})$/iu,
+  /^(?:mis?\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,2}|\p{Lu}\p{L}+(?:\s+\p{Lu}\p{L}+)?)\s+cumple(?:\s+años|\s+anos)?\s+el\s+\d{1,2}(?:\s+de\s+\p{L}+|[/-]\d{1,2})$/u,
   // preferencias sobre cómo tratarle
   /^(?:no me (?:escribas|mandes|envíes|envies|llames|hables|avises|despiertes|molestes)|prefiero|me gusta|no me gusta|me encanta|odio)\s+\S/i,
 ];
@@ -195,6 +199,11 @@ export function factKey(fact: string): string | null {
       .replace(/n$/, '');
     return `mi ${mine[2]}|${verb}`;
   }
+  // «el cumple de mi madre es el…» y «mi madre cumple años el…» hablan del mismo cumple.
+  const birthday =
+    /^(?:el )?cumple(?:anos)? (?:de|del) (.+?) (?:es|cae) el /.exec(t)?.[1] ??
+    /^(.+?) cumple(?: anos)? el \d/.exec(t)?.[1];
+  if (birthday) return `cumple|${birthday.toLowerCase()}`;
   const self = /^(me llamo|vivo en|trabajo (?:en|de)|soy del|soy de|naci el)\s/.exec(t)?.[1];
   if (self) return self.startsWith('trabajo') ? 'trabajo' : self;
   // «estoy divorciado» deja viejo «estoy casado con Ana».
