@@ -186,7 +186,7 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { LatencyStats, latencyLine } from './daemon/latency.js';
-import { createLatidoTool, Latidos } from './daemon/latido.js';
+import { createLatidoTool, Latidos, latidoLine, latidoStopRequest } from './daemon/latido.js';
 import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/panel-chat.js';
 import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
@@ -5903,6 +5903,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (direct) {
       await say(inbound, direct, { quote: true });
       return true;
+    }
+    // «deja de vigilar»: para lo que se vigila en este chat al momento (latido.ts). Si no hay
+    // nada vigilándose o no casa con nada, sigue como siempre.
+    const stopNeedle = latidoStopRequest(text);
+    if (stopNeedle !== null) {
+      const stopped = latidos.stopInChat(chatKey(inbound), stopNeedle);
+      if (stopped.length > 0) {
+        const lines = stopped.map((l) => `• ${latidoLine(l)}`).join('\n');
+        await say(inbound, `Vale, dejo de vigilar:\n${lines}`, { quote: true });
+        return true;
+      }
     }
     const forget = forgetRequest(text);
     if (forget) {
