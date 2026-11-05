@@ -39,10 +39,20 @@ export const BTW_USAGE =
  */
 export function btwFromText(text: string | undefined): string | null {
   if (!text) return null;
-  const m = /^\s*(?:btw|by\s+the\s+way)\s*[,:.-]?\s+([\s\S]+)$/i.exec(text);
+  // «por cierto, ¿…?»: como se dice en castellano (antes solo «btw» y la pregunta esperaba
+  // a que acabara la tarea larga).
+  const m = /^\s*(?:btw|by\s+the\s+way|por\s+cierto)\s*[,:.-]?\s+([\s\S]+)$/iu.exec(text);
   if (!m) return null;
   const q = (m[1] ?? '').trim();
   if (!q || !(/^¿/.test(q) || /\?\s*$/.test(q))) return null;
+  // «por cierto, ¿puedes mandárselo también a Ana?» pide algo a la tarea: no es al margen.
+  if (
+    /^por\s+cierto/iu.test(text.trim()) &&
+    /^¿?\s*(?:y\s+)?(?:me\s+|nos\s+|se\s+lo\s+|lo\s+|la\s+)?(?:puedes|podr[ií]as|pod[eé]is|quieres|te\s+importa|y\s+si|tambi[eé]n|a[nñ]ade|cambia|usa|haz|pon)\b/iu.test(
+      q,
+    )
+  )
+    return null;
   return q;
 }
 
