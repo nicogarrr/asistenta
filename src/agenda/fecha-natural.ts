@@ -88,6 +88,12 @@ const MINUTOS: Readonly<Record<string, number>> = {
 function horaHablada(text: string): string {
   return (
     text
+      // «mañana sobre las 9 dentista», «hacia las 18», «a eso de las 10»: la hora aproximada
+      // no se entendía y /calendario volvía a preguntar. Es «a las 9».
+      .replace(
+        /\b(?:sobre|hacia|a\s+eso\s+de|alrededor\s+de)\s+(las?\s+)(?=\d|(?:una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b)/,
+        'a $1',
+      )
       // «a las doce del mediodía» y «al mediodía»: antes el primero dejaba «del mediodía» en el
       // título y el segundo no se entendía. Solo si no se dijo ya otra hora antes (entonces
       // «mediodía» es parte del título).
@@ -299,7 +305,11 @@ function parseDirecto(
   // El título es el final del texto: se toma del original con su misma longitud (la hora
   // hablada que se reescribió va antes y no cambia el título).
   const tail = (m[18] ?? '').length;
-  const title = original.slice(original.length - tail).trim();
+  // «mañana a las 21 y 2 personas cena»: no son las 21:02, y el «y» no es del título.
+  const title = original
+    .slice(original.length - tail)
+    .trim()
+    .replace(/^y\s+(?=\d+\s+\p{L})/u, '');
   if (!title) return null;
   // «mañana a las 21 30 cena», «a las 9 h 30»: los minutos quedaban en el título («30
   // cena») y el aviso a las 21:00 o a las 9:00. Si tras una hora sin minutos ni parte del
