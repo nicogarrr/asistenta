@@ -62,8 +62,8 @@ describe('/cron lista marca las rutinas de comando', () => {
   it('una rutina normal no lleva marca; una de comando sin aprobar dice que no se ejecuta', () => {
     commands.propose(THREAD, 'saldo', spec);
     const out = list(true);
-    expect(out).toMatch(/- resumen \[0 9 \* \* \*\]/);
-    expect(out).toContain('- saldo ⚙️ comando, sin aprobar (no se ejecuta) [0 8 * * *]');
+    expect(out).toMatch(/- resumen \[cada día a las 09:00\]/);
+    expect(out).toContain('- saldo ⚙️ comando, sin aprobar (no se ejecuta) [cada día a las 08:00]');
   });
 
   it('aprobada pero con PA_CRON_COMANDOS apagado dice cómo activarlo', () => {
@@ -76,7 +76,7 @@ describe('/cron lista marca las rutinas de comando', () => {
     commands.propose(THREAD, 'saldo', spec);
     commands.approve(THREAD, 'saldo', approvalCode(spec));
     expect(list(true)).toContain(
-      '- saldo ⚙️ comando: node saldo.js --cuenta "mi banco" [0 8 * * *]',
+      '- saldo ⚙️ comando: node saldo.js --cuenta "mi banco" [cada día a las 08:00]',
     );
   });
 

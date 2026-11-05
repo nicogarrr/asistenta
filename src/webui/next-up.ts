@@ -1,4 +1,5 @@
 import { isCommandRoutine } from '../command-routine.js';
+import { horarioEnLista } from '../cron/cadencia.js';
 import { isGoalRoutine } from '../goals/runner.js';
 import type { RoutineRun } from '../routine-history.js';
 import { dentroDeEs, fechaCortaEs, isReminder, reminderText } from '../tools/reminder.js';
@@ -159,7 +160,7 @@ export function panelRoutines(
           : Number.MAX_SAFE_INTEGER - 1,
       fila: {
         nombre: r.name,
-        horario: r.schedule,
+        horario: horarioEnLista(r),
         activa: r.enabled,
         proxima: !r.enabled ? 'Pausada' : valida && at ? cuando(at, now) : 'Sin próxima ejecución',
         comando: isCommandRoutine(r) ? marca || 'comando' : null,

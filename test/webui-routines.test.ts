@@ -42,7 +42,7 @@ describe('panel: tarjeta Rutinas (solo lectura)', () => {
     expect(r.map((x) => x.nombre)).toEqual(['backup', 'resumen', 'sin-proxima', 'pausada']);
     expect(r[0]).toMatchObject({
       comando: 'comando: pa backup',
-      horario: '0 3 * * *',
+      horario: 'cada día a las 03:00',
       activa: true,
     });
     expect(r[0]?.proxima).toMatch(/\(en 2 h\)$/);

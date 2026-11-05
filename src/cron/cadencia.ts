@@ -1,3 +1,4 @@
+import { skipsHolidays } from '../festivos-rutinas.js';
 import { foldAccents } from '../text.js';
 import { scheduleEs } from './describe-es.js';
 
@@ -161,4 +162,20 @@ export function programadaRutinaEs(routine: {
   if (!routine.schedule) return 'programada';
   const said = horarioRutinaEs(routine);
   return said ? `programada: ${said}` : `programada con horario ${routine.schedule}`;
+}
+
+/**
+ * El horario de una rutina en las listas (/cron, /agenda, /rutinas): en palabras
+ * («de lunes a viernes a las 09:00, excepto festivos») y no el cron crudo («0 9 * * 1-5»),
+ * que Nico no tiene por qué leer. Si no se sabe decir, el cron tal cual.
+ */
+export function horarioEnLista(r: {
+  name: string;
+  prompt: string | null;
+  schedule: string | null;
+}): string {
+  if (!r.schedule) return 'sin horario';
+  const said = horarioRutinaEs(r);
+  if (!said) return r.schedule;
+  return skipsHolidays(`${r.name} ${r.prompt ?? ''}`) ? `${said}, excepto festivos` : said;
 }
