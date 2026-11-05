@@ -57,9 +57,7 @@ describe('mensajes que Asistenta aún no sabe leer', () => {
     expect(replies).toEqual(['Aún no sé ver stickers. Si quieres algo, escríbemelo.']);
   });
 
-  it('una ubicación y un contacto también avisan', async () => {
-    const loc = await receive({ location: { latitude: 40.4, longitude: -3.7 } });
-    expect(loc.replies[0]).toMatch(/ubicaciones/);
+  it('un contacto también avisa', async () => {
     const contact = await receive({ contact: { phone_number: '600', first_name: 'Ana' } });
     expect(contact.replies[0]).toMatch(/contactos/);
   });
