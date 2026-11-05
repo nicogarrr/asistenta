@@ -15,6 +15,7 @@ import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import { sharedKindText } from './telegram-compartido.js';
+import { SentTexts } from './telegram-enviados.js';
 import { addedEmojis, reactionMood, reactionText } from './telegram-reacciones.js';
 import {
   bindMoreButtons,
@@ -71,6 +72,11 @@ export interface TelegramOptions {
   account?: string;
   /** How long an approval stays answerable. */
   approvalTtlMs?: number;
+  /**
+   * Fichero donde se guardan las respuestas recientes del bot, para que una reacción
+   * (👎, 🤔) a una de ellas funcione también tras reiniciar. Sin él, solo en memoria.
+   */
+  sentTextsFile?: string;
 }
 
 /**
@@ -182,7 +188,7 @@ export class TelegramChannel implements ChannelAdapter {
   readonly account: string;
 
   readonly #bot: Bot;
-  readonly #options: Required<Omit<TelegramOptions, 'account'>>;
+  readonly #options: Required<Omit<TelegramOptions, 'account' | 'sentTextsFile'>>;
   /** Approval id -> resolver, so an inline button can answer it. */
   readonly #approvals = new Map<
     string,
@@ -232,10 +238,11 @@ export class TelegramChannel implements ChannelAdapter {
       approvalTtlMs: options.approvalTtlMs ?? 300_000,
     };
     this.#bot = new Bot(this.#options.token);
+    this.#sentTexts = new SentTexts(300, options.sentTextsFile);
   }
 
-  /** Texto de las respuestas recientes, para citar la que recibe una reacción. */
-  readonly #sentTexts = new BoundedMap<string, { text: string; threadId?: string }>(300);
+  /** Texto de las respuestas recientes, para citar la que recibe una reacción (en disco). */
+  readonly #sentTexts: SentTexts;
   /** Respuestas que ya abrieron un turno por una reacción: una vez por mensaje. */
   readonly #reactedTurns = new BoundedMap<string, true>(300);
 
@@ -2061,6 +2068,8 @@ export class TelegramChannel implements ChannelAdapter {
     if (handlers) for (const key of [...this.#albumHeld.keys()]) this.#flushAlbum(key, handlers);
     this.#stopped = true;
     this.#ready = false;
+    // Las respuestas recientes quedan en disco: un 👎 tras reiniciar aún las encuentra.
+    await this.#sentTexts.flush();
     if (this.#retryTimer) {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;

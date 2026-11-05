@@ -1804,6 +1804,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       : new (await import('./channels/telegram.js')).TelegramChannel({
           token,
           allowedUserIds: allowed,
+          // Reacciones (👎/🤔) a respuestas de antes de un reinicio: telegram-enviados.ts.
+          sentTextsFile: join(paths.state, 'telegram-respuestas-recientes.json'),
         });
 
   /** Estado de openGym (solo lectura). Lanza OpenGymError con el motivo si no se puede. */
