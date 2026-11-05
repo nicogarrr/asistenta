@@ -556,6 +556,7 @@ import { createCheckoutPage, createCheckoutTool } from './tools/checkout.js';
 import type { ActionGate } from './tools/computer.js';
 import { createDecisionTool } from './tools/decision.js';
 import { createDeliveriesTool } from './tools/deliveries.js';
+import { createDivisasTool } from './tools/divisas.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
@@ -2509,6 +2510,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createWeatherTool(() => weatherConfigFromEnv()),
       // «¿Cómo está el aire?» / «¿hay polen?»: mismo sitio que el tiempo (o Gijón), solo lectura.
       createAireTool(() => weatherConfigFromEnv()),
+      // «¿Cuánto son 120 dólares en euros?»: tipos del BCE, solo lectura.
+      createDivisasTool(),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
       // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
       createTraficoTool({

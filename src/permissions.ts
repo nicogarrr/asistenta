@@ -1695,6 +1695,8 @@ export class Gate {
       case 'aire':
       // «¿Qué tiempo hace?»: sin URL ni lugar del modelo; solo el servicio fijo del tiempo.
       case 'tiempo':
+      // «¿Cuánto son 120 dólares en euros?»: sin URL del modelo; solo el servicio fijo del BCE.
+      case 'divisas':
         return 'lee';
       // «¿A qué hora pongo la lavadora?»: precio de la luz del servicio fijo de Red Eléctrica.
       // El aviso de cada noche guarda (o quita) una rutina local del dueño.
@@ -2894,6 +2896,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'festivos',
   'cargar_herramienta',
   'tiempo',
+  'divisas',
   'aire',
   'trafico',
   'luz',
