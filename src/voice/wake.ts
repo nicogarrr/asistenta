@@ -46,6 +46,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
+import { modoAhorro } from '../ahorro.js';
 import { childEnv } from '../child-env.js';
 import { log } from '../log.js';
 import { listCaptureDevices } from '../screen/media.js';
@@ -146,10 +147,7 @@ export function wakeTiming(env: NodeJS.ProcessEnv = process.env): {
   checkIntervalMs: number;
   windowSeconds: number;
 } {
-  const ahorro = ['1', 'true', 'on', 'si', 'sí'].includes(
-    (env.PA_AHORRO ?? '').trim().toLowerCase(),
-  );
-  return ahorro
+  return modoAhorro(env)
     ? { checkIntervalMs: 3_000, windowSeconds: 4.5 }
     : { checkIntervalMs: DEFAULT_CHECK_INTERVAL_MS, windowSeconds: WINDOW_SECONDS };
 }
