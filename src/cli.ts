@@ -365,6 +365,7 @@ import {
   wideResearchEnabled,
 } from './research/wide-research.js';
 import { routineHistoryAt } from './routine-history.js';
+import { type ScriptEvent, scriptsCommand, UserScripts } from './scripts-eventos.js';
 import { drainThreadTails } from './shutdown-drain.js';
 import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
@@ -3468,6 +3469,31 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   latidos.restore();
   // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
   const commandRoutines = new CommandRoutineStore(join(paths.state, 'command-routines.json'));
+  // Scripts del usuario en eventos (PA_SCRIPTS=1; cada uno aprobado con /scripts aprobar).
+  const userScripts = new UserScripts({
+    dir: join(paths.state, 'scripts'),
+    logFile: join(paths.log, 'scripts.log'),
+    notify: (text) => {
+      const chatId = resolveOwnerDmChatId(
+        [...threads.values()].map((t) => t.chatKey),
+        vigilanteOwnerId,
+      );
+      return chatId ? sendToChat(chatId, text) : undefined;
+    },
+  });
+  if (userScripts.enabled()) {
+    try {
+      userScripts.ensureDir();
+    } catch (err) {
+      log.warn('scripts: no pude crear la carpeta', { err: String(err) });
+    }
+  }
+  const fireScripts = (event: ScriptEvent, text: string, extra?: Record<string, string>): void => {
+    if (!userScripts.enabled()) return;
+    void userScripts
+      .fire(event, text, extra)
+      .catch((err) => log.warn('scripts: fallo', { event, err: String(err) }));
+  };
   const runRoutineFire = createRoutineFire({
     store,
     fireCommand: commandRoutinesEnabled()
@@ -3487,6 +3513,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     resendQueue: new RoutineResendQueue(join(paths.state, 'rutinas-reenvio.json')),
     // Últimas ejecuciones de cada rutina (/cron historial y la tarjeta Rutinas).
     history: routineHistoryAt(paths.state),
+    // Scripts del usuario: rutina.ps1 al terminar una rutina, recordatorio-*.ps1 al sonar.
+    onDone: (d) =>
+      d.reminder
+        ? fireScripts('recordatorio', d.text)
+        : fireScripts('rutina', d.text, {
+            ASISTENTA_RUTINA: d.name,
+            ASISTENTA_OK: d.ok ? '1' : '0',
+            ASISTENTA_SALIDA: d.salida.slice(0, 2000),
+          }),
   });
   runRoutineFire.resumePending();
 
@@ -3579,9 +3614,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Disparador «correo» (token-cero): un correo nuevo de tal remitente y/o asunto
   // dispara una rutina guardada. Usa la misma conexión IDLE (solo lectura) que el ojo.
   const hasMailTrigger = (): boolean =>
-    store.listTriggers().some((t) => t.enabled && t.event === 'correo');
+    store.listTriggers().some((t) => t.enabled && t.event === 'correo') ||
+    userScripts.wants('correo');
   const mailTriggers = createMailTriggerFeed({
-    emit: (event) => triggerEngine.emit(event),
+    emit: (event) => {
+      fireScripts('correo', event.text);
+      return triggerEngine.emit(event);
+    },
     seen: kvSeenIds(
       { get: (k) => store.kvGet(k), set: (k, v) => store.kvSet(k, v) },
       'trigger:correo:seen',
@@ -3630,6 +3669,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Disparador 'archivo': solo entra una descarga de verdad nueva (dedupe en
     // recordDownload). Evento global (scope ''): dispara en cualquier chat.
     onNew: (filename) => {
+      fireScripts('descarga', filename);
       void triggerEngine.emit({ type: 'archivo', scope: '', text: filename }).catch((err) => {
         log.warn('trigger archivo falló', { err: String(err) });
       });
@@ -5869,10 +5909,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
     token: githubTokenSource(),
     // «/disparador github rojo | revisa-ci»: el aviso también dispara rutinas.
-    emit: (notice) =>
+    emit: (notice) => {
+      fireScripts('github', notice);
       void triggerEngine
         .emit({ type: 'github', scope: '', text: notice, note: githubTriggerNote(notice) })
-        .catch((err) => log.warn('trigger github falló', { err: String(err) })),
+        .catch((err) => log.warn('trigger github falló', { err: String(err) }));
+    },
     extraRepos: () => chatRepos(githubKv),
   });
   let githubLoop: { stop(): void } | null = null;
@@ -8932,6 +8974,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       run: async (inbound, args) => cmdTrigger(await resolveThread(inbound), inbound, args),
     },
     {
+      names: ['scripts'],
+      run: async (inbound, args) => {
+        // Aprobar o lanzar programas del PC: solo el dueño, en su chat privado.
+        const text = isOwnerDm(inbound, vigilanteOwnerId)
+          ? await scriptsCommand(userScripts, args)
+          : 'Los scripts solo se gestionan desde el chat privado del dueño.';
+        await say(inbound, text, { quote: true });
+      },
+    },
+    {
       names: ['disparadores', 'triggers'],
       run: (inbound) => {
         const chatKey_ = chatKey(inbound);
@@ -9152,8 +9204,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const started = beginInbound(inbound, chatKey_, {
             seen: seenMessages,
             log,
-            emitMessageTrigger: (scope, text) =>
-              triggerEngine.emit({ type: 'mensaje', scope, text }),
+            emitMessageTrigger: (scope, text) => {
+              // mensaje-<palabras>.ps1: solo con mensajes del dueño en su chat privado.
+              if (isOwnerDm(inbound, vigilanteOwnerId)) fireScripts('mensaje', text);
+              return triggerEngine.emit({ type: 'mensaje', scope, text });
+            },
             setLastChat: (chat) => {
               lastChat = chat;
             },

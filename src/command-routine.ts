@@ -239,7 +239,7 @@ export type SpawnLike = typeof spawn;
 
 /** Ejecuta argv sin shell, con tope de tiempo y de bytes leídos. */
 export function runCommand(
-  spec: Pick<CommandSpec, 'argv' | 'cwd' | 'timeoutMs'>,
+  spec: Pick<CommandSpec, 'argv' | 'cwd' | 'timeoutMs'> & { env?: NodeJS.ProcessEnv },
   spawnImpl: SpawnLike = spawn,
   platform: NodeJS.Platform = process.platform,
 ): Promise<CommandResult> {
@@ -262,6 +262,8 @@ export function runCommand(
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // Sin env = el del daemon, como siempre; los scripts de eventos pasan uno sin claves.
+        ...(spec.env ? { env: spec.env } : {}),
       });
     } catch (err) {
       resolve({ code: null, stdout: '', stderr: '', timedOut: false, spawnError: String(err) });

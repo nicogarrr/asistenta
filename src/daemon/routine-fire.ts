@@ -102,6 +102,21 @@ export interface RoutineFireDeps {
     record: (scope: string, name: string, run: RoutineRun) => void;
     markResent: (scope: string, name: string) => void;
   };
+  /**
+   * Terminó una rutina (con su salida) o sonó un recordatorio: lo usan los scripts del
+   * usuario en eventos (scripts-eventos.ts). Nunca bloquea ni tumba el disparo.
+   */
+  onDone?: (done: RoutineDone) => void;
+}
+
+export interface RoutineDone {
+  scope: string;
+  name: string;
+  reminder: boolean;
+  /** Recordatorio: su texto; rutina: su nombre. */
+  text: string;
+  ok: boolean;
+  salida: string;
 }
 
 /** Lo que devuelve createRoutineFire: el disparo, más el reenvío de lo pendiente al arrancar. */
@@ -305,6 +320,16 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         failed = true;
         body = 'No devolvió respuesta.';
       }
+      note(() =>
+        deps.onDone?.({
+          scope: ctx.scope,
+          name: ctx.routine.name,
+          reminder: false,
+          text: ctx.routine.name,
+          ok: !failed,
+          salida: body,
+        }),
+      );
       // F6: where the output goes (chat by default) and «solo si cambia».
       const setting = deps.delivery.get(ctx.scope, ctx.routine.name);
       plan = planDelivery(setting, setting.lastHash, body, failed);
@@ -338,6 +363,17 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         return false;
       });
     if (sent && plan && !reminder) deps.delivery.commit(ctx.scope, ctx.routine.name, plan.hash);
+    if (sent && reminder)
+      note(() =>
+        deps.onDone?.({
+          scope: ctx.scope,
+          name: ctx.routine.name,
+          reminder: true,
+          text: reminderText(ctx.routine),
+          ok: true,
+          salida: '',
+        }),
+      );
     if (!reminder && plan) record(sent ? 'chat' : 'pendiente');
     // La salida ya está hecha pero Telegram no la aceptó (sin red un rato, tras sus
     // reintentos de 90 s): antes se perdía (el informe de las 8:00 no llegaba). Se
