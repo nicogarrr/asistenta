@@ -88,6 +88,11 @@ export interface WebUiDeps {
    * y la guarda en el almacén (clave-panel.ts). Si falta, la ruta responde 503.
    */
   setClave?(clave: string): Promise<unknown>;
+  /**
+   * Mini App de Telegram (miniapp.ts): ¿este `initData` está firmado por el bot y es del
+   * dueño? Si dice que sí, /api/miniapp devuelve el token del panel. Si falta, 503.
+   */
+  miniApp?(initData: string): boolean | Promise<boolean>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -153,6 +158,7 @@ type ApiRoute =
   | { method: 'POST'; kind: 'chatRetry' }
   | { method: 'POST'; kind: 'modelo' }
   | { method: 'POST'; kind: 'clave' }
+  | { method: 'POST'; kind: 'miniapp' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -305,6 +311,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'modelo' };
     case '/api/clave':
       return { method: 'POST', kind: 'clave' };
+    case '/api/miniapp':
+      return { method: 'POST', kind: 'miniapp' };
     default:
       break;
   }
@@ -461,6 +469,18 @@ async function respondApi(
         payload = panelReply(answer);
         break;
       }
+      case 'miniapp': {
+        if (!deps.miniApp) throw new HttpError(503, 'La Mini App no está disponible');
+        const initData = body.initData;
+        if (typeof initData !== 'string' || !(await deps.miniApp(initData))) {
+          throw new HttpError(
+            401,
+            'Telegram no ha confirmado que seas tú. Ábrelo desde tu chat con el bot.',
+          );
+        }
+        payload = { token: deps.token };
+        break;
+      }
       case 'chatRetry': {
         if (!deps.retry) throw new HttpError(503, 'Reintentar no disponible');
         const answer = await deps.retry();
@@ -577,7 +597,8 @@ async function handleRequest(
       sendJson(res, 405, { error: 'Método no permitido' });
       return;
     }
-    if (!authorized(req, deps.token)) {
+    // /api/miniapp es la puerta para entrar SIN token: su prueba es la firma de Telegram.
+    if (route.kind !== 'miniapp' && !authorized(req, deps.token)) {
       res.setHeader('WWW-Authenticate', 'Bearer realm="asistenta"');
       sendJson(res, 401, { error: 'No autorizado' });
       return;

@@ -2454,6 +2454,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           approvals: () => approvals.list(),
           approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') =>
             approvals.resolve(id, decision),
+          // Mini App (/panel desde Telegram): entra sin token si Telegram firma que es el dueño.
+          miniApp: async (initData: string) => {
+            const { verifyInitData } = await import('./webui/miniapp.js');
+            return verifyInitData(initData, await vaultGet('telegram:botToken'), vigilanteOwnerId);
+          },
         },
         {
           port: panelPlan.port,
@@ -6582,6 +6587,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** /altavoz [pc|tele|off]: notas de voz que suenan solas al llegar (solo el dueño, en privado). */
+  /** /tailscale y /panel: estado de Tailscale y botón de la Mini App (docs/SETUP-INTEGRACIONES.md). */
+  const cmdTailscale = async (inbound: Inbound, kind: 'estado' | 'panel'): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const { defaultTailscaleRun, tailscaleCommand } = await import('./tailscale.js');
+    const r = await tailscaleCommand(kind, { env: process.env, run: defaultTailscaleRun() });
+    await say(inbound, r.text, { quote: true, buttons: r.buttons });
+  };
   const cmdAltavoz = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
       await say(inbound, 'El altavoz solo se controla desde tu chat privado conmigo.', {
@@ -9397,6 +9414,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['modelo'], run: (inbound, args) => cmdModelo(inbound, args) },
     { names: ['proyecto'], run: (inbound, args) => cmdProyecto(inbound, args) },
     { names: ['altavoz'], run: (inbound, args) => cmdAltavoz(inbound, args) },
+    { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
+    { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
     { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
     {
       names: ['recordatorios', 'reminders'],
