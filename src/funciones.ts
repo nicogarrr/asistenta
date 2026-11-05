@@ -241,6 +241,10 @@ export const TOOL_ABILITIES: Readonly<
   },
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
   gasolineras: { area: 'agenda', text: 'te digo las gasolineras más baratas y te aviso si bajan' },
+  temas: {
+    area: 'agenda',
+    text: 'sigo tus temas y te traigo sus titulares de la noche en el resumen de la mañana',
+  },
   calendar: { area: 'agenda', text: 'leo tu calendario (no lo cambio)' },
   correo: {
     area: 'correo',

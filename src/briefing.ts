@@ -1,5 +1,6 @@
 import { localDay, wallClock, zonedTime } from './datecontext.js';
 import { type UpcomingDate, upcomingDateLine } from './memory/fechas.js';
+import { type Tarjeta, tarjetaLine } from './noticias-temas.js';
 import { sliceSafe } from './text.js';
 /**
  * El resumen proactivo del día, en texto plano y en español.
@@ -42,6 +43,8 @@ export interface BriefingInput {
   watches?: Array<{ label: string; lastCents?: number | null; targetCents?: number | null }>;
   /** Cumpleaños y aniversarios que el dueño contó y caen en los próximos días. */
   dates?: UpcomingDate[];
+  /** Titulares de la noche sobre los temas que sigue (noticias-temas.ts). */
+  temas?: Tarjeta[];
 }
 
 const WEEKDAYS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -211,6 +214,10 @@ export function buildBriefing(input: BriefingInput): string {
     {
       title: 'Seguimientos',
       items: section(input.followups.map(followupLine)),
+    },
+    {
+      title: 'Tus temas',
+      items: section((input.temas ?? []).map((t) => oneLine(tarjetaLine(t), 200) || null)),
     },
     {
       title: 'Objetivos',

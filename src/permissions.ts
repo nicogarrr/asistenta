@@ -1771,6 +1771,9 @@ export class Gate {
       // salida a la red, y la puerta de exfiltración la trata como un fetch (egressUrlOf).
       case 'vigilar_precio':
         return argString(c.args, 'action') === 'list' ? 'lee' : 'escribe-local';
+      // «Tus temas»: la lista local de temas que sigue; «news» solo lee titulares.
+      case 'temas':
+        return ['list', 'news'].includes(argString(c.args, 'action')) ? 'lee' : 'escribe-local';
       // Habilidades: leerlas es lectura; guardar o mejorar una deja instrucciones que se
       // seguirán en turnos futuros. Tras leer una página o un correo, eso es justo lo que
       // pediría un texto inyectado, así que no cuenta como lectura y se pregunta.
@@ -2932,6 +2935,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'vigilar_precio',
   'gasolineras',
   'boe',
+  'temas',
 ]);
 
 /**

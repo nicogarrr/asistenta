@@ -64,6 +64,8 @@ export interface DailyBriefingDeps {
   watches?: () => BriefingInput['watches'] | Promise<BriefingInput['watches']>;
   /** Cumpleaños y aniversarios que contó el dueño y caen en los próximos días. */
   dates?: () => BriefingInput['dates'] | Promise<BriefingInput['dates']>;
+  /** Titulares de la noche sobre sus temas (noticias-temas.ts); no bastan para mandar el resumen. */
+  temas?: () => BriefingInput['temas'] | Promise<BriefingInput['temas']>;
   sourceTimeoutMs?: number;
   warn?: (msg: string, meta?: Record<string, unknown>) => void;
 }
@@ -139,7 +141,10 @@ export async function composeDailyBriefing(
       within('tareas', deps.tasks, [], ms, deps.warn),
       within('repartos', deps.deliveries, [], ms, deps.warn),
     ]);
-  const dates = await within('fechas', deps.dates, [], ms, deps.warn);
+  const [dates, temas] = await Promise.all([
+    within('fechas', deps.dates, [], ms, deps.warn),
+    within('temas', deps.temas, [], ms, deps.warn),
+  ]);
   const festivoDep = deps.festivo;
   const festivo =
     deps.agenda && festivoDep
@@ -160,6 +165,7 @@ export async function composeDailyBriefing(
     tasks: tasks ?? [],
     deliveries: deliveries ?? [],
     dates: dates ?? [],
+    temas: temas ?? [],
   };
   const empty =
     !input.weather &&
