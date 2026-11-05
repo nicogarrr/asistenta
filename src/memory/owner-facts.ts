@@ -264,6 +264,15 @@ export function forgetRequest(text: string): ForgetRequest | null {
   if (/^(?:olvida|borra)\s+eso$|^olv[ií]dalo$|^b[oó]rralo$|^no lo recuerdes$/i.test(t)) {
     return { kind: 'last' };
   }
+  // «eso ya no es así», «eso ha cambiado»: lo recién apuntado dejó de valer. Solo
+  // actúa si hay algo apuntado hace poco en ese chat; si no, lo lleva el modelo.
+  if (
+    /^(?:no,?\s+)?(?:eso\s+)?ya no es (?:así|asi|verdad|cierto)$|^eso (?:ha|ya ha) cambiado$|^(?:eso\s+)?no es (?:así|asi) ya$|^me equivoqu[eé],?\s+(?:olvida|borra)(?:lo| eso)$/iu.test(
+      t,
+    )
+  ) {
+    return { kind: 'last' };
+  }
   // «olvida lo de…», y también «olvida lo que te dije del dentista».
   const m =
     /^(?:olvida|borra|olvídate de|olvidate de)\s+lo\s+(?:que\s+te\s+(?:dije|conté|conte)\s+(?:de|del|sobre)|de|del)\s+(?:que\s+)?(.{2,60})$/i.exec(
