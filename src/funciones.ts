@@ -258,6 +258,10 @@ export const TOOL_ABILITIES: Readonly<
   festivos: { area: 'agenda', text: 'te digo si un día es festivo y qué puentes vienen' },
   tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
   aire: { area: 'agenda', text: 'te digo cómo está el aire y si hay polen donde vives' },
+  entregable: {
+    area: 'investigar',
+    text: 'te hago una gráfica, un Excel o un PDF con tus datos y te lo mando',
+  },
   divisas: {
     area: 'compras',
     text: 'te paso dinero de una moneda a otra con el cambio oficial del BCE',

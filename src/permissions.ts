@@ -1697,6 +1697,9 @@ export class Gate {
       case 'tiempo':
       // «¿Cuánto son 120 dólares en euros?»: sin URL del modelo; solo el servicio fijo del BCE.
       case 'divisas':
+      // «Hazme una gráfica / pásamelo en Excel o PDF»: genera el archivo en memoria con los
+      // datos del turno y lo manda a esta misma conversación; sin red y sin tocar el disco.
+      case 'entregable':
         return 'lee';
       // «¿A qué hora pongo la lavadora?»: precio de la luz del servicio fijo de Red Eléctrica.
       // El aviso de cada noche guarda (o quita) una rutina local del dueño.
@@ -2918,6 +2921,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'tiempo',
   'divisas',
   'pagina_viva',
+  'entregable',
   'aire',
   'trafico',
   'luz',
