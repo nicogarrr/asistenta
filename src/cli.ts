@@ -7422,11 +7422,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (!bytes) {
           if (receipt.id) progressIds.push(receipt.id);
           const tooBig = tooBigForBotDownload(inbound.audioSizeBytes);
+          // Un vídeo que se oye va por este camino: el aviso dice «vídeo», no «audio».
+          const what = inbound.audioIsVideo ? 'el vídeo' : 'el audio';
           await tell(
             inbound,
             tooBig
-              ? `No he podido descargar el audio. ${tooBig}`
-              : 'No he podido descargar el audio.',
+              ? `No he podido descargar ${what}. ${tooBig}`
+              : `No he podido descargar ${what}.`,
             { quote: true },
           );
           return;
@@ -7455,7 +7457,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 ),
               warn: (err) => log.warn('transcript index failed', { err }),
             });
-            heard = albumHeard(heard, rest);
+            heard = albumHeard(heard, rest, inbound.audioIsVideo);
           }
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
@@ -7463,7 +7465,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // El acuse queda con lo entendido: si oyó mal, se ve antes de la respuesta.
           // Sin acuse con lo entendido (Nico: que haga la acción sin decirme «transcribiendo»).
           // Solo si no se oyó nada, para que el silencio no parezca que se ignoró el audio.
-          if (!heard.text.trim()) await receipt.show(voiceHeardText(''));
+          if (!heard.text.trim()) await receipt.show(voiceHeardText('', inbound.audioIsVideo));
           else await receipt.update(voiceHeardText(heard.text));
           // Una sola vez: el modelo grande se está bajando y esta nota fue con el pequeño.
           if (heard.notice) await tell(inbound, heard.notice);
@@ -7496,7 +7498,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }
         } catch (err) {
           if (receipt.id) progressIds.push(receipt.id);
-          await tell(inbound, failedReply('No he entendido la nota de voz', err), { quote: true });
+          await tell(
+            inbound,
+            failedReply(
+              inbound.audioIsVideo ? 'No he podido oír el vídeo' : 'No he entendido la nota de voz',
+              err,
+            ),
+            { quote: true },
+          );
           return;
         }
       }
@@ -9507,16 +9516,19 @@ export function keepAlbumTranscripts(
 export function albumHeard<T extends { text: string; truncated?: boolean }>(
   first: T,
   rest: readonly AlbumAudioHeard[],
+  firstIsVideo?: boolean,
 ): T & { count: number } {
   const n = rest.length + 1;
-  const lines = [`(1/${n}) ${first.text}`];
+  // El sonido de un vídeo lo dice en su línea: el modelo no lo toma por una nota de voz.
+  const tag = (i: number, video?: boolean) => `(${i}/${n}${video ? ', sonido de un vídeo' : ''})`;
+  const lines = [`${tag(1, firstIsVideo)} ${first.text}`];
   for (const [i, r] of rest.entries()) {
     const said = r.heard
       ? r.heard.text
       : r.failed === 'download'
         ? '[no se pudo descargar]'
         : '[no se pudo transcribir]';
-    lines.push(`(${i + 2}/${n}) ${said}`);
+    lines.push(`${tag(i + 2, r.audio.video)} ${said}`);
   }
   return {
     ...first,

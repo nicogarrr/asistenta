@@ -37,6 +37,8 @@ describe('audio sin eco de la transcripción', () => {
   it('cli.ts solo arranca el acuse cuando receiptStartsFor lo permite', () => {
     const src = readFileSync('src/cli.ts', 'utf8');
     expect(src).toMatch(/if \(kind && receiptStartsFor\(kind\) &&/);
-    expect(src).toContain("if (!heard.text.trim()) await receipt.show(voiceHeardText(''));");
+    expect(src).toContain(
+      "if (!heard.text.trim()) await receipt.show(voiceHeardText('', inbound.audioIsVideo));",
+    );
   });
 });

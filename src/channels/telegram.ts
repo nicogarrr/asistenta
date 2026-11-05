@@ -497,7 +497,12 @@ export class TelegramChannel implements ChannelAdapter {
         'duration' in incomingAudio ? (incomingAudio.duration ?? undefined) : undefined;
       inbound.audioSizeBytes = (incomingAudio as { file_size?: number }).file_size ?? undefined;
       if (!inbound.text) inbound.text = '';
-      if (heardVideo) inbound.text = withVideoMark(inbound.text, forwarded ?? undefined);
+      if (heardVideo) {
+        inbound.audioIsVideo = true;
+        // En un álbum la marca la pone #flushAlbum, una sola vez (o una por línea oída).
+        if (!(msg as { media_group_id?: string }).media_group_id)
+          inbound.text = withVideoMark(inbound.text, forwarded ?? undefined);
+      }
     }
 
     if (msg.photo?.length) {
@@ -744,6 +749,7 @@ export class TelegramChannel implements ChannelAdapter {
       first.audioMimeType = inbound.audioMimeType;
       first.audioDurationSeconds = inbound.audioDurationSeconds;
       first.audioSizeBytes = inbound.audioSizeBytes;
+      first.audioIsVideo = inbound.audioIsVideo;
     } else if (inbound.audioFileId && (first.albumAudios?.length ?? 0) < ALBUM_MAX_PHOTOS - 1) {
       first.albumAudios = [
         ...(first.albumAudios ?? []),
@@ -753,6 +759,7 @@ export class TelegramChannel implements ChannelAdapter {
           mimeType: inbound.audioMimeType,
           durationSeconds: inbound.audioDurationSeconds,
           sizeBytes: inbound.audioSizeBytes,
+          ...(inbound.audioIsVideo ? { video: true } : {}),
         },
       ];
     }
@@ -771,10 +778,14 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
     const first = held.inbound;
+    // Un solo sonido en el álbum y es de un vídeo: la marca va en el texto, como en un
+    // vídeo suelto. Con varios, cada línea oída dice si es de un vídeo (albumHeard).
+    if (first.audioIsVideo && !first.albumAudios?.length)
+      first.text = withVideoMark(first.text, first.forwardedFrom);
     if (held.videos) {
       // Un solo aviso por álbum. Si solo traía vídeos sin texto, no hay turno.
       void held.videoNotice?.();
-      if (!first.text && !first.photoFileId) return;
+      if (!first.text && !first.photoFileId && !first.audioFileId && !first.documentFileId) return;
       first.albumVideos = held.videos;
     }
     void Promise.resolve(handlers.onMessage(first)).catch((err: unknown) => {

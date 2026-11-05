@@ -65,8 +65,17 @@ const photo = (fileId: string, extra: Record<string, unknown> = {}) => ({
   photo: [{ file_id: fileId, file_unique_id: fileId, width: 1, height: 1 }],
   ...extra,
 });
+// Más de 20 MB: no se puede bajar, así que no se oye (un vídeo que sí se oye va con el
+// álbum como sonido: test/tg25-video-album.test.ts).
 const video = (fileId: string, extra: Record<string, unknown> = {}) => ({
-  video: { file_id: fileId, file_unique_id: fileId, width: 1, height: 1, duration: 3 },
+  video: {
+    file_id: fileId,
+    file_unique_id: fileId,
+    width: 1,
+    height: 1,
+    duration: 3,
+    file_size: 30 * 1024 * 1024,
+  },
   ...extra,
 });
 

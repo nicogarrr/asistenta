@@ -21,14 +21,14 @@ export interface HearableVideo {
 }
 
 /**
- * El vídeo que se puede oír, o null: sin vídeo, dentro de un álbum (sigue su propio
- * camino), demasiado grande para bajarlo, o un vídeo sin duración (sin sonido que oír).
+ * El vídeo que se puede oír, o null: sin vídeo, demasiado grande para bajarlo, o un
+ * vídeo sin duración (sin sonido que oír). Dentro de un álbum también se oye: antes el
+ * álbum solo avisaba «Aún no puedo ver vídeos» aunque el mismo vídeo suelto se oía.
  */
 export function videoToHear(msg: object): HearableVideo | null {
-  const m = msg as { video?: HearableVideo; media_group_id?: string };
+  const m = msg as { video?: HearableVideo };
   const video = m.video;
   if (!video || typeof video.file_id !== 'string' || !video.file_id) return null;
-  if (m.media_group_id) return null;
   if (typeof video.file_size === 'number' && video.file_size > VIDEO_HEAR_MAX_BYTES) return null;
   if (typeof video.duration === 'number' && video.duration <= 0) return null;
   return video;

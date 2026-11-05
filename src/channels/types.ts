@@ -32,6 +32,8 @@ export interface AlbumAudio {
   mimeType?: string;
   durationSeconds?: number;
   sizeBytes?: number;
+  /** Es el sonido de un vídeo (no un audio ni una nota de voz). */
+  video?: boolean;
 }
 
 export interface Inbound {
@@ -75,6 +77,8 @@ export interface Inbound {
   audioDurationSeconds?: number;
   /** Tamaño del audio que declara Telegram, en bytes (si lo da). */
   audioSizeBytes?: number;
+  /** El audio es el sonido de un vídeo: los avisos dicen «vídeo», no «audio». */
+  audioIsVideo?: boolean;
   /** Resto de audios de un álbum: se transcriben en el mismo turno que `audioFileId`. */
   albumAudios?: AlbumAudio[];
   /**
