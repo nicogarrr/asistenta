@@ -622,6 +622,7 @@ import {
   createReminderTool,
   FiredReminders,
   formatReminderRows,
+  liveNextOf,
   pickReminder,
   readDroppedReminders,
   reminderButtonCommand,
@@ -2556,7 +2557,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           };
         },
       }),
-      createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
+      createReminderTool({
+        store,
+        scopeOf: scope,
+        sync: () => routineRunner.sync(),
+        nextOf: liveNextOf(() => routineRunner.status()),
+      }),
       createLatidoTool({ latidos, scopeOf: scope, chatIdOf: () => chatIdOf(thread.chatKey) }),
       createGasolinerasTool({
         store,
@@ -6348,7 +6354,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdRecordatorios = async (inbound: Inbound, args: string): Promise<void> => {
     const thread = await resolveThread(inbound);
     const scope = thread.key;
-    const rows = () => reminderRows(store.listRoutines(scope));
+    const rows = () =>
+      reminderRows(
+        store.listRoutines(scope),
+        liveNextOf(() => routineRunner.status()),
+      );
     const b = /^(hecho|pospone|manana) ([0-9a-f]{8})$/.exec(args.trim());
     if (b?.[2]) {
       const reply = reminderButtonCommand(
