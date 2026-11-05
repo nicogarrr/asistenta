@@ -114,6 +114,7 @@ import {
   receiptStartText,
   voiceHeardText,
 } from './channels/telegram-receipts.js';
+import { quickReplyButtons } from './channels/telegram-respuestas.js';
 import type {
   AlbumAudio,
   AlbumDocument,
@@ -3076,10 +3077,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (short.truncated && text.trim()) cacheFullReply(thread.key, text.trim());
     else takeFullReply(thread.key);
     // Recortada: botón «📖 Ver todo» (además de poder escribir «más»).
+    // Si acaba con una pregunta de sí o no, botones «Sí» / «No» (telegram-respuestas.ts).
     const buttons =
       short.truncated && text.trim()
         ? [moreButton(thread.key, inbound.chatId, inbound.threadId)]
-        : undefined;
+        : quickReplyButtons(short.text);
     // Todos los trozos apuntan al hilo (antes solo el primero): responder al segundo
     // trozo de una respuesta larga sigue esta conversación.
     const id = await say(inbound, short.text, {
