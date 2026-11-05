@@ -42,6 +42,8 @@ function commaIsPartOfFact(plain: string): boolean {
 }
 
 const STATED: readonly RegExp[] = [
+  // Horas de silencio dichas de otra forma (owner-quiet.ts): «Por favor, no me escribas…», «no quiero que me escribas…», «nunca me escribas…», «no me notifiques…».
+  /^(?:por favor,?\s+)?(?:no|nunca)\s+(?:quiero que\s+)?me\s+(?:escribas|notifiques|mandes|envíes|envies|hables|avises|despiertes|molestes)\s+\S/i,
   // «recuerda que…», «ten en cuenta que…», «apunta que…» (no «recuérdame…»: eso es un aviso)
   /^(?:recuerda|acuérdate|acuerdate|ten en cuenta|apunta|que sepas)\s+(?:de\s+)?que\s+\S/i,
   // «mi dentista es…», «mis padres viven en…», «mi hermana se llama…»
