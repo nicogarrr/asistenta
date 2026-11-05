@@ -141,6 +141,31 @@ export function eventNotice(repo: string, ev: unknown, self?: string): string | 
   }
 }
 
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, 'g');
+const LOG_STAMP = /^\uFEFF?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s?/;
+const LOG_ERROR =
+  /\b(?:error|errors|fail|failed|failure|assertionerror|exception|expected)\b|✗|×|##\[error\]/i;
+const LOG_NOISE =
+  /Process completed with exit code|npm (?:ERR!|error) (?:A complete log|Lifecycle|code|path|command|errno|signal)|^\s*at\s|node_modules\//i;
+
+/** Las 3 últimas líneas con pinta de error de un log de GitHub Actions, en una línea. */
+export function errorLinesFromLog(log: string): string {
+  const picked: string[] = [];
+  for (const raw of log.split(/\r?\n/)) {
+    const line = raw
+      .replace(LOG_STAMP, '')
+      .replace(ANSI, '')
+      .replace(/^##\[error\]/, '')
+      .trim();
+    if (!line || !LOG_ERROR.test(raw) || LOG_NOISE.test(line)) continue;
+    const short = oneLine(line, 140);
+    const at = picked.indexOf(short);
+    if (at >= 0) picked.splice(at, 1);
+    picked.push(short);
+  }
+  return picked.slice(-3).join(' / ');
+}
+
 export interface GithubAvisosDeps {
   config: GithubAvisosConfig;
   fetch: typeof fetch;
@@ -361,27 +386,63 @@ export class GithubAvisos {
       st.seenRuns = st.seenRuns.slice(-200);
       // Primer diagnóstico: qué job y qué paso fallaron (una consulta más, solo si hay rojo).
       for (const red of reds.slice(0, 3)) {
-        const where = await this.#failedStep(w.repo, red.id, token).catch(() => '');
+        const { where, detail } = await this.#failedStep(w.repo, red.id, token).catch(() => ({
+          where: '',
+          detail: '',
+        }));
         if (!where) continue;
         const i = out.findIndex((t) => t.startsWith(red.text));
-        if (i >= 0) out[i] = out[i]?.replace(red.text, `${red.text} (falló: ${where})`) ?? '';
+        const extra = detail ? `\n🧾 ${detail}` : '';
+        if (i >= 0)
+          out[i] = out[i]?.replace(red.text, `${red.text} (falló: ${where})${extra}`) ?? '';
       }
     }
     st.baselined = true;
     return out;
   }
 
-  async #failedStep(repo: string, runId: string, token: string | undefined): Promise<string> {
+  async #failedStep(
+    repo: string,
+    runId: string,
+    token: string | undefined,
+  ): Promise<{ where: string; detail: string }> {
     const r = await this.#api(
       `/repos/${repo}/actions/runs/${runId}/jobs?filter=latest&per_page=30`,
       token,
     );
     const jobs = Array.isArray(rec(r.body).jobs) ? (rec(r.body).jobs as unknown[]) : [];
     const job = jobs.map(rec).find((j) => FAILED.has(str(j.conclusion)));
-    if (!job) return '';
+    if (!job) return { where: '', detail: '' };
     const steps = Array.isArray(job.steps) ? (job.steps as unknown[]).map(rec) : [];
     const step = steps.find((s) => FAILED.has(str(s.conclusion)));
-    return oneLine(`${str(job.name)}${step ? ` › ${str(step.name)}` : ''}`, 100);
+    const where = oneLine(`${str(job.name)}${step ? ` › ${str(step.name)}` : ''}`, 100);
+    // Primer diagnóstico: las líneas de error del log (GitHub solo lo da con clave).
+    const id = job.id;
+    const detail =
+      token && (typeof id === 'number' || typeof id === 'string')
+        ? await this.#logErrors(repo, String(id), token).catch(() => '')
+        : '';
+    return { where, detail };
+  }
+
+  /** Últimas líneas con error del log de un job. Nunca para el aviso ni cuenta como fallo. */
+  async #logErrors(repo: string, jobId: string, token: string): Promise<string> {
+    const res = await this.#d.fetch(
+      `https://api.github.com/repos/${repo}/actions/jobs/${jobId}/logs`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'asistenta',
+          Authorization: `Bearer ${token}`,
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!res.ok) return '';
+    const text = await res.text();
+    return errorLinesFromLog(text.length > 400_000 ? text.slice(-400_000) : text);
   }
 }
 
