@@ -438,7 +438,7 @@ function delegateTool(
 
 import { confirmacionCalendario, preguntaFechaPasada } from './agenda/calendario-pasado.js';
 import { respuestaCalendarioPasado } from './agenda/calendario-respuesta.js';
-import { parseFechaCalendario } from './agenda/fecha-natural.js';
+import { parseFechaCalendarioDicha } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
@@ -6943,11 +6943,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const confirmed = /^confirmado\s/i.test(args.trim());
     const m = /^(?:add|anadir|añadir|confirmado)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
     // Dicho normal («mañana a las 18:00 dentista»); el formato con barra sigue valiendo.
-    const natural = m ? null : parseFechaCalendario(args);
+    const natural = m ? null : parseFechaCalendarioDicha(args);
     if (!m && !natural) {
       // La respuesta normal completa el /calendario (Nico, 1 nov).
       preguntas.ask(chatKey(inbound), 'calendario', {
-        answer: (t) => (parseFechaCalendario(t) ? `add ${t}` : null),
+        answer: (t) => (parseFechaCalendarioDicha(t) ? `add ${t}` : null),
       });
       await say(
         inbound,

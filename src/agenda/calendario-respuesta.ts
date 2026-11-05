@@ -1,5 +1,5 @@
 import { esSiCalendario } from './calendario-pasado.js';
-import { parseFechaCalendario } from './fecha-natural.js';
+import { parseFechaCalendarioDicha as parseFechaCalendario } from './fecha-natural.js';
 
 /**
  * Respuesta a «Eso ya ha pasado (…). ¿Lo apunto igualmente? Dime «sí», o dime otra
