@@ -173,6 +173,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'avisos',
   'ignora',
   'ignorados',
+  'expertos',
 ]);
 
 export interface FuncionCommand extends HelpEntry {
@@ -264,6 +265,10 @@ export const TOOL_ABILITIES: Readonly<
   entregable: {
     area: 'investigar',
     text: 'te hago una gráfica, un Excel o un PDF con tus datos y te lo mando',
+  },
+  expertos: {
+    area: 'investigar',
+    text: 'respondo con tus apuntes por tema (derecho…) y cito archivo y página',
   },
   divisas: {
     area: 'compras',

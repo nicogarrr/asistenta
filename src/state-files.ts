@@ -165,6 +165,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'profile', what: 'tu perfil', backup: 'dir' },
   { name: 'services', what: 'servicios registrados', backup: 'dir' },
   { name: 'salidas', what: 'salidas de rutinas entregadas «a fichero»', backup: 'dir' },
+  {
+    name: 'expertos',
+    what: 'apuntes por tema del dueño (una carpeta por tema; el índice, rehacible, va en docs/expertos.sqlite)',
+    backup: 'dir',
+  },
   { name: 'audit', what: 'registro de auditoría de llamadas a herramientas', backup: 'dir' },
   { name: 'factory', what: 'herramientas de la fábrica (TOOL.md editables)', backup: 'dir' },
   { name: 'evolve', what: 'historial de intentos de auto-mejora', backup: 'dir' },
