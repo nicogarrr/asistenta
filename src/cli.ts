@@ -186,7 +186,13 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { LatencyStats, latencyLine } from './daemon/latency.js';
-import { createLatidoTool, Latidos, latidoLine, latidoStopRequest } from './daemon/latido.js';
+import {
+  createLatidoTool,
+  Latidos,
+  latidoLine,
+  latidoListRequest,
+  latidoStopRequest,
+} from './daemon/latido.js';
 import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/panel-chat.js';
 import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
@@ -5947,6 +5953,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // «deja de vigilar»: para lo que se vigila en este chat al momento (latido.ts). Si no hay
     // nada vigilándose o no casa con nada, sigue como siempre.
+    if (latidoListRequest(text)) {
+      const mine = latidos.listInChat(chatKey(inbound));
+      await say(
+        inbound,
+        mine.length === 0
+          ? 'Ahora no estoy vigilando nada. Dime «vigila X cada 10 min» y lo hago.'
+          : `Estoy vigilando:\n${mine.map((l) => `• ${latidoLine(l)}`).join('\n')}\n\nPara parar: «deja de vigilar».`,
+        { quote: true },
+      );
+      return true;
+    }
     const stopNeedle = latidoStopRequest(text);
     if (stopNeedle !== null) {
       const stopped = latidos.stopInChat(chatKey(inbound), stopNeedle);

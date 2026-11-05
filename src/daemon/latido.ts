@@ -169,6 +169,13 @@ export class Latidos {
     return hit;
   }
 
+  /** Los de todos los hilos de un chat (`chatKey` y `chatKey#hilo`). */
+  listInChat(chatKey: string): Latido[] {
+    return [...this.#items.values()].filter(
+      (l) => l.scope === chatKey || l.scope.startsWith(`${chatKey}#`),
+    );
+  }
+
   /** Igual que `stop`, pero en todos los hilos de un chat (`chatKey` y `chatKey#hilo`). */
   stopInChat(chatKey: string, needle = ''): Latido[] {
     const scopes = new Set(
@@ -276,6 +283,17 @@ export function latidoStopRequest(text: string): string | null {
   if (!m) return null;
   const rest = (m[1] ?? '').replace(/^(?:ya|eso|nada|mas)$/, '').trim();
   return rest;
+}
+
+/** «¿Qué estás vigilando?», «¿qué vigilas?»: la lista al momento, sin modelo. */
+export function latidoListRequest(text: string): boolean {
+  const t = foldAccents(text.toLowerCase())
+    .replace(/[¿?¡!.]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /^(?:y\s+)?(?:que|que cosas|que mas)\s+(?:estas|sigues|me estas)\s+vigilando(?: ahora)?$|^(?:y\s+)?que vigilas(?: ahora)?$|^(?:estas|sigues) vigilando algo$/.test(
+    t,
+  );
 }
 
 /** «cada 10 min, durante 3 h»: cómo se le dice a Nico. */
