@@ -1,5 +1,6 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from 'grammy';
 import { UPDATE_CALLBACK_PREFIX } from '../autoupdate-boton.js';
+import { BoundedMap } from '../bounded-map.js';
 import { FUNCIONES_CALLBACK_PREFIX } from '../funciones.js';
 import { log, redact } from '../log.js';
 import { sliceSafe } from '../text.js';
@@ -763,12 +764,19 @@ export class TelegramChannel implements ChannelAdapter {
 
   /** Mensajes ya avisados como editados (chat:id), para avisar una sola vez. */
   readonly #editNoted = new Set<string>();
+  /** Última versión de cada texto editado (chat:id), para el botón «Mandar corregido». */
+  readonly #editedTexts = new BoundedMap<
+    string,
+    { text: string; threadId?: string; displayName: string }
+  >(100);
 
   /**
-   * Un mensaje editado no lanza otro turno (podría repetir una acción), pero antes
-   * la edición se perdía en silencio y el usuario creía que se había leído. Ahora
-   * se avisa una vez por mensaje, solo al dueño y en privado. Una ubicación en
-   * directo llega como ediciones continuas y no avisa.
+   * Un mensaje editado no lanza otro turno por su cuenta (podría repetir una acción),
+   * pero antes la edición se perdía en silencio y el usuario creía que se había leído.
+   * Ahora se avisa una vez por mensaje, solo al dueño y en privado. Si es solo texto,
+   * el aviso trae un botón que manda la versión corregida como mensaje nuevo: antes
+   * había que volver a escribirlo entero. Editar otra vez actualiza lo que manda el
+   * botón. Una ubicación en directo llega como ediciones continuas y no avisa.
    */
   async #onEdited(ctx: Context): Promise<void> {
     const msg = ctx.editedMessage;
@@ -778,15 +786,79 @@ export class TelegramChannel implements ChannelAdapter {
     if (!this.#options.allowedUserIds.includes(user.id)) return;
     if ('location' in msg || 'venue' in msg) return;
     const key = `${ctx.chat.id}:${msg.message_id}`;
+    const text = (msg.text ?? '').trim();
+    const resendable = text !== '' && msg.caption === undefined;
+    if (resendable) {
+      this.#editedTexts.set(key, {
+        text,
+        threadId: msg.message_thread_id ? String(msg.message_thread_id) : undefined,
+        displayName: user.username ? `@${user.username}` : user.first_name,
+      });
+    }
     if (this.#editNoted.has(key)) return;
     this.#editNoted.add(key);
     if (this.#editNoted.size > 500) {
       const oldest = this.#editNoted.values().next().value;
       if (oldest !== undefined) this.#editNoted.delete(oldest);
     }
+    const extra = resendable
+      ? {
+          reply_to_message_id: msg.message_id,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: EDIT_RESEND_LABEL,
+                  callback_data: `${EDIT_RESEND_PREFIX}${msg.message_id}`,
+                },
+              ],
+            ],
+          },
+        }
+      : { reply_to_message_id: msg.message_id };
     await ctx
-      .reply(EDITED_MESSAGE_NOTE, { reply_to_message_id: msg.message_id } as never)
+      .reply(resendable ? EDITED_RESEND_NOTE : EDITED_MESSAGE_NOTE, extra as never)
       .catch(() => {});
+  }
+
+  /**
+   * Botón «Mandar corregido» del aviso de edición: la última versión del texto entra
+   * como un mensaje nuevo del dueño, marcada como corrección, en el hilo del original.
+   * Un solo uso: un segundo toque (o tras reiniciar) no la manda dos veces.
+   */
+  async #onEditResend(ctx: Context, rawId: string): Promise<void> {
+    const handlers = this.#handlers;
+    const message = ctx.callbackQuery?.message;
+    const userId = ctx.from?.id;
+    if (!handlers || !message || !userId) return;
+    const chatId = String(message.chat.id);
+    const key = `${chatId}:${rawId}`;
+    const edited = this.#editedTexts.get(key);
+    if (!edited || message.chat.type !== 'private') {
+      await ctx.answerCallbackQuery({ text: EDIT_RESEND_GONE }).catch(() => {});
+      this.#clearKeyboard(message.chat.id, message.message_id);
+      return;
+    }
+    this.#editedTexts.delete(key);
+    await ctx.answerCallbackQuery({ text: EDIT_RESEND_SENT }).catch(() => {});
+    this.#clearKeyboard(message.chat.id, message.message_id);
+    const inbound: Inbound = {
+      channel: this.name,
+      account: this.account,
+      chatId,
+      threadId: edited.threadId,
+      userId: String(userId),
+      displayName: edited.displayName,
+      text: `${EDIT_RESEND_MARK}\n${edited.text}`,
+      authorised: true,
+      isGroup: false,
+      // El id del aviso (mensaje propio y nuevo): con el del original, el filtro de
+      // duplicados lo tiraría por ya visto.
+      messageId: String(message.message_id),
+      receivedAt: new Date().toISOString(),
+      replyToMessageId: this.#resolveReply(chatId, rawId),
+    };
+    await handlers.onMessage(inbound);
   }
 
   /** Returns a refusal message when the sender may not act, else null. */
@@ -816,6 +888,12 @@ export class TelegramChannel implements ChannelAdapter {
     // resuelve, consume ni toca una aprobación pendiente.
     if (data.startsWith(MORE_CALLBACK_PREFIX)) {
       await this.#onMorePress(ctx, data.slice(MORE_CALLBACK_PREFIX.length));
+      return;
+    }
+
+    // «Mandar corregido» de un mensaje editado: su propio camino, nunca toca aprobaciones.
+    if (data.startsWith(EDIT_RESEND_PREFIX)) {
+      await this.#onEditResend(ctx, data.slice(EDIT_RESEND_PREFIX.length));
       return;
     }
 
@@ -2387,6 +2465,16 @@ export const ALBUM_VIDEO_NOTE =
 /** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
 export const EDITED_MESSAGE_NOTE =
   'Has editado un mensaje, pero solo leo los nuevos. Si cambia lo que me pides, mándamelo otra vez.';
+
+/** Aviso de un texto editado, con el botón que lo manda corregido. */
+export const EDITED_RESEND_NOTE =
+  'Has editado un mensaje que ya había leído. Si cambia lo que me pides, toca el botón y lo hago con la versión nueva.';
+export const EDIT_RESEND_LABEL = '✏️ Mandar corregido';
+export const EDIT_RESEND_PREFIX = 'edres:';
+/** Marca del texto reenviado: el asistente sabe que corrige a lo anterior. */
+export const EDIT_RESEND_MARK = '[Versión corregida de un mensaje anterior: manda esta]';
+const EDIT_RESEND_SENT = 'Mandado ✏️';
+const EDIT_RESEND_GONE = 'Esa edición ya no la tengo. Mándamelo como mensaje nuevo.';
 
 /**
  * Aviso para los tipos de mensaje que Asistenta todavía no sabe leer. Solo cubre

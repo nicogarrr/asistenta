@@ -61,7 +61,7 @@ afterEach(() => harness.listeners.clear());
 
 describe('mensaje editado en Telegram', () => {
   it('avisa de que la edición no se lee, citando el mensaje, y no lanza un turno', async () => {
-    const { got, replies } = await edits([{ text: 'recuérdame a las 10' }]);
+    const { got, replies } = await edits([{ photo: [{ file_id: 'p' }], caption: 'esta no' }]);
     expect(EDITED_MESSAGE_NOTE).toBe(NOTE);
     expect(got).toHaveLength(0);
     expect(replies.map((r) => r.text)).toEqual([NOTE]);
