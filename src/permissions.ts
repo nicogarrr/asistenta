@@ -1163,6 +1163,14 @@ export class Gate {
         match: (c) => c.tool === 'casa' && argString(c.args, 'action') !== 'estado',
       },
       {
+        // Google Calendar (src/tools/google.ts): apuntar, mover o borrar un evento cambia
+        // el calendario que ve en el móvil: pregunta enseñando el evento.
+        id: 'ask-google-calendario',
+        verdict: 'ask',
+        reason: 'cambia tu Google Calendar',
+        match: (c) => c.tool === 'google' && argString(c.args, 'action').startsWith('evento_'),
+      },
+      {
         id: 'ask-servicio-instalar',
         verdict: 'ask',
         reason: 'installs an adopted third-party service on this machine',
@@ -1752,6 +1760,10 @@ export class Gate {
       // remoto en la cuenta del dueño, sin dinero ni ficheros: opaco para el gestor.
       case 'spotify':
         return ['estado', 'dispositivos'].includes(argString(c.args, 'action')) ? 'lee' : null;
+      // Google (src/tools/google.ts): buscar eventos, contactos y Drive es lectura de su
+      // cuenta; crear, mover o borrar eventos es opaco y la regla ask-google-calendario pregunta.
+      case 'google':
+        return argString(c.args, 'action').startsWith('evento_') ? null : 'lee';
       // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
       // «Ya lo he recogido» marca el envío como entregado en la base local.
       // «¿Cómo está el tráfico?»: solo el feed fijo de la DGT. Encender o quitar el aviso
@@ -2905,6 +2917,11 @@ export const SPOTIFY_FREE_ACTIONS = [
   'usar_dispositivo',
 ].map((a) => `spotify:${a}`);
 
+/** Lecturas de la herramienta `google` que no preguntan (su cuenta, solo lectura). */
+export const GOOGLE_READ_ACTIONS = ['eventos_buscar', 'contacto', 'drive_buscar', 'drive_leer'].map(
+  (a) => `google:${a}`,
+);
+
 export const BROWSER_FREE_ACTIONS = [
   'open',
   'snapshot',
@@ -2968,6 +2985,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'correo_reglas',
   'casa',
   'spotify',
+  'google',
   'fetch',
   'write',
   'edit',

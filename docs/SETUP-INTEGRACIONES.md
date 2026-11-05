@@ -42,3 +42,27 @@ Si algo falla:
 - «hace falta una cuenta Premium»: la cuenta conectada no es Premium, o tu correo no está en la app → en el dashboard, tu app → «User Management» → añade tu nombre y correo de Spotify.
 - «el puerto 8888 está ocupado»: pon `PA_SPOTIFY_REDIRECT_PORT=8889` en `.env` y cambia la Redirect URI de la app a `http://127.0.0.1:8889/callback`.
 - `/spotify desconectar` olvida el permiso.
+
+## 3. Google: Calendar (apuntar, mover, borrar), Contactos y Drive
+
+Con esto le dices «apunta dentista el jueves a las 10» (sale en el calendario del móvil), «mueve la ITV al lunes», «¿cuál es el teléfono de Ana?» o «búscame en Drive los apuntes de civil». Cada cambio en el calendario te lo pregunta antes con botones. Gratis.
+
+**A. En Google Cloud (5 min, en el PC):**
+1. Entra en https://console.cloud.google.com con tu cuenta y elige tu proyecto «Asistenta» (si no tienes, créalo y sigue también el paso B).
+2. «APIs y servicios» → «Biblioteca». Busca y pulsa «Habilitar» en las tres: **Google Calendar API**, **People API** y **Google Drive API**.
+3. «APIs y servicios» → «Pantalla de consentimiento de OAuth»: comprueba que está «En producción» (botón «Publicar app»). Si está «En prueba», Google corta el permiso cada 7 días.
+
+**B. Solo si nunca conectaste Google (si ya lo hiciste, salta a C):**
+1. «APIs y servicios» → «Credenciales» → «Crear credenciales» → «ID de cliente de OAuth» → tipo «App de escritorio» → «Crear» → «Descargar JSON».
+2. En el PC, en una terminal: `pa google conectar C:\Users\<tú>\Downloads\client_secret_….json` (acepta el permiso que se abre; con eso ya queda guardado el cliente).
+
+**C. Dar el permiso nuevo (un clic, en el PC):**
+1. Escribe `/google conectar` en Telegram **estando delante del PC**: se abre el navegador del PC con Google.
+2. Elige tu cuenta. Si sale «Google no ha verificado esta aplicación»: «Configuración avanzada» → «Ir a Asistenta (no seguro)» (es tu propia app).
+3. **Marca todas las casillas** (calendario, contactos, Drive) y pulsa «Continuar». Te llegará «✅ Google conectado».
+4. Escribe `/google`: todo debe salir con ✅.
+
+Si algo falla:
+- «Falta activar la People API» (o Drive/Calendar): repite el paso A.2.
+- «necesito que vuelvas a darle permiso»: repite C y marca todas las casillas.
+- `pa google desconectar` (en el PC) retira el permiso.

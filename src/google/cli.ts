@@ -30,6 +30,8 @@ const what = (scopes: string[]): string[] =>
   [
     scopes.some((s) => s.includes('/auth/calendar')) ? 'Calendar' : '',
     scopes.some((s) => s.includes('/auth/gmail')) ? 'Gmail' : '',
+    scopes.some((s) => s.includes('/auth/contacts')) ? 'Contactos' : '',
+    scopes.some((s) => s.includes('/auth/drive')) ? 'Drive' : '',
   ].filter(Boolean);
 
 export async function googleCommand(args: string[], given?: GoogleCliDeps): Promise<number> {
@@ -80,7 +82,7 @@ export async function googleCommand(args: string[], given?: GoogleCliDeps): Prom
     const parts = what(scopes);
     deps.print(
       parts.length
-        ? `Listo: Google conectado. Ya leo tu ${parts.join(' y tu ')} (solo lectura).`
+        ? `Listo: Google conectado. Ya uso tu ${parts.join(', tu ')} (los cambios en el calendario te los pregunto antes).`
         : 'Google se ha conectado, pero sin el permiso del calendario. Vuelve a probar y marca la casilla del calendario.',
     );
     return 0;
