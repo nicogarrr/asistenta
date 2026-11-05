@@ -30,6 +30,7 @@ import { wallDateMinute } from './datecontext.js';
 import type { Routine, RoutineTrigger, Store } from './db.js';
 import { log } from './log.js';
 import { buildMacroPrompt, isMacroName, procedurePrompt } from './routines.js';
+import { foldAccents } from './text.js';
 
 export type TriggerEventType = 'archivo' | 'precio' | 'mensaje' | 'correo';
 export const TRIGGER_EVENTS: readonly TriggerEventType[] = [
@@ -204,8 +205,13 @@ function hasAny(text: string, value: string): boolean {
 export function mailMatches(match: string, mail: { from: string; subject: string }): boolean {
   const want = parseMailMatch(match);
   if (!want.from.length && !want.subject.length && !want.any.length) return false;
-  const from = mail.from.toLocaleLowerCase('es');
-  const subject = mail.subject.toLocaleLowerCase('es');
+  // Sin tildes a los dos lados: «de telefónica» o «asunto facturación» no casaban con
+  // «Telefonica <…@telefonica.es>» o «Facturacion octubre» (y al revés), y no saltaba nunca.
+  const from = foldAccents(mail.from.toLocaleLowerCase('es'));
+  const subject = foldAccents(mail.subject.toLocaleLowerCase('es'));
+  want.from = want.from.map((v) => foldAccents(v));
+  want.subject = want.subject.map((v) => foldAccents(v));
+  want.any = want.any.map((v) => foldAccents(v));
   return (
     want.from.every((v) => hasAny(from, v)) &&
     want.subject.every((v) => hasAny(subject, v)) &&
@@ -223,7 +229,10 @@ export function matchesTrigger(t: RoutineTrigger, e: TriggerEvent): boolean {
   if (!t.enabled || t.event !== e.type) return false;
   if (!triggerScopeMatches(t.scope, e.scope)) return false;
   if (e.type === 'correo') return e.mail ? mailMatches(t.match, e.mail) : false;
-  return e.text.toLocaleLowerCase('es').includes(t.match.toLocaleLowerCase('es'));
+  // «mensaje facturación» también salta con «facturacion» escrito sin tilde (y al revés).
+  return foldAccents(e.text.toLocaleLowerCase('es')).includes(
+    foldAccents(t.match.toLocaleLowerCase('es')),
+  );
 }
 
 /**
