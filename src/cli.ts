@@ -583,6 +583,8 @@ import {
   reminderButtonCommand,
   reminderRows,
   reminderText,
+  snoozeReminder,
+  snoozeWhen,
 } from './tools/reminder.js';
 import { createServiceTool } from './tools/service.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
@@ -8816,6 +8818,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             for (const [i, part] of novedadesReply.entries())
               await say(inbound, part, { quote: i === 0 });
             return;
+          }
+          // «recuérdamelo en 10 minutos», «mañana» justo después de un aviso: se pospone ese aviso.
+          if (inbound.text && isOwnerDm(inbound, vigilanteOwnerId)) {
+            const sameChat = (s: string): boolean => chatIdOfScope(s) === inbound.chatId;
+            const fired = firedReminders.justFired(sameChat);
+            const when = fired ? snoozeWhen(inbound.text, new Date()) : null;
+            if (fired && when) {
+              firedReminders.justFired(sameChat, { take: true });
+              const reply = snoozeReminder(store, fired, when, new Date());
+              routineRunner.sync();
+              await say(inbound, reply, { quote: true });
+              return;
+            }
           }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
           // «baja el volumen de la tele», y navegando «abajo», «atrás»: al momento, sin modelo.

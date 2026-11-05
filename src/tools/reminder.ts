@@ -157,7 +157,12 @@ export function parseLocalStamp(raw: string): Date | null {
  * «a las 7» es hoy si aún no ha pasado y si no, mañana. null si no se entiende: entonces
  * vale la fecha que calculó el modelo.
  */
-export function whenFromWords(said: string, now: Date, timeZone?: string): Date | null {
+export function whenFromWords(
+  said: string,
+  now: Date,
+  timeZone?: string,
+  opts: { exact?: boolean } = {},
+): Date | null {
   const text = said
     .normalize('NFC')
     .replace(/\s+/g, ' ')
@@ -166,8 +171,12 @@ export function whenFromWords(said: string, now: Date, timeZone?: string): Date 
     // «a las 9,30»: la coma de los minutos, como se escribe en el móvil.
     .replace(/\b(\d{1,2}),(\d{2})\b/g, '$1:$2');
   if (!text || text.length > 80) return null;
-  const read = (t: string): Date | null =>
-    parseFechaCalendario(`${t} recordatorio`, now, timeZone)?.start ?? null;
+  // `exact`: las palabras son SOLO la hora («en 10 minutos llamo a Ana» no vale).
+  const read = (t: string): Date | null => {
+    const got = parseFechaCalendario(`${t} recordatorio`, now, timeZone);
+    if (!got || (opts.exact && got.title !== 'recordatorio')) return null;
+    return got.start;
+  };
   const direct = read(text);
   if (direct) return direct;
   if (!/^a\s+las?\s/i.test(text)) return null;
@@ -460,14 +469,33 @@ export const FIRED_BUTTON_STALE =
  */
 export class FiredReminders {
   readonly #ids: OneTapIds<{ scope: string; text: string }>;
+  readonly #now: () => number;
+  /** El último aviso que sonó, para posponerlo hablando («en 10 minutos»). */
+  #last: { scope: string; text: string; at: number } | null = null;
 
   constructor(now: () => number = Date.now, max = 200, file?: string) {
+    this.#now = now;
     this.#ids = new OneTapIds({ ttlMs: FIRED_BUTTON_MS, now, max, file });
   }
 
   /** Apunta un aviso y devuelve su id (8 hex). Tira los caducados y, si sobran, los más viejos. */
   remember(scope: string, text: string): string {
+    this.#last = { scope, text, at: this.#now() };
     return this.#ids.remember({ scope, text });
+  }
+
+  /**
+   * El aviso que acaba de sonar en ese chat (hace menos de SNOOZE_WINDOW_MS), o null.
+   * `take: true` lo gasta: un «en 10 minutos» pospone una vez.
+   */
+  justFired(
+    sameChat: (scope: string) => boolean,
+    opts: { take?: boolean } = {},
+  ): { scope: string; text: string } | null {
+    const last = this.#last;
+    if (!last || this.#now() - last.at > SNOOZE_WINDOW_MS || !sameChat(last.scope)) return null;
+    if (opts.take) this.#last = null;
+    return { scope: last.scope, text: last.text };
   }
 
   /** Lo saca (un botón vale una vez). Solo desde el chat del aviso; caducado → undefined. */
@@ -739,6 +767,67 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       );
     },
   };
+}
+
+/** Cuánto vale un «recuérdamelo en 10 minutos» después de que suene un aviso. */
+export const SNOOZE_WINDOW_MS = 30 * 60_000;
+
+const SNOOZE_LEAD =
+  /^(?:(?:vale|ok|venga|vale pues)\s*,?\s*)?(?:(?:recuerdamelo|recuerdamelo otra vez|vuelve a recordarmelo|avisame|avisame otra vez|vuelve a avisarme|pospon(?:lo|melo)?|aplaza(?:lo)?|retrasa(?:lo)?|repitemelo|repitelo)\s*)?(?:otra vez\s*)?/;
+
+/**
+ * Cuándo volver a avisar si el mensaje ENTERO es posponer: «en 10 minutos», «dentro de
+ * media hora», «pospónlo 20 min», «10 minutos más», «recuérdamelo mañana», «mañana a las
+ * 8». null si es otra cosa (eso lo lleva el modelo).
+ */
+export function snoozeWhen(text: string, now: Date, timeZone?: string): Date | null {
+  const t = foldAccents(text)
+    .replace(/[.!¡¿?]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t || t.length > 60) return null;
+  const rest = t.replace(SNOOZE_LEAD, '').trim();
+  if (!rest) return null;
+  let at: Date | null = null;
+  const short = /^\+?(\d{1,3})\s*(m|min|mins|minutos?|h|horas?)(?:\s+mas)?$/.exec(rest);
+  const words = /^(media hora|una hora|un cuarto de hora|cuarto de hora)(?:\s+mas)?$/.exec(rest);
+  if (short?.[1] && short[2]) {
+    const n = Number(short[1]);
+    at = new Date(now.getTime() + n * (short[2].startsWith('h') ? 60 : 1) * 60_000);
+  } else if (words?.[1]) {
+    const mins = words[1] === 'una hora' ? 60 : words[1] === 'media hora' ? 30 : 15;
+    at = new Date(now.getTime() + mins * 60_000);
+  } else if (rest === 'manana') {
+    at = new Date(nextMorningAt9(now.getTime(), timeZone ?? localTimeZone()));
+  } else if (/^(?:en|dentro de|manana|pasado manana|esta (?:tarde|noche)|a las?)\s/.test(rest)) {
+    at = whenFromWords(rest, now, timeZone, { exact: true });
+  }
+  if (!at || at.getTime() - now.getTime() < MIN_REMINDER_MS) return null;
+  if (at.getTime() - now.getTime() > MAX_AHEAD_MS) return null;
+  return at;
+}
+
+/** Vuelve a programar el aviso que acaba de sonar; la respuesta, como la del botón. */
+export function snoozeReminder(
+  store: Pick<Store, 'saveRoutine' | 'listRoutines'>,
+  fired: { scope: string; text: string },
+  when: Date,
+  now: Date,
+): string {
+  if (store.listRoutines(fired.scope).filter(isReminder).length >= MAX_REMINDERS_PER_CHAT) {
+    return `Ya hay ${MAX_REMINDERS_PER_CHAT} recordatorios en este chat: cancela alguno antes.`;
+  }
+  store.saveRoutine({
+    scope: fired.scope,
+    name: nameFor(REMINDER_ONCE_PREFIX, fired.text, ` @${stamp(when)}`),
+    kind: 'schedule',
+    prompt: fired.text,
+    schedule: onceCron(when),
+  });
+  const w = stamp(when);
+  const today = stamp(now).slice(0, 10);
+  const day = w.slice(0, 10) === today ? '' : ` el ${w.slice(8, 10)}/${w.slice(5, 7)}`;
+  return `⏰ Te lo vuelvo a recordar${day} a las ${w.slice(11)}: ${fired.text}`;
 }
 
 /**
