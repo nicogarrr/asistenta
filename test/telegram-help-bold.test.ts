@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stripMarks, telegramHtml } from '../src/channels/formatters.js';
-import { helpText } from '../src/channels/telegram-help.js';
+import { helpPages, helpText } from '../src/channels/telegram-help.js';
 
 describe('/help con títulos en negrita', () => {
   it('cada título de sección sale en <b> y el resto del texto no cambia', () => {
@@ -19,10 +19,18 @@ describe('/help con títulos en negrita', () => {
     expect(helpText()).not.toContain('**');
   });
 
+  it('cada página de /help lleva sus títulos en negrita y, sin marcas, es la página plana', () => {
+    const plain = helpPages();
+    helpPages({ bold: true }).forEach((page, i) => {
+      expect(telegramHtml(page)).toMatch(/<b>[^<]+<\/b>/);
+      expect(stripMarks(page)).toBe(plain[i]);
+    });
+  });
+
   it('cli.ts envía /help con format marks', async () => {
     const { readFileSync } = await import('node:fs');
     expect(readFileSync('src/cli.ts', 'utf8')).toContain(
-      "helpText({ bold: true }), { quote: true, format: 'marks' }",
+      "helpReply(args, { bold: true }), { quote: true, format: 'marks' }",
     );
   });
 });

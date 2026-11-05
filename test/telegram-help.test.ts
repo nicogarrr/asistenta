@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { TELEGRAM_COMMANDS } from '../src/channels/telegram-commands.js';
-import { HELP_SECTIONS, helpCommands, helpText, startText } from '../src/channels/telegram-help.js';
+import {
+  HELP_SECTIONS,
+  helpCommands,
+  helpPages,
+  helpText,
+  startText,
+} from '../src/channels/telegram-help.js';
 
 const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
 
@@ -27,11 +33,12 @@ describe('/help del bot', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it('va por secciones con título y cabe en un mensaje de Telegram', () => {
+  it('va por secciones con título y cada página cabe en un mensaje de Telegram', () => {
     const text = helpText();
     for (const section of HELP_SECTIONS) expect(text).toContain(`${section.title}\n/`);
-    expect(Array.from(text).length).toBeLessThan(4000);
     expect(text).not.toMatch(/\*\*|__|```/);
+    for (const page of helpPages({ bold: true }))
+      expect(Array.from(page).length).toBeLessThan(4000);
   });
 });
 
@@ -52,6 +59,6 @@ describe('/start', () => {
 
   it('el despachador responde a /start con la bienvenida y a /help con la ayuda', () => {
     expect(cli).toMatch(/names: \['start'\],\s*run: \(inbound\) => cmdStart\(inbound\)/);
-    expect(cli).toMatch(/names: \['help'\],\s*run: \(inbound\) => cmdHelp\(inbound\)/);
+    expect(cli).toMatch(/names: \['help'\],\s*run: \(inbound, args\) => cmdHelp\(inbound, args\)/);
   });
 });

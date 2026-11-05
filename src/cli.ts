@@ -476,7 +476,7 @@ import {
 import { briefingDoctorLine, briefingHour, envOn } from './briefing-env.js';
 import { answerBtw, BTW_USAGE, btwFromText } from './btw.js';
 import { permisosListaReply } from './channels/permisos-lista.js';
-import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
+import { helpReply, startText, startWelcomeDue } from './channels/telegram-help.js';
 import {
   cacheFullReply,
   commandButton,
@@ -7537,8 +7537,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
   };
 
-  const cmdHelp = async (inbound: Inbound): Promise<void> => {
-    await say(inbound, helpText({ bold: true }), { quote: true, format: 'marks' });
+  /** /help [2|más|palabra]: la ayuda por páginas, o los comandos que hablan de algo. */
+  const cmdHelp = async (inbound: Inbound, args = ''): Promise<void> => {
+    await say(inbound, helpReply(args, { bold: true }), { quote: true, format: 'marks' });
   };
 
   /** /funciones [área]: lo que sé hacer por áreas; el dueño en privado lo ve todo. */
@@ -9270,7 +9271,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['status'], run: (inbound, args) => cmdStatus(inbound, args) },
     { names: ['start'], run: (inbound) => cmdStart(inbound) },
     { names: ['funciones'], run: (inbound, args) => cmdFunciones(inbound, args) },
-    { names: ['help'], run: (inbound) => cmdHelp(inbound) },
+    { names: ['help'], run: (inbound, args) => cmdHelp(inbound, args) },
   ]);
 
   const strangerHint = makeStrangerHint();
