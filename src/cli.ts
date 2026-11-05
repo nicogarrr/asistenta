@@ -5087,6 +5087,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         routines: () => scheduledAgenda(inbound),
         goals: () => goalStore.list().filter((goal) => inChatScope(goal.scope, chatKey(inbound))),
         tasks: () => new TaskBoard(join(paths.state, 'tareas.json')).all(chatKey(inbound)),
+        // El tiempo de hoy arriba, el mismo del resumen (PA_WEATHER_*); sin configurar, nada.
+        weather: briefingWeather ? () => briefingWeatherLine(briefingWeather) : undefined,
       },
       days,
     );
