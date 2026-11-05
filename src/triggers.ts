@@ -19,6 +19,10 @@
  *   Global igual. Casa por remitente y/o asunto, nunca por el cuerpo: «de:renfe»,
  *   «asunto:billete», las dos a la vez, o texto suelto que esté en cualquiera de las
  *   dos. La rutina recibe De y Asunto marcados como contenido de terceros.
+ * - 'github': un aviso de GitHub (CI en rojo o en verde, PR, issue o comentario nuevo en
+ *   los repos de PA_GITHUB_AVISOS, ver github-avisos.ts). Global igual. Casa por texto del
+ *   aviso, sin tildes: «github rojo», «github PR», «github nicogarrr/asistenta». La rutina
+ *   recibe el aviso marcado como contenido de terceros.
  *
  * Seguridad heredada: el prompt disparado es el de la rutina guardada
  * (procedurePrompt o buildMacroPrompt con sus args fijos validados); las
@@ -32,12 +36,13 @@ import { log } from './log.js';
 import { buildMacroPrompt, isMacroName, procedurePrompt } from './routines.js';
 import { foldAccents } from './text.js';
 
-export type TriggerEventType = 'archivo' | 'precio' | 'mensaje' | 'correo';
+export type TriggerEventType = 'archivo' | 'precio' | 'mensaje' | 'correo' | 'github';
 export const TRIGGER_EVENTS: readonly TriggerEventType[] = [
   'archivo',
   'precio',
   'mensaje',
   'correo',
+  'github',
 ];
 
 export interface TriggerEvent {
@@ -357,7 +362,7 @@ export function parseTriggerAdd(
   const USAGE =
     'Dime qué lo dispara y qué rutina hago, separados por una barra. Por ejemplo: ' +
     '«archivo .pdf | macro/archiva fichero=documentos», «mensaje factura | macro/archiva» ' +
-    'o «correo de:renfe asunto:billete | guarda-billete».';
+    '«correo de:renfe asunto:billete | guarda-billete» o «github rojo | revisa-ci».';
   const [left, ...rightParts] = rest.split('|');
   const right = rightParts.join('|').trim();
   const leftTrim = (left ?? '').trim();
