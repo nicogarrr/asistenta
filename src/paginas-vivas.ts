@@ -95,6 +95,25 @@ export class PaginasVivas {
     return this.ver(slug) as PaginaViva;
   }
 
+  /** Pone una línea (o varias) al final de la página, sin reescribirla; la crea si no existe. */
+  anadir(
+    titulo: string,
+    linea: string,
+    origen: string,
+    now = Date.now(),
+  ): PaginaViva | { error: string } {
+    const nueva = linea
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => (/^(?:[-*•|#]|\d+[.)]\s)/.test(l) ? l : `- ${l}`))
+      .join('\n');
+    if (!nueva) return { error: 'Dime qué apunto en la página.' };
+    const old = this.ver(titulo);
+    const body = old ? `${old.contenido.replace(/\s+$/, '')}\n${nueva}` : nueva;
+    return this.guardar(old?.titulo ?? titulo, body, origen, now);
+  }
+
   ver(slugOrTitle: string): PaginaViva | null {
     this.#init();
     const slug = slugPagina(slugOrTitle) || slugOrTitle;
@@ -294,8 +313,17 @@ export function panelPagina(
 const Params = lazySchema(() =>
   Type.Object({
     accion: Type.Union(
-      [Type.Literal('guardar'), Type.Literal('ver'), Type.Literal('lista'), Type.Literal('borrar')],
-      { description: 'guardar = crear o rehacer la página entera; ver; lista; borrar.' },
+      [
+        Type.Literal('guardar'),
+        Type.Literal('anadir'),
+        Type.Literal('ver'),
+        Type.Literal('lista'),
+        Type.Literal('borrar'),
+      ],
+      {
+        description:
+          'guardar = crear o rehacer la página entera; anadir = poner una línea al final sin reescribirla («apunta en la página de gastos: café 2 €»); ver; lista; borrar.',
+      },
     ),
     titulo: Type.Optional(
       Type.String({
@@ -305,7 +333,7 @@ const Params = lazySchema(() =>
     contenido: Type.Optional(
       Type.String({
         description:
-          'Contenido completo (reemplaza al anterior) en markdown sencillo: # títulos, - listas, tablas con |, párrafos.',
+          'guardar: contenido completo (reemplaza al anterior) en markdown sencillo: # títulos, - listas, tablas con |, párrafos. anadir: solo la línea nueva.',
       }),
     ),
     rutina: Type.Optional(
@@ -326,7 +354,7 @@ export function createPaginaVivaTool(deps: {
     name: 'pagina_viva',
     label: 'Página del panel',
     description:
-      "Live pages in the owner's web panel (card «Páginas»): create or fully replace a named page with simple markdown (headings, lists, tables), view, list or delete it. Use when he asks for a page, board or tracker in the panel («hazme una página con mis gastos», «un seguimiento de los pisos que he visto»). For a page that must stay up to date («que se actualice cada mañana»), save it now AND create a routine whose prompt says to rebuild it with pagina_viva (accion guardar, rutina = routine name). Local only; nothing is sent anywhere.",
+      "Live pages in the owner's web panel (card «Páginas»): create or fully replace a named page with simple markdown (headings, lists, tables), append a line without rewriting it (accion anadir: «apunta en la página de gastos: café 2 €»), view, list or delete it. Use when he asks for a page, board or tracker in the panel («hazme una página con mis gastos», «un seguimiento de los pisos que he visto»). For a page that must stay up to date («que se actualice cada mañana»), save it now AND create a routine whose prompt says to rebuild it with pagina_viva (accion guardar, rutina = routine name). Local only; nothing is sent anywhere.",
     parameters: Params(),
     execute: async (_id, args) => {
       const text = (): string => {
@@ -353,6 +381,19 @@ export function createPaginaVivaTool(deps: {
             return titulo && store.borrar(titulo)
               ? `Página «${titulo}» borrada del panel.`
               : `No hay ninguna página «${titulo}».`;
+          case 'anadir': {
+            const origen = args.rutina?.trim() ? `rutina ${args.rutina.trim()}` : 'chat';
+            const r = store.anadir(
+              titulo,
+              args.contenido ?? '',
+              origen,
+              deps.now?.() ?? Date.now(),
+            );
+            if ('error' in r) return r.error;
+            return r.veces === 1
+              ? `Página «${r.titulo}» creada con esa línea. Está en el panel, tarjeta «Páginas».`
+              : `Apuntado en «${r.titulo}».`;
+          }
           case 'guardar': {
             const origen = args.rutina?.trim() ? `rutina ${args.rutina.trim()}` : 'chat';
             const r = store.guardar(
