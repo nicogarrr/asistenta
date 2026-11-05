@@ -2794,6 +2794,17 @@ const SHELL_NO_WINDOW = new RegExp(
     String.raw`\bsetx(\.exe)?\s|SetEnvironmentVariable\s*\([^)]*['"]?(Machine|User)\b`,
     String.raw`\b(npm|pnpm|yarn)(\.cmd)?\s+config\s+set\b[^;|&]*\bregistry\b|\bpip[\d.]*(\.exe)?\s+config\s+set\b|\bgit\s+config\b[^;|&]*\bcore\.hooksPath\s+[^\s;|&]`,
     String.raw`\b(Set-Content|Add-Content|Out-File|sc|ac|Clear-Content)\b[^;|&]*drivers[\\/]+etc[\\/]+hosts\b|>>?\s*"?[^\s;|&]*drivers[\\/]+etc[\\/]+hosts\b`,
+    // Borrar datos de contenedores o bases (`docker compose down -v` se lleva los volúmenes,
+    // `docker rmi -f`, `kubectl delete`, `sqlite3 … DROP TABLE / DELETE FROM`), parar o
+    // desactivar tareas programadas (la de Asistenta incluida), cambiar el DNS o las rutas,
+    // borrar las wifis guardadas, cambiar la hora o la zona del PC (descuadra recordatorios y
+    // certificados), cifrar carpetas o cambiar sus permisos, dejar de compartir carpetas y
+    // quitar roles de Windows: antes pasaban sin preguntar en la ventana.
+    String.raw`\bdocker(-compose|\.exe)?\b[^;|&]*\bdown\b[^;|&]*\s(-v|--volumes)\b|\bdocker(\.exe)?\s+(rmi|image\s+rm)\b[^;|&]*\s(-f|--force)\b|\bkubectl(\.exe)?\s+delete\b|\bsqlite3(\.exe)?\b[^|&]*\b(drop\s+(table|index|view)|delete\s+from|truncate)\b`,
+    String.raw`\b(Disable-ScheduledTask|Stop-ScheduledTask)\b|\bschtasks(\.exe)?\s+(/change\b[^;|&]*/disable\b|/end\b)`,
+    String.raw`\b(Set-DnsClientServerAddress|Remove-NetRoute|Add-DnsClientNrptRule|Set-DnsClientNrptRule)\b|\bnetsh(\.exe)?\s+(interface\s+(ip|ipv4|ipv6)\s+(set|add)\s+dns|wlan\s+delete\s+profile)\b|\broute(\.exe)?\s+(delete|change|-f)(?![\w-])`,
+    String.raw`\b(Set-Date|Set-TimeZone)\b|\btzutil(\.exe)?\s+/s\b|\bw32tm(\.exe)?\s+/config\b`,
+    String.raw`\b(Set-Acl|Remove-SmbShare|Revoke-SmbShareAccess|Block-SmbShareAccess|Uninstall-WindowsFeature|Remove-WindowsFeature)\b|\bcipher(\.exe)?\b[^;|&]*\s/[ed]\b`,
   ].join('|'),
   'i',
 );
