@@ -50,6 +50,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // «🔄 Reintentar» bajo una respuesta que falló: repite ESE mensaje (arg = su id), como
   // /reintentar; si ya hubo otro después, no repite nada.
   ['reintentar', new Set([''])],
+  // «⏹ Pararlo» del aviso de cola (daemon/busy-note.ts): arg = ficha de ESA tarea; si ya
+  // terminó no para nada, y nunca vacía la cola (eso es /stop a secas).
+  ['stop', new Set([''])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 
