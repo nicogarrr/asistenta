@@ -195,6 +195,7 @@ import {
   discardCandidate,
   findCandidate,
   fullPatchText,
+  ghIn,
   gitIn,
   latestCandidate,
   reviewButtons,
@@ -5499,7 +5500,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           buttons: reviewButtons(candidate.id).slice(1),
         });
       } else if (action === 'aplicar') {
-        const r = await applyCandidate(candidate, gitIn(repoRoot()));
+        const r = await applyCandidate(candidate, gitIn(repoRoot()), ghIn(repoRoot()));
         await say(inbound, r.text, { quote: true });
       } else {
         const r = await discardCandidate(candidate, gitIn(repoRoot()));
