@@ -94,9 +94,11 @@ export function receiptStartText(kind: ReceiptKind, inbound: ReceiptInput = {}):
 }
 
 /** El acuse de una nota de voz, ya transcrita: lo que se entendió, entre comillas. */
-export function voiceHeardText(transcript: string): string {
+export function voiceHeardText(transcript: string, video?: boolean): string {
   const flat = transcript.replace(/\s+/g, ' ').trim();
-  if (!flat) return '🎙️ No he entendido ninguna palabra.';
+  // Un vídeo con solo música o ruido: no es que «no entendiera», es que no hay palabras.
+  if (!flat)
+    return video ? '🎬 No he oído palabras en el vídeo.' : '🎙️ No he entendido ninguna palabra.';
   // sliceSafe: un corte a ciegas podía dejar medio emoji y Telegram rechaza ese texto.
   const cut = flat.length > HEARD_MAX ? `${sliceSafe(flat, HEARD_MAX - 1).trimEnd()}…` : flat;
   return `🎙️ «${cut}»`;

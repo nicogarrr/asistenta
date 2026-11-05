@@ -86,9 +86,9 @@ describe('un vídeo se oye', () => {
     expect(lines.slice(1)).toEqual([VIDEO_HEARD_MARK, 'mira']);
   });
 
-  it('demasiado grande para bajarlo, en un álbum o sin duración: no se oye', () => {
+  it('demasiado grande para bajarlo o sin duración: no se oye (en un álbum sí, tg25)', () => {
     expect(videoToHear({ video: { ...video, file_size: 21 * 1024 * 1024 } })).toBeNull();
-    expect(videoToHear({ video, media_group_id: 'a1' })).toBeNull();
+    expect(videoToHear({ video, media_group_id: 'a1' })?.file_id).toBe('vid');
     expect(videoToHear({ video: { ...video, duration: 0 } })).toBeNull();
     expect(videoToHear({ animation: { file_id: 'g' } })).toBeNull();
     expect(videoToHear({ video })?.file_id).toBe('vid');
