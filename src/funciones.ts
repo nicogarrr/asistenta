@@ -263,7 +263,11 @@ export const TOOL_ABILITIES: Readonly<
   aire: { area: 'agenda', text: 'te digo cómo está el aire y si hay polen donde vives' },
   entregable: {
     area: 'investigar',
-    text: 'te hago una gráfica, un Excel o un PDF con tus datos y te lo mando',
+    text: 'te hago una gráfica, un Excel, un PDF o un Word con tus datos y te lo mando',
+  },
+  gastos: {
+    area: 'compras',
+    text: 'te digo cuánto has gastado por mes o por comercio, según tus recibos',
   },
   divisas: {
     area: 'compras',

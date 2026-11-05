@@ -158,6 +158,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'gráfica PNG, Excel o PDF con los datos que pasa el modelo: se genera en el PC sin red y solo va a esta conversación; la Gate decide.',
   },
   {
+    name: 'gastos',
+    note: 'gastos por mes o comercio leídos de los cobros que el Ojo apunta del correo: solo lectura local y solo en el chat privado del dueño; la Gate decide.',
+  },
+  {
     name: 'divisas',
     note: 'cambio de moneda con los tipos del BCE (Frankfurter, sin clave): solo lectura por red; la Gate decide.',
   },
