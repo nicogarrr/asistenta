@@ -500,7 +500,15 @@ async function respondApi(
         if (!mime?.startsWith('audio/')) throw new HttpError(415, 'Eso no es audio');
         const audio = await readRawBody(req, MAX_VOICE_BYTES);
         if (audio.length === 0) throw new HttpError(400, 'No ha llegado audio');
-        const oido = (await deps.transcribe(audio, mime)).trim();
+        let oido: string;
+        try {
+          oido = (await deps.transcribe(audio, mime)).trim();
+        } catch (err) {
+          // El whisper local explica en castellano qué pasó (silencio, formato, ffmpeg…).
+          const motivo =
+            err instanceof Error && err.message ? err.message : 'no he podido leer el audio';
+          throw new HttpError(422, `No te he podido entender: ${motivo}. Prueba otra vez.`);
+        }
         if (!oido) {
           payload = { oido: '', text: 'No te he entendido. Prueba otra vez, más cerca del micro.' };
           break;
