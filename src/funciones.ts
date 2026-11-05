@@ -265,6 +265,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'investigar',
     text: 'te hago una gráfica, un Excel o un PDF con tus datos y te lo mando',
   },
+  expertos: {
+    area: 'investigar',
+    text: 'respondo con tus apuntes por tema (derecho…) y cito archivo y página',
+  },
   divisas: {
     area: 'compras',
     text: 'te paso dinero de una moneda a otra con el cambio oficial del BCE',

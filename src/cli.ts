@@ -220,6 +220,7 @@ import {
 } from './evolve/review.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { repoRoot } from './evolve/worktree.js';
+import { BaseExpertos } from './expertos/base.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { createHolidayCheck, createProximoFestivo } from './festivos-rutinas.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -593,6 +594,7 @@ import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createEntregableTool } from './tools/entregable.js';
+import { createExpertosTool } from './tools/expertos.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
@@ -1919,6 +1921,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const fullControl = (await vaultGet('agent:fullControl')) === 'true';
   const ocrAvailability = desktop ? await ocrAvailable().catch(() => false) : false;
+  // Apuntes por tema («modo experto»): una carpeta por tema con sus PDF, Word, textos y
+  // fotos; se busca en ellos antes de contestar y se cita archivo y página.
+  const baseExpertos = new BaseExpertos({
+    root: process.env.PA_EXPERTOS_DIR?.trim() || join(paths.state, 'expertos'),
+    dbPath: join(paths.docs, 'expertos.sqlite'),
+    embedder: semanticRecall,
+    ocr: async (bytes, ext) => {
+      const out = await ocrImageBytes(bytes, `image/${ext === 'jpg' ? 'jpeg' : ext}`, {
+        ocrAvailable: async () => ocrAvailability,
+        ocrImage,
+      });
+      return out.status === 'ok' ? out.text : null;
+    },
+  });
   // Voz solo si Nico la pide (o activa /voz on): por defecto, texto.
   const voiceDefault = (await vaultGet('agent:voice')) === 'on';
   /** Mensajes en los que Nico pidió la respuesta en voz o dijo que conduce. */
@@ -2584,6 +2600,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createAireTool(() => weatherConfigFromEnv()),
       // «¿Cuánto son 120 dólares en euros?»: tipos del BCE, solo lectura.
       createDivisasTool(),
+      // «Según mis apuntes de derecho…»: busca en sus apuntes por tema y cita archivo y página.
+      createExpertosTool(baseExpertos, {
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
       // «Hazme una página con mis gastos (y que se rehaga cada mañana)»: tarjeta Páginas del panel.
       createPaginaVivaTool({
         store: paginasVivas,
@@ -3303,6 +3323,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       memoryDb.close();
       goalsDb.close();
       docMemory.close();
+      baseExpertos.close();
       log.info('daemon stopped', { threads: threads.size });
     },
   });

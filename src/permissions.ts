@@ -1701,6 +1701,12 @@ export class Gate {
       // datos del turno y lo manda a esta misma conversación; sin red y sin tocar el disco.
       case 'entregable':
         return 'lee';
+      // Apuntes por tema: buscar o listar es lectura; crear, guardar una nota, fijar
+      // instrucciones o quitar un archivo escribe solo en su carpeta local de apuntes.
+      case 'expertos': {
+        const a = argString(c.args, 'action');
+        return a === 'buscar' || a === 'temas' ? 'lee' : 'escribe-local';
+      }
       // «¿A qué hora pongo la lavadora?»: precio de la luz del servicio fijo de Red Eléctrica.
       // El aviso de cada noche guarda (o quita) una rutina local del dueño.
       case 'luz':
@@ -2920,6 +2926,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'cargar_herramienta',
   'tiempo',
   'divisas',
+  'expertos',
   'pagina_viva',
   'entregable',
   'aire',
@@ -3435,6 +3442,9 @@ export function externalReadSource(call: ToolCall): string | null {
       return label('descarga');
     case 'documents':
       return 'documento';
+    // Apuntes por tema: los escribe el dueño, pero un PDF suyo puede venir de fuera.
+    case 'expertos':
+      return argString(call.args, 'action') === 'buscar' ? 'apuntes' : null;
     case 'ocr':
       return 'documento escaneado';
     // El correo es privado y lo escriben terceros: tras leerlo, la sesión queda marcada.
