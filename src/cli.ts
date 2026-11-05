@@ -526,6 +526,7 @@ import {
 import {
   crearLlegada,
   createLlegadaTool,
+  guardarSitio,
   type LlegadaDeps,
   LlegadaStore,
   llegadaFiredText,
@@ -592,6 +593,7 @@ import { ocrAvailable, ocrImage } from './screen/ocr.js';
 import { ffmpegAvailable, recordScreen } from './screen/recorder.js';
 import { hasInteractiveDesktop, WindowsScreen } from './screen/windows.js';
 import { formatServicesList, ServiceStore } from './services/store.js';
+import { guardarSitioIntent } from './sitios.js';
 import { seedBuiltinSkills } from './skills/builtin.js';
 import { detectSkillEnv } from './skills/env.js';
 import { seedGeneralSkills } from './skills/general.js';
@@ -9401,17 +9403,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               return;
             }
           }
-          // «cuando llegue a casa recuérdame sacar la basura»: aviso por ubicación, sin modelo.
+          // «cuando llegue a casa recuérdame sacar la basura» / «cuando salga de casa…»:
+          // aviso por ubicación, sin modelo. «guarda esto como el gimnasio» guarda la
+          // última ubicación que mandó como sitio con nombre.
           {
-            const llegada = isOwnerDm(inbound, vigilanteOwnerId)
-              ? llegadaIntent(inbound.text)
+            const owner = isOwnerDm(inbound, vigilanteOwnerId);
+            const sitio = owner ? guardarSitioIntent(inbound.text) : null;
+            const sitioReply = sitio
+              ? guardarSitio(llegadaDeps().store, inbound.chatId, sitio)
               : null;
+            if (sitioReply) {
+              await say(inbound, sitioReply, { quote: true });
+              return;
+            }
+            const llegada = owner ? llegadaIntent(inbound.text) : null;
             if (llegada) {
               const reply = await crearLlegada(
                 llegadaDeps(),
                 inbound.chatId,
                 llegada.place,
                 llegada.text,
+                llegada.modo ?? 'llegar',
               );
               await say(inbound, reply, { quote: true });
               return;
