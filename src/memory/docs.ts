@@ -242,6 +242,11 @@ export class DocMemory {
     mkdirSync(options.directory, { recursive: true });
     const DatabaseSync = loadDatabaseSync();
     this.#db = new DatabaseSync(options.dbPath);
+    // Como las demás bases (src/sqlite.ts): si la copia de seguridad diaria la está
+    // leyendo (VACUUM INTO) o la tiene otro proceso, una escritura espera hasta 5 s
+    // en vez de fallar al instante con «database is locked» (el documento no se
+    // guardaba y había que mandarlo otra vez).
+    this.#db.exec('PRAGMA busy_timeout = 5000');
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS docs (
         doc_id TEXT PRIMARY KEY,
