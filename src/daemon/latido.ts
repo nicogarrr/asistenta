@@ -295,7 +295,7 @@ export function latidoStopRequest(text: string): string | null {
     .replace(/[.!¡]+$/u, '')
     .trim();
   const m =
-    /^(?:ya\s+)?(?:(?:para|deja|dejar)\s+de\s+vigilar(?:lo|la|los)?|no\s+vigiles\s+mas|ya no hace falta que vigiles|para\s+(?:el|los)\s+latidos?|quita\s+(?:el|los)\s+latidos?)(?:\s+(?:lo de\s+|eso de\s+|el\s+|la\s+|los\s+|las\s+)?(.{2,60}))?$/.exec(
+    /^(?:ya\s+)?(?:(?:para|deja|dejar)\s+de\s+vigilar(?:lo|la|los)?|no\s+vigiles(?:\s+mas)?|ya no hace falta que vigiles|(?:para|quita|borra|cancela|elimina)\s+(?:el|los)\s+latidos?|(?:para|quita|borra|cancela|elimina|deten)\s+(?:la|las|mis)\s+vigilancias?(?:\s+de)?)(?:\s+(?:lo de\s+|eso de\s+|el\s+|la\s+|los\s+|las\s+)?(.{2,60}))?$/.exec(
       t,
     );
   if (!m) return null;
@@ -309,7 +309,7 @@ export function latidoListRequest(text: string): boolean {
     .replace(/[¿?¡!.]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return /^(?:y\s+)?(?:que|que cosas|que mas)\s+(?:estas|sigues|me estas)\s+vigilando(?: ahora)?$|^(?:y\s+)?que vigilas(?: ahora)?$|^(?:estas|sigues) vigilando algo$/.test(
+  return /^(?:y\s+)?(?:que|que cosas|que mas)\s+(?:estas|sigues|me estas)\s+vigilando(?: ahora)?$|^(?:y\s+)?que vigilas(?: ahora)?$|^(?:estas|sigues) vigilando algo$|^(?:que|cuales)\s+vigilancias\s+(?:tengo|hay)(?: puestas| activas)?$|^(?:mis|ver|ensename)\s+(?:las\s+|mis\s+)?vigilancias$/.test(
     t,
   );
 }
@@ -331,7 +331,10 @@ export function latidoHasta(said: string, now: Date, timeZone?: string): Date | 
   if (/^\d{1,2}(?:[:,.]\d{2})?(?:\s*h)?$/u.test(t))
     t = `las ${t.replace(/\s*h$/u, '').replace(/[,.]/u, ':')}`;
   if (/^(?:las?\s|mediod[ií]a$|medianoche$)/iu.test(t)) t = `a ${t}`;
-  if (!/^a\s/iu.test(t)) return null;
+  // «hasta mañana a las 9»: vigilar de noche hasta por la mañana (antes se volvía a preguntar).
+  const otroDia = /^(?:ma[nñ]ana|pasado\s+ma[nñ]ana)\s+(?:a\s+)?(?:las?\s|mediod[ií]a$)/iu.test(t);
+  if (otroDia) t = t.replace(/^((?:pasado\s+)?ma[nñ]ana)\s+(?!a\s)/iu, '$1 a ');
+  if (!otroDia && !/^a\s/iu.test(t)) return null;
   const at = whenFromWords(t, now, timeZone);
   return at && at.getTime() > now.getTime() ? at : null;
 }
