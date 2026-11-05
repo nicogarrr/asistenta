@@ -10,8 +10,102 @@ import { foldAccents } from '../text.js';
 
 export const PREGUNTA_TTL_MS = 10 * 60_000;
 
-/** «sí» dicho de cualquier forma corta, para las preguntas que esperan un sí. */
-export const SI_RESPUESTA = /^(?:s[ií]|vale|venga|ok|okay|claro|dale|hazlo|porfa|por favor)[.!]*$/i;
+/** «sí» en una palabra: lo que valía antes. */
+const SI_SUELTO = /^(?:s[ií]|vale|venga|ok|okay|claro|dale|hazlo|porfa|por favor)[.!]*$/i;
+
+/** Palabras que dicen «sí» por sí solas (sin tildes, en minúscula). */
+const SI_PALABRAS = new Set([
+  'si',
+  'sip',
+  'sep',
+  'yes',
+  'vale',
+  'venga',
+  'ok',
+  'okay',
+  'okey',
+  'claro',
+  'dale',
+  'hazlo',
+  'adelante',
+  'perfecto',
+  'correcto',
+  'exacto',
+  'afirmativo',
+  'acuerdo',
+  'genial',
+  'guay',
+  'activalo',
+  'activala',
+  'enciendelo',
+  'enciendela',
+  'pruebalo',
+  'pruebala',
+  'abrelo',
+  'abrela',
+  'mandalo',
+  'mandala',
+  'envialo',
+  'enviala',
+  'guardalo',
+  'guardala',
+  'ponlo',
+  'ponla',
+  'apuntalo',
+  'apuntala',
+  'reintentalo',
+  'intentalo',
+  '👍',
+  '👌',
+  '✅',
+]);
+/** Cortesías y relleno que acompañan al «sí» sin cambiar nada. */
+const SI_RELLENO = new Set([
+  'por',
+  'favor',
+  'porfa',
+  'porfi',
+  'pls',
+  'please',
+  'gracias',
+  'hombre',
+  'mujer',
+  'tio',
+  'tia',
+  'que',
+  'de',
+  'bueno',
+  'pues',
+  'eso',
+  'lo',
+  'la',
+  'ya',
+  'tambien',
+  'igualmente',
+]);
+
+/**
+ * «sí» dicho de cualquier forma corta: «sí», «sí, hazlo», «si porfa», «vale, gracias»,
+ * «claro que sí», «sí, actívalo», «ok 👍». Antes solo valía una palabra suelta y lo que
+ * uno contesta de verdad caía al modelo, que no sabía qué se le había preguntado. Una
+ * frase con algo más («sí, pero mañana», «sí, no sé») o un «no» no es un sí.
+ */
+export function esSiRespuesta(text: string): boolean {
+  const t = text.trim();
+  if (SI_SUELTO.test(t)) return true;
+  const words = foldAccents(t.toLocaleLowerCase('es'))
+    .replace(/[¡!¿?.,;:()«»"“”…-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0 || words.length > 6) return false;
+  return (
+    words.some((w) => SI_PALABRAS.has(w)) &&
+    words.every((w) => SI_PALABRAS.has(w) || SI_RELLENO.has(w))
+  );
+}
+
+/** Para las preguntas que esperan un sí (`SI_RESPUESTA.test(t)`), como antes. */
+export const SI_RESPUESTA: { test(text: string): boolean } = { test: esSiRespuesta };
 
 /**
  * La respuesta a «¿Cómo llamo a la rutina?» convertida en nombre: «Pedir cita» →
