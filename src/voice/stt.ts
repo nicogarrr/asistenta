@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';
 import { log } from '../log.js';
+import { ORT_SIN_ESPERA_ACTIVA } from '../onnx-ahorro.js';
 import { paths } from '../paths.js';
 import { withTimeout } from '../utils.js';
 import { looksSilent } from './audio.js';
@@ -262,7 +263,11 @@ export function loadWhisperPipeline(model: string): Promise<AsrPipeline> {
     env.logLevel = LogLevel.ERROR;
 
     const pipe = await withTimeout(
-      pipeline('automatic-speech-recognition', model, { dtype: 'q8', device: 'cpu' }),
+      pipeline('automatic-speech-recognition', model, {
+        dtype: 'q8',
+        device: 'cpu',
+        session_options: ORT_SIN_ESPERA_ACTIVA,
+      }),
       LOAD_TIMEOUT_MS,
       `whisper model ${model} did not finish loading within ${LOAD_TIMEOUT_MS / 1000}s`,
     );

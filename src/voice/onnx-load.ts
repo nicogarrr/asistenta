@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { ORT_SIN_ESPERA_ACTIVA } from '../onnx-ahorro.js';
 
 /**
  * Abre una sesión ONNX desde una ruta de modelo, también cuando la ruta lleva tildes, eñes
@@ -10,8 +11,8 @@ import { readFile } from 'node:fs/promises';
  */
 export interface OnnxSessionCreator<S> {
   InferenceSession: {
-    create(path: string): Promise<S>;
-    create(bytes: Uint8Array): Promise<S>;
+    create(path: string, options?: object): Promise<S>;
+    create(bytes: Uint8Array, options?: object): Promise<S>;
   };
 }
 
@@ -25,9 +26,12 @@ export async function createOnnxSession<S>(
   modelPath: string,
   read: (path: string) => Promise<Uint8Array> = readFile,
 ): Promise<S> {
-  if (!needsByteLoad(modelPath)) return ort.InferenceSession.create(modelPath);
+  // Sin espera activa de los hilos (ver onnx-ahorro.ts): misma salida, menos CPU.
+  if (!needsByteLoad(modelPath))
+    return ort.InferenceSession.create(modelPath, ORT_SIN_ESPERA_ACTIVA);
   const bytes = await read(modelPath);
   return ort.InferenceSession.create(
     new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    ORT_SIN_ESPERA_ACTIVA,
   );
 }

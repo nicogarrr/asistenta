@@ -23,6 +23,7 @@
 import { createHash } from 'node:crypto';
 import { envSwitch } from '../env-flags.js';
 import { log } from '../log.js';
+import { ORT_SIN_ESPERA_ACTIVA } from '../onnx-ahorro.js';
 
 /** Modelo multilingue pequeno (es/en), cuantizado q8, CPU. */
 export const SEMANTIC_MODEL = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
@@ -177,6 +178,7 @@ export function createLocalEmbedder(modelsDir: string, model = SEMANTIC_MODEL): 
         return (await pipeline('feature-extraction', model, {
           dtype: 'q8',
           device: 'cpu',
+          session_options: ORT_SIN_ESPERA_ACTIVA,
         })) as unknown as FeaturePipeline;
       })();
       // Un fallo de descarga no debe quedar memoizado: el siguiente recall reintenta.
