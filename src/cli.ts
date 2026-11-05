@@ -6285,7 +6285,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, '¿Cuál doy por resuelto?', { quote: true });
       return;
     }
-    const needle = want.toLowerCase();
+    // «resuelto lo de la reunion» también casa con «reunión» (y al revés).
+    const needle = foldAccents(want.toLowerCase());
     const matches = followups.safe(() => {
       // Solo los de este chat: el mismo asunto en otro chat es otra nota.
       const here = chatKey(inbound);
@@ -6295,7 +6296,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const byId = pending.filter((f) => f.id === want);
       const found = byId.length
         ? byId
-        : pending.filter((f) => f.subject.toLowerCase().includes(needle));
+        : pending.filter((f) => foldAccents(f.subject.toLowerCase()).includes(needle));
       if (found.length === 1) {
         const only = found[0];
         if (only) followups.resolve(only.id);
