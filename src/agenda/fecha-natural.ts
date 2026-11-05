@@ -287,9 +287,39 @@ export function parseFechaCalendario(
   if (rel !== undefined) return rel;
   const said = diaHablado(fold(original));
   if (!RE.test(horaHablada(said.text))) {
-    return tituloDelante(original, now, timeZone) ?? horaDetras(original, now, timeZone);
+    const esta = estaDelante(original);
+    return (
+      tituloDelante(original, now, timeZone) ??
+      horaDetras(original, now, timeZone) ??
+      (esta ? horaDetras(esta, now, timeZone) : null)
+    );
   }
   return parseDirecto(original, now, timeZone);
+}
+
+/**
+ * «esta noche cine a las 22», «esta tarde pádel a las 7», «esta mañana médico a las 11:30»:
+ * la parte del día delante y la hora detrás del título. Se lee como «hoy cine a las 22 de
+ * la noche» (la parte del día va con la hora: «a las 7» de esta tarde son las 19:00). Antes
+ * solo valía con la hora pegada («esta noche a las 10 cena») y si no, «No he pillado la
+ * fecha». null si no es eso.
+ */
+function estaDelante(original: string): string | null {
+  const folded = fold(original);
+  const m =
+    /^(\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?)esta\s+(manana|tarde|noche)\s+(?!a\s+las?\s)/.exec(
+      folded,
+    );
+  if (!m) return null;
+  const rest = original.slice(m[0].length);
+  const time = TIME_IN.exec(fold(rest));
+  if (!time?.[1]) return null;
+  const end = (time.index ?? 0) + time[0].length;
+  // La hora ya dice su parte («a las 10 de la noche», «8 pm»): se deja como está.
+  const conParte = /\bde\s+la\b|[ap]\.?\s?m\.?$/.test(time[1])
+    ? rest
+    : `${rest.slice(0, end)} de la ${m[2] === 'manana' ? 'mañana' : m[2]}${rest.slice(end)}`;
+  return `${original.slice(0, (m[1] ?? '').length)}hoy ${conParte}`;
 }
 
 const DAY_HEAD = new RegExp(String.raw`^${DAY}\s+`);
