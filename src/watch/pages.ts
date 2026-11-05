@@ -937,6 +937,29 @@ export interface VigilaArgs {
  * Acepta comillas tipográficas (el móvil las pone solo). Devuelve null si no hay enlace;
  * lanza si un objetivo o un porcentaje no se entienden (mejor decírselo que ignorarlo).
  */
+/** «500», «1.299», «299,99», «€ 45» → céntimos, o null si no es un importe. */
+function targetAmountCents(text: string): number | null {
+  const raw = text.replace(/euros?|eur|[€\s]/gi, '');
+  // «1.299€» es 1299 € escrito en español (punto de miles): antes no se entendía.
+  const cents = /^\d{1,3}(?:\.\d{3})+$/.test(raw)
+    ? Number(raw.replace(/\./g, '')) * 100
+    : parseMachinePrice(raw);
+  return cents === null || cents <= 0 ? null : cents;
+}
+
+const AMOUNT_TEXT = String.raw`(€?\s?\d[\d.,]*(?:\s?(?:€|euros?\b|eur\b))?)`;
+/**
+ * «avísame si baja un 15 %», «cuando baje más de un 10%»: la bajada dicha normal. Antes
+ * quedaba como nombre de la vigilancia y avisaba de cualquier cambio.
+ */
+const NATURAL_DROP =
+  /(?:av[ií]same\s+)?(?:(?:si|cuando)\s+)?(?:el\s+precio\s+)?(?:baja|baje|bajan|bajen)\s+(?:un\s+|m[aá]s\s+de\s+un\s+|al\s+menos\s+un\s+)?(\d{1,2}(?:[.,]\d+)?)\s*%/i;
+/** «avísame si baja de 300 €», «cuando baje de 299,99», «por debajo de 50€», «objetivo 450». */
+const NATURAL_TARGET = new RegExp(
+  String.raw`(?:av[ií]same\s+)?(?:(?:si|cuando)\s+)?(?:el\s+precio\s+)?(?:(?:baja|baje|bajan|bajen)\s+(?:de|a|por\s+debajo\s+de|a\s+menos\s+de|de\s+los)|(?:est[aáeé]|cueste|cuesta)\s+(?:por\s+debajo\s+de|a\s+menos\s+de|en\s+menos\s+de|menos\s+de)|por\s+debajo\s+de|menos\s+de|objetivo)\s+${AMOUNT_TEXT}(?!\s*%)(?=\s|[.,;!?]?$)`,
+  'i',
+);
+
 export function parseVigilaArgs(args: string): VigilaArgs | null {
   const trimmed = args.trim();
   const m = /^(\S+)\s*(.*)$/s.exec(trimmed);
@@ -975,6 +998,23 @@ export function parseVigilaArgs(args: string): VigilaArgs | null {
     }
     dropPct = pct;
     rest = rest.replace(drop[0], ' ');
+  }
+  // Dicho normal, sin «=». Si el importe no se entiende, se queda como nombre (como antes).
+  const natDrop = dropPct === null ? NATURAL_DROP.exec(rest) : null;
+  if (natDrop?.[1]) {
+    const pct = Number(natDrop[1].replace(',', '.'));
+    if (Number.isFinite(pct) && pct >= 1 && pct <= 95) {
+      dropPct = pct;
+      rest = rest.replace(natDrop[0], ' ');
+    }
+  }
+  const natTarget = targetCents === null ? NATURAL_TARGET.exec(rest) : null;
+  if (natTarget?.[1]) {
+    const cents = targetAmountCents(natTarget[1]);
+    if (cents !== null) {
+      targetCents = cents;
+      rest = rest.replace(natTarget[0], ' ');
+    }
   }
   return {
     url: m[1],
