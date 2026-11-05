@@ -2349,6 +2349,18 @@ ${renderFormatScript()}
             tarjeta.appendChild(nodo('p', 'muted', 'Horario: ' + rutina.horario));
             tarjeta.appendChild(nodo('p', 'muted', 'Última: ' + (rutina.ultima || 'todavía no se ha ejecutado')));
             if (rutina.comando) tarjeta.appendChild(nodo('p', 'muted', rutina.comando));
+            // Últimas ejecuciones: si fueron bien o fallaron y qué salió (la salida, al desplegar).
+            if (Array.isArray(rutina.ejecuciones) && rutina.ejecuciones.length) {
+              var historial = nodo('details', 'historial-rutina');
+              var fallos = rutina.ejecuciones.filter(function (e) { return !e.ok; }).length;
+              historial.appendChild(nodo('summary', null, 'Últimas ejecuciones: ' + rutina.ejecuciones.map(function (e) { return e.ok ? '✅' : '❌'; }).join(' ') + (fallos ? ' (' + fallos + ' con fallo)' : '')));
+              var lista = nodo('ul', 'muted');
+              rutina.ejecuciones.forEach(function (e) {
+                lista.appendChild(nodo('li', null, (e.ok ? '✅ ' : '❌ ') + e.cuando + ' · ' + e.entrega + (e.salida ? ' — ' + e.salida : '')));
+              });
+              historial.appendChild(lista);
+              tarjeta.appendChild(historial);
+            }
             contenedor.appendChild(tarjeta);
           });
           finCarga(contenedor, true);

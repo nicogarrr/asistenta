@@ -354,6 +354,7 @@ import {
   wideResearch,
   wideResearchEnabled,
 } from './research/wide-research.js';
+import { routineHistoryAt } from './routine-history.js';
 import { drainThreadTails } from './shutdown-drain.js';
 import { skillsCatalogReply } from './skills/catalog.js';
 import { refineFromLessons } from './skills/refine.js';
@@ -2126,6 +2127,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 routineRunner.status(),
                 (r) => commandRoutineTag(r, commandRoutines, commandRoutinesEnabled()),
                 vigilanteOwnerId ?? undefined,
+                new Date(),
+                (scope, name) => routineHistoryAt(paths.state).list(scope, name),
               );
             } catch {
               return null;
@@ -3419,6 +3422,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     outageDelaysMs: envSwitchOn('PA_AUTO_RETRY') ? undefined : [],
     // Informes que Telegram no aceptó: en disco, para reenviarlos tras un reinicio.
     resendQueue: new RoutineResendQueue(join(paths.state, 'rutinas-reenvio.json')),
+    // Últimas ejecuciones de cada rutina (/cron historial y la tarjeta Rutinas).
+    history: routineHistoryAt(paths.state),
   });
   runRoutineFire.resumePending();
 
@@ -4816,6 +4821,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           commandCwd: homedir(),
           goals: goalStore,
           ask: (opts) => preguntas.ask(chatKey(inbound), 'cron', opts),
+          history: routineHistoryAt(paths.state),
         },
         args,
       ),

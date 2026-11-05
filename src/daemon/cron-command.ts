@@ -30,6 +30,7 @@ import {
   parseDeliveryArgs,
   type RoutineDeliveryStore,
 } from '../routine-delivery.js';
+import { formatHistory, type RoutineHistory } from '../routine-history.js';
 import { type RoutineRunner, validateSchedule } from '../routines.js';
 import { foldAccents, sliceSafe } from '../text.js';
 import { isReminder } from '../tools/reminder.js';
@@ -177,6 +178,8 @@ export interface CronCommandDeps {
    * reescribirlo (pregunta-pendiente.ts: una vez, 10 minutos).
    */
   ask?: (opts: PreguntaOpts) => void;
+  /** Historial de ejecuciones por rutina; absent = `/cron historial` unavailable. */
+  history?: Pick<RoutineHistory, 'list'>;
 }
 
 /** «sí», «sí, hazlo», «vale, gracias»… (la misma lectura que el resto de preguntas). */
@@ -275,6 +278,23 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
   const [subRaw, ...restParts] = args.trim().split(/\s+/).filter(Boolean);
   const sub = (subRaw ?? '').toLowerCase();
   const rest = restParts.join(' ');
+
+  // «/cron historial resumen»: las últimas ejecuciones, si fallaron y su salida.
+  if (/^(?:historial|historia|ejecuciones|log)$/.test(sub)) {
+    if (!deps.history) return 'Ahora mismo no tengo el historial de las rutinas.';
+    const names = routineNames(deps);
+    if (!names.length) return 'No tienes rutinas programadas.';
+    const said = rest.trim();
+    const name = said ? (pickName(names, said) ?? said) : names.length === 1 ? names[0] : null;
+    if (!name) return askRoutine(deps, 'te enseño', 'historial', names);
+    const routine =
+      deps.store.getRoutine(deps.threadKey, name) ??
+      deps.store.getRoutine(`${deps.chatKey}#main`, name);
+    if (!routine || routine.kind !== 'schedule' || isGoalRoutine(routine)) {
+      return `No tengo ninguna rutina programada llamada "${name}". Tienes: ${nameList(names)}.`;
+    }
+    return formatHistory(routine.name, deps.history.list(routine.scope, routine.name));
+  }
 
   if (sub === 'entrega') {
     if (!deps.delivery) return 'Ahora mismo no puedo cambiar cómo se entregan las rutinas.';
@@ -582,8 +602,11 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
                 live.find((st) => st.scope === r.scope && st.name === r.name)?.next,
               )}`
             : 'EN PAUSA'
-        }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}`,
+        }${r.lastRunAt ? `; última: ${r.lastRunAt}` : ''}${
+          deps.history?.list(r.scope, r.name)[0]?.ok === false ? ' ❌ la última falló' : ''
+        }`,
     ),
+    ...(deps.history ? ['Historial de una: «/cron historial <rutina>».'] : []),
   ].join('\n');
 }
 

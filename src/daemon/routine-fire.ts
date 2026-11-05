@@ -9,6 +9,7 @@ import {
   type RoutineDeliveryStore,
   writeRoutineOutput,
 } from '../routine-delivery.js';
+import type { RoutineRun } from '../routine-history.js';
 import { procedurePrompt, type RoutineRunContext } from '../routines.js';
 import {
   deliverMissedReminders,
@@ -96,6 +97,11 @@ export interface RoutineFireDeps {
     put: (entry: PendingResend) => void;
     remove: (scope: string, routine: string) => void;
   };
+  /** Historial de ejecuciones por rutina (RoutineHistory); ausente = no se apunta. */
+  history?: {
+    record: (scope: string, name: string, run: RoutineRun) => void;
+    markResent: (scope: string, name: string) => void;
+  };
 }
 
 /** Lo que devuelve createRoutineFire: el disparo, más el reenvío de lo pendiente al arrancar. */
@@ -124,6 +130,14 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
   const later = deps.later ?? defaultLater;
   /** Reintento pendiente por rutina: un disparo nuevo a su hora lo sustituye. */
   const pendingRetry = new Map<string, { cancel: () => void }>();
+  /** El historial nunca tumba una rutina. */
+  const note = (fn: () => void): void => {
+    try {
+      fn();
+    } catch (err) {
+      log.warn('routine history failed', { err });
+    }
+  };
   // La salida ya está hecha pero Telegram no la aceptó (sin red un rato, tras sus
   // reintentos de 90 s): antes se perdía (el informe de las 8:00 no llegaba). Se
   // reenvía la misma salida más tarde, sin volver a trabajar; un disparo nuevo a su
@@ -146,6 +160,7 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         .then(() => {
           deps.resendQueue?.remove(entry.scope, entry.routine);
           deps.delivery.commit(entry.scope, entry.routine, entry.hash);
+          note(() => deps.history?.markResent(entry.scope, entry.routine));
           log.info('routine output resent', { routine: entry.routine, attempt: entry.attempt + 1 });
         })
         .catch((err: unknown) => {
@@ -222,8 +237,19 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         : procedurePrompt(ctx.routine);
     let body = '';
     let plan: DeliveryPlan | null = null;
+    const startedAt = Date.now();
+    let failed = false;
+    const record = (entrega: RoutineRun['entrega'], salida = body): void =>
+      note(() =>
+        deps.history?.record(ctx.scope, ctx.routine.name, {
+          at: startedAt,
+          ok: !failed,
+          ms: Date.now() - startedAt,
+          entrega,
+          salida,
+        }),
+      );
     if (!reminder) {
-      let failed = false;
       if (isCommandRoutine(ctx.routine)) {
         // F4: un comando aprobado, sin modelo. Nunca se manda a runTask.
         const out = deps.fireCommand
@@ -264,6 +290,10 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
                 );
               }, delay);
               pendingRetry.set(retryKey, handle);
+              record(
+                'reintento',
+                `Sin conexión con el modelo; reintento en ${retryDelayText(delay)}.`,
+              );
               return;
             }
             const tried = delays.reduce((a, b) => a + b, 0);
@@ -287,6 +317,7 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         }
       }
       if (!plan.chat) {
+        record(plan.file ? 'fichero' : plan.skipped === 'ninguno' ? 'ninguno' : 'sin-cambios');
         log.info('routine output not sent to chat', {
           routine: ctx.routine.name,
           reason: plan.skipped ?? 'fichero',
@@ -307,6 +338,7 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         return false;
       });
     if (sent && plan && !reminder) deps.delivery.commit(ctx.scope, ctx.routine.name, plan.hash);
+    if (!reminder && plan) record(sent ? 'chat' : 'pendiente');
     // La salida ya está hecha pero Telegram no la aceptó (sin red un rato, tras sus
     // reintentos de 90 s): antes se perdía (el informe de las 8:00 no llegaba). Se
     // reenvía la misma salida más tarde, sin volver a trabajar; un disparo nuevo a su
