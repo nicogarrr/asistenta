@@ -491,3 +491,41 @@ export function parseFechaCalendarioDicha(
   if (hoy && hoy.start.getTime() > now.getTime()) return hoy;
   return parseFechaCalendario(`${head}mañana ${body}`, now, timeZone) ?? hoy;
 }
+
+/** «de 10 a 12», «desde las 9:30 hasta las 11», «de 4 a 6 de la tarde». */
+const TRAMO =
+  /(^|\s)(?:de|desde)\s+(?:las?\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*h?\s+(?:a|hasta)\s+(?:las?\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*h?(\s+de\s+la\s+(?:ma[ñn]ana|tarde|noche))?(?=[\s,.;:]|$)/i;
+
+/**
+ * /calendario con un tramo: «mañana de 10 a 12 curso», «el viernes de 4 a 6 de la tarde
+ * tutoría», «curso mañana de 9:30 a 11». Se lee la hora de empezar como «a las 10» y la de
+ * acabar cae ese mismo día (si es menor, por la tarde: «de 10 a 2» → 10:00–14:00). Antes
+ * contestaba «No he pillado la fecha o la hora». null si no hay tramo o no cuadra.
+ */
+export function parseTramoCalendario(
+  text: string,
+  now: Date = new Date(),
+  timeZone?: string,
+): { start: Date; end: Date; title: string } | null {
+  const original = text.normalize('NFC').trim();
+  const t = TRAMO.exec(original);
+  if (!t?.[2] || !t[4]) return null;
+  // Otra hora fuera del tramo («reunión de 2 a 3 personas mañana a las 10»): no es un tramo.
+  const fuera = `${original.slice(0, t.index)} ${original.slice(t.index + t[0].length)}`;
+  if (/\ba\s+las?\s+\d|\d[:.]\d{2}/i.test(fuera)) return null;
+  const part = t[6] ?? '';
+  const at = `${t[1]}a las ${t[2]}${t[3] ? `:${t[3]}` : ''}${part}`;
+  const rewritten = `${original.slice(0, t.index)}${at}${original.slice(t.index + t[0].length)}`;
+  const r = parseFechaCalendarioDicha(rewritten, now, timeZone);
+  if (!r) return null;
+  const s = wallClock(r.start, timeZone);
+  let h = Number(t[4]);
+  const mi = Number(t[5] ?? 0);
+  if (h > 23 || mi > 59) return null;
+  const startMin = s.hour * 60 + s.minute;
+  if (/tarde|noche/i.test(part) && h < 12) h += 12;
+  else if (h * 60 + mi <= startMin && h < 12 && (h + 12) * 60 + mi > startMin) h += 12;
+  if (h * 60 + mi <= startMin) return null;
+  const end = new Date(zonedTime(s.year, s.month, s.day, h, mi, timeZone));
+  return { start: r.start, end, title: r.title };
+}

@@ -52,7 +52,7 @@ describe('/calendario dicho normal', () => {
     expect(cli).toContain(
       "'¿Qué apunto y cuándo? Dímelo normal, por ejemplo «mañana a las 18:00 dentista» o «el viernes a las 10 revisión del coche».'",
     );
-    expect(cli).toContain('answer: (t) => (parseFechaCalendarioDicha(t) ? `add ');
+    expect(cli).toContain('parseTramoCalendario(t) || parseFechaCalendarioDicha(t) ? `add ');
   });
 });
 

@@ -440,7 +440,7 @@ function delegateTool(
 
 import { confirmacionCalendario, preguntaFechaPasada } from './agenda/calendario-pasado.js';
 import { respuestaCalendarioPasado } from './agenda/calendario-respuesta.js';
-import { parseFechaCalendarioDicha } from './agenda/fecha-natural.js';
+import { parseFechaCalendarioDicha, parseTramoCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
@@ -7057,11 +7057,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const confirmed = /^confirmado\s/i.test(args.trim());
     const m = /^(?:add|anadir|añadir|confirmado)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
     // Dicho normal («mañana a las 18:00 dentista»); el formato con barra sigue valiendo.
-    const natural = m ? null : parseFechaCalendarioDicha(args);
+    // «mañana de 10 a 12 curso»: un tramo, con hora de acabar.
+    const tramo = m ? null : parseTramoCalendario(args);
+    const natural = m ? null : (tramo ?? parseFechaCalendarioDicha(args));
     if (!m && !natural) {
       // La respuesta normal completa el /calendario (Nico, 1 nov).
       preguntas.ask(chatKey(inbound), 'calendario', {
-        answer: (t) => (parseFechaCalendarioDicha(t) ? `add ${t}` : null),
+        answer: (t) =>
+          parseTramoCalendario(t) || parseFechaCalendarioDicha(t) ? `add ${t}` : null,
       });
       await say(
         inbound,
@@ -7091,8 +7094,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const file = join(paths.state, 'calendar', 'local.ics');
-    await appendEvent(file, { title, start });
-    await say(inbound, confirmacionCalendario(title, start, new Date()), { quote: true });
+    const end = tramo?.end;
+    await appendEvent(file, end ? { title, start, end } : { title, start });
+    await say(inbound, confirmacionCalendario(title, start, new Date(), undefined, end), {
+      quote: true,
+    });
   };
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {
     const url = args.trim();

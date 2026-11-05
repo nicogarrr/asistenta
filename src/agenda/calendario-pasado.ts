@@ -113,6 +113,7 @@ export function confirmacionCalendario(
   start: Date,
   now: Date,
   timeZone?: string,
+  end?: Date,
 ): string {
   const w = wallClock(start, timeZone);
   const today = wallClock(now, timeZone);
@@ -130,5 +131,9 @@ export function confirmacionCalendario(
     : isDay(tomorrow)
       ? 'mañana'
       : `el ${pad(w.day)}/${pad(w.month)}${w.year === today.year ? '' : `/${w.year}`}`;
+  if (end) {
+    const e = wallClock(end, timeZone);
+    return `Añadido al calendario local (no a Google): ${title} — ${day} de ${pad(w.hour)}:${pad(w.minute)} a ${pad(e.hour)}:${pad(e.minute)}.`;
+  }
   return `Añadido al calendario local (no a Google): ${title} — ${day} a las ${pad(w.hour)}:${pad(w.minute)}.`;
 }
