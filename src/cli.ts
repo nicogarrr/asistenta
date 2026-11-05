@@ -179,6 +179,7 @@ import {
   threadForSentIds,
 } from './daemon/inbound.js';
 import { LatencyStats, latencyLine } from './daemon/latency.js';
+import { createLatidoTool, Latidos } from './daemon/latido.js';
 import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/panel-chat.js';
 import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
@@ -2492,6 +2493,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
       }),
       createReminderTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
+      createLatidoTool({ latidos, scopeOf: scope, chatIdOf: () => chatIdOf(thread.chatKey) }),
       createGasolinerasTool({
         store,
         scopeOf: scope,
@@ -3284,6 +3286,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     200,
     join(paths.state, 'botones', 'recordatorios.json'),
   );
+  // «Vigila esto cada 10 min» en el mismo chat y con su contexto (daemon/latido.ts): corre
+  // como una rutina en el hilo, solo escribe si cambia algo y se para solo.
+  const latidos = new Latidos({
+    run: (prompt, scope, l) =>
+      runRoutineTask(prompt, {
+        scope,
+        routine: {
+          id: `latido-${l.id}`,
+          scope,
+          name: `latido: ${l.task.slice(0, 60)}`,
+          kind: 'schedule',
+          params: null,
+          steps: null,
+          prompt,
+          schedule: null,
+          enabled: true,
+          createdAt: new Date(l.startedAt).toISOString(),
+          updatedAt: new Date(l.startedAt).toISOString(),
+          lastRunAt: null,
+        },
+      }),
+    send: (chatId, text) => sendToChat(chatId, text),
+    isBusy: (scope) => [...threads.values()].some((t) => t.key === scope && t.active),
+    file: join(paths.state, 'latidos.json'),
+  });
+  latidos.restore();
   // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
   const commandRoutines = new CommandRoutineStore(join(paths.state, 'command-routines.json'));
   const runRoutineFire = createRoutineFire({

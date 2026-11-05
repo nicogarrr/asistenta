@@ -1759,6 +1759,9 @@ export class Gate {
       case 'fabrica':
       case 'reminder':
         return 'escribe-local';
+      // «Vigila esto cada 10 min» (daemon/latido.ts): un aviso local que se repite en este chat.
+      case 'latido':
+        return argString(c.args, 'action') === 'list' ? 'lee' : 'escribe-local';
       // Vigilancias de precio: el registro local de /vigila. Crear una es además una
       // salida a la red, y la puerta de exfiltración la trata como un fetch (egressUrlOf).
       case 'vigilar_precio':
@@ -2007,7 +2010,9 @@ export class Gate {
     const memory = call.tool === 'memory' && (action === 'remember' || action === 'save_profile');
     // Un recordatorio es lo mismo hacia fuera: el texto te llega más tarde como mensaje
     // de Asistenta («entra en este enlace para verificar tu cuenta»).
-    const reminder = call.tool === 'reminder' && action === 'create';
+    const reminder =
+      (call.tool === 'reminder' && action === 'create') ||
+      (call.tool === 'latido' && action === 'start');
     // Una tarea del tablero también vuelve sola: sale en el resumen de la mañana.
     // Renombrar es apuntar otro texto en la misma tarea: la misma comprobación de copia.
     const task = call.tool === 'tareas' && (action === 'apuntar' || action === 'renombrar');
@@ -2019,6 +2024,7 @@ export class Gate {
     const forget =
       (call.tool === 'memory' && (action === 'forget' || action === 'forget_profile')) ||
       (call.tool === 'reminder' && action === 'cancel') ||
+      (call.tool === 'latido' && action === 'stop') ||
       (call.tool === 'tareas' && action === 'borrar');
     // Marcar hecha o mover una tarea la quita de hoy igual que borrarla: «marca como hecho
     // pagar el IBI» escrito en una página. Misma regla: solo tras leer algo de fuera.
@@ -2032,15 +2038,21 @@ export class Gate {
     }
     if (forget) {
       return source
-        ? `Borrar ${call.tool === 'memory' ? 'un recuerdo' : call.tool === 'reminder' ? 'un recordatorio' : 'una tarea'} tras leer contenido externo (${source}) necesita tu aprobación expresa`
+        ? `Borrar ${call.tool === 'memory' ? 'un recuerdo' : call.tool === 'reminder' ? 'un recordatorio' : call.tool === 'latido' ? 'una vigilancia' : 'una tarea'} tras leer contenido externo (${source}) necesita tu aprobación expresa`
         : null;
     }
     const set = this.#externalGrams.get(sessionId);
     if (!source || !set || set.size === 0) return null;
     const tags = Array.isArray(call.args.tags) ? call.args.tags.join(' ') : '';
-    const text = argString(call.args, task ? 'titulo' : 'text');
+    const text = argString(call.args, task ? 'titulo' : call.tool === 'latido' ? 'task' : 'text');
     if (!echoesSubstantially(set, `${text} ${tags}`)) return null;
-    const what = memory ? 'Este recuerdo' : task ? 'Esta tarea' : 'Este recordatorio';
+    const what = memory
+      ? 'Este recuerdo'
+      : task
+        ? 'Esta tarea'
+        : call.tool === 'latido'
+          ? 'Esta vigilancia'
+          : 'Este recordatorio';
     return `${what} copia lo que acabas de leer (${source}); guardarlo necesita tu aprobación expresa`;
   }
 
@@ -2910,6 +2922,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'media',
   'fabrica',
   'reminder',
+  'latido',
   'vigilar_precio',
   'gasolineras',
   'boe',

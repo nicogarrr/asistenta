@@ -89,6 +89,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'trafico-avisos.json', what: 'lo ya avisado por cada aviso del tráfico', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
   {
+    name: 'latidos.json',
+    what: '«vigila esto cada 10 min» en marcha (latido.ts)',
+    backup: 'file',
+  },
+  {
     name: 'parado-a-proposito.json',
     what: 'cuándo se paró Asistenta con pa stop (el vigilante la deja apagada hasta reiniciar el PC o pa iniciar)',
     backup: 'file',
