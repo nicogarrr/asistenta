@@ -16,6 +16,7 @@ Sirve para abrir el panel dentro de Telegram (`/panel`) y hablar con Asistenta d
    `PA_WEB_ALLOWED_HOSTS=tu-pc.tu-red.ts.net`
    Pégala en el `.env` de Asistenta y reinicia Asistenta (en una terminal: `pa restart`).
 6. Vuelve a escribir `/tailscale`: todo debe salir con ✅. Ahora `/panel` te da el botón «📱 Abrir panel».
+7. **Voz desde el móvil**: escribe `/voz` y pulsa «🎙️ Hablar». La primera vez el móvil pide permiso para el micrófono (acéptalo para Telegram). Pulsas, hablas, pulsas otra vez y te contesta en voz alta. Con «Manos libres» corta sola cuando te callas y vuelve a escucharte tras responder. Si Telegram no deja usar el micro en tu móvil, abre `https://tu-pc.tu-red.ts.net/voz` en Chrome o Safari (antes abre el panel una vez allí con tu token).
 
 Notas:
 - Nunca uses `tailscale funnel`: eso publica el panel en Internet. `/tailscale` avisa si está encendido.

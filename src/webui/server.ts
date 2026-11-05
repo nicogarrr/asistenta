@@ -5,6 +5,7 @@ import { log } from '../log.js';
 import { createServer } from '../node-http.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
+import { renderVozPage } from './voz-page.js';
 
 /** Archivos que /api/chat deja pasar al panel (ver panel-chat.ts PANEL_FILE_TYPES). */
 const PANEL_FILE_URL =
@@ -93,10 +94,28 @@ export interface WebUiDeps {
    * dueño? Si dice que sí, /api/miniapp devuelve el token del panel. Si falta, 503.
    */
   miniApp?(initData: string): boolean | Promise<boolean>;
+  /**
+   * /voz desde el móvil: transcribe la nota (whisper local). La respuesta sale de `chat`,
+   * el mismo hilo que el chat del panel. Si falta, /api/voz responde 503.
+   */
+  transcribe?(audio: Buffer, mime: string): Promise<string>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 64 * 1024;
+/** Una nota de /voz: un minuto de opus/aac son ~0,5 MB; 8 MB deja margen sin abrir la puerta. */
+const MAX_VOICE_BYTES = 8 * 1024 * 1024;
+
+async function readRawBody(req: IncomingMessage, max: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    size += chunk.length;
+    if (size > max) throw new HttpError(413, 'La nota es demasiado larga (máximo unos minutos)');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
 const DECISIONS = new Set<ApprovalDecision>(['once', 'session', 'always', 'deny']);
 
 /** Respuesta a «Siempre/Por ahora» sobre una aprobación que solo admite «una vez». */
@@ -159,6 +178,7 @@ type ApiRoute =
   | { method: 'POST'; kind: 'modelo' }
   | { method: 'POST'; kind: 'clave' }
   | { method: 'POST'; kind: 'miniapp' }
+  | { method: 'POST'; kind: 'voz' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -313,6 +333,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'clave' };
     case '/api/miniapp':
       return { method: 'POST', kind: 'miniapp' };
+    case '/api/voz':
+      return { method: 'POST', kind: 'voz' };
     default:
       break;
   }
@@ -361,7 +383,7 @@ async function respondApi(
 ): Promise<void> {
   let payload: unknown;
   try {
-    const body = route.method === 'POST' ? await readJsonBody(req) : {};
+    const body = route.method === 'POST' && route.kind !== 'voz' ? await readJsonBody(req) : {};
     switch (route.kind) {
       case 'goals':
         if (!deps.goals) throw new HttpError(503, 'Objetivos no disponibles');
@@ -467,6 +489,27 @@ async function respondApi(
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
         payload = panelReply(answer);
+        break;
+      }
+      case 'voz': {
+        if (!deps.transcribe || !deps.chat) throw new HttpError(503, 'La voz no está disponible');
+        const mime = String(req.headers['content-type'] ?? '')
+          .split(';')[0]
+          ?.trim()
+          .toLowerCase();
+        if (!mime?.startsWith('audio/')) throw new HttpError(415, 'Eso no es audio');
+        const audio = await readRawBody(req, MAX_VOICE_BYTES);
+        if (audio.length === 0) throw new HttpError(400, 'No ha llegado audio');
+        const oido = (await deps.transcribe(audio, mime)).trim();
+        if (!oido) {
+          payload = { oido: '', text: 'No te he entendido. Prueba otra vez, más cerca del micro.' };
+          break;
+        }
+        const answer = await deps.chat(oido);
+        if (!isRecord(answer) || typeof answer.text !== 'string') {
+          throw new Error('deps.chat devolvio una respuesta invalida');
+        }
+        payload = { oido, ...panelReply(answer) };
         break;
       }
       case 'miniapp': {
@@ -617,6 +660,11 @@ async function handleRequest(
       res.setHeader('Content-Security-Policy', PAGE_CSP);
       res.setHeader('Cache-Control', 'no-store');
       sendPage(req, res, renderPage(), 'text/html; charset=utf-8');
+      return;
+    case '/voz':
+      res.setHeader('Content-Security-Policy', PAGE_CSP);
+      res.setHeader('Cache-Control', 'no-store');
+      sendPage(req, res, renderVozPage(), 'text/html; charset=utf-8');
       return;
     case '/manifest.webmanifest':
       res.setHeader('Cache-Control', 'no-cache');

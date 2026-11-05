@@ -162,7 +162,7 @@ export interface TailscaleReply {
  * Sin Tailscale listo, `/panel` explica el paso que falta en vez de un botón roto.
  */
 export async function tailscaleCommand(
-  kind: 'estado' | 'panel',
+  kind: 'estado' | 'panel' | 'voz',
   deps: { env: NodeJS.ProcessEnv; run: TailscaleRun },
 ): Promise<TailscaleReply> {
   const port = panelPort(deps.env);
@@ -178,6 +178,12 @@ export async function tailscaleCommand(
   if (!url) {
     return {
       text: `Aún no puedo abrirte el panel en Telegram. ${report}`,
+    };
+  }
+  if (kind === 'voz') {
+    return {
+      text: '🎙️ Habla conmigo desde el móvil: pulsas, hablas y te contesto en voz alta. Con «Manos libres» la conversación sigue sola. Necesita Tailscale encendido en el móvil.',
+      buttons: [{ label: '🎙️ Hablar', action: `webapp:${url}voz` }],
     };
   }
   return {
