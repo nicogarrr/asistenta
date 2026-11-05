@@ -187,6 +187,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     why: 'copias de lo ya enviado por Telegram; se rehacen pidiéndolas otra vez',
     growth: 'no crece: creados.ts se queda con los 40 últimos y como mucho 50 MB',
   },
+  {
+    name: 'expertos',
+    what: 'apuntes por tema del dueño (una carpeta por tema; el índice, rehacible, va en docs/expertos.sqlite)',
+    backup: 'dir',
+  },
   { name: 'audit', what: 'registro de auditoría de llamadas a herramientas', backup: 'dir' },
   { name: 'factory', what: 'herramientas de la fábrica (TOOL.md editables)', backup: 'dir' },
   { name: 'evolve', what: 'historial de intentos de auto-mejora', backup: 'dir' },
