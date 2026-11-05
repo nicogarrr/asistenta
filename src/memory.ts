@@ -15,6 +15,7 @@ import { localDay, localTimeZone } from './datecontext.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
+import { foldAccents } from './text.js';
 
 /**
  * Long-term memory: one markdown file per scope, human-editable, capped.
@@ -619,12 +620,14 @@ export class MemoryStore {
    * went, since the fuzzy match is the user's problem to see.
    */
   forgetMatching(scope: string, needle: string): string[] {
-    const clean = needle.trim().toLowerCase();
+    // Sin tildes a los dos lados: «olvida que vivo en malaga», escrito deprisa en el móvil,
+    // no borraba «Vivo en Málaga» y la respuesta era que no había nada que olvidar.
+    const clean = foldAccents(needle.trim().toLowerCase());
     if (!clean) return [];
     return withFileLock(this.fileFor(scope), () => {
       const doc = this.#load(scope);
       const removed = doc.entries
-        .filter((e) => e.text.toLowerCase().includes(clean))
+        .filter((e) => foldAccents(e.text.toLowerCase()).includes(clean))
         .map((e) => e.id);
       if (removed.length === 0) return [];
       const gone = new Set(removed);
