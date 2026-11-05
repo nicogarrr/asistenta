@@ -278,11 +278,14 @@ export function llegadaIntent(
     // «al gimnasio» / «del trabajo» → «a el gimnasio» / «de el trabajo»: el sitio
     // guardado se llama «el gimnasio».
     .replace(/\b(llegue|llegar|vuelva|volver)\s+al\s+/giu, '$1 a el ')
-    .replace(/\b(salga|salir|vaya|irme|marche|marcharme)\s+del\s+/giu, '$1 de el ');
+    .replace(/\b(salga|salir|vaya|irme|marche|marcharme)\s+del\s+/giu, '$1 de el ')
+    // «… del gimnasio que me recuerdes la toalla»: el «que» no es parte del sitio.
+    .replace(/,?\s+que\s+(me\s+(?:recuerd|avis)[a-z]*)\b/giu, ' $1');
   if (t.length > 300) return null;
   const LLEGUE = String.raw`(?:cuando|en cuanto|nada m[aá]s)\s+(?:llegue|est[eé]|vuelva)\s+(?:a|en)\s+|al\s+(?:llegar|volver)\s+a\s+`;
   const SALGA = String.raw`(?:cuando|en cuanto|nada m[aá]s)\s+(?:salga|me vaya|me marche)\s+de\s+|al\s+(?:salir|irme|marcharme)\s+de\s+`;
-  const RECUERDA = String.raw`(?:recu[eé]rdame|av[ií]same(?:\s+de)?|dime)(?:\s+que)?`;
+  // «me recuerdas…», «que me recuerdes…»: también como se dice hablando (antes no se entendía).
+  const RECUERDA = String.raw`(?:recu[eé]rdame|av[ií]same(?:\s+de)?|dime|(?:que\s+)?me\s+(?:recuerd(?:as|es)|avis(?:as|es)(?:\s+de)?))(?:\s+que)?`;
   const placeRe = String.raw`(casa|[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñü.-]*(?:\s+(?:de\s+)?[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñü.-]*){0,2})`;
   for (const [cue, modo] of [
     [LLEGUE, undefined],

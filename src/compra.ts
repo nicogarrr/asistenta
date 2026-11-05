@@ -295,7 +295,7 @@ export function compraIntent(text: string | undefined): CompraIntent | null {
   )
     return { kind: 'text' };
   if (
-    /^(?:borra(?:me)?|quita(?:me)?|limpia|elimina|vacia|saca) (?:lo tachado|los tachados|las tachadas|lo comprado|lo ya comprado|lo que (?:ya )?he comprado)(?: de la lista(?: de (?:la )?compra)?)?$/.test(
+    /^(?:borra(?:me)?|quita(?:me)?|limpia|elimina|vacia|saca) (?:lo|los|las) (?:ya )?(?:tachad[oa]s?|marcad[oa]s?|comprad[oa]s?)(?: de (?:la |mi )?(?:lista(?: de (?:la )?compra)?|compra))?$|^(?:borra(?:me)?|quita(?:me)?|limpia|elimina|vacia|saca) lo que (?:ya )?(?:he comprado|esta tachado|esta marcado)(?: de (?:la |mi )?(?:lista(?: de (?:la )?compra)?|compra))?$/.test(
       f,
     )
   )
@@ -307,6 +307,15 @@ export function compraIntent(text: string | undefined): CompraIntent | null {
   );
   if (colon?.[1]) {
     const items = itemsFromText(colon[1]);
+    return items.length ? { kind: 'add', items } : null;
+  }
+  // «añade a la lista de la compra leche y pan»: la lista delante (antes no se entendía).
+  const listaDelante = new RegExp(
+    `^${ADD_VERB}\\s+(?:a|en)\\s+(?:la\\s+|mi\\s+)?(?:lista\\s+de\\s+(?:la\\s+)?compra|compra)\\s*:?\\s+(.+?)\\s*[.!]?$`,
+    'i',
+  ).exec(t);
+  if (listaDelante?.[1]) {
+    const items = itemsFromText(listaDelante[1]);
     return items.length ? { kind: 'add', items } : null;
   }
   const add = new RegExp(`^${ADD_VERB}\\s+(.+?)\\s+${LISTA}\\s*[.!]?$`, 'i').exec(t);
