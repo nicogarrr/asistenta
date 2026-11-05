@@ -7,6 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commandButton } from '../channels/telegram-shared.js';
 import { sliceSafe } from '../text.js';
@@ -21,9 +22,12 @@ import type { WeekReport } from './loop.js';
  * líneas añadidas y quitadas, un trozo del diff y la verificación) y tres botones:
  * «📄 Ver parche», «✅ Aplicar» y «🗑 Descartar». Nada se aplica sin ese toque del dueño.
  *
- * Aplicar es reversible: el parche entra como UN commit local en la copia instalada
- * («Auto-mejora: …»), solo si no hay cambios locales sin guardar y si el parche encaja con
- * el código de ahora. Se deshace con `git revert <commit>`.
+ * Aplicar es reversible. Si en el PC está `gh` con sesión iniciada, el parche va a una rama
+ * `auto-mejora/<id>` en GitHub y se abre una PR: la copia instalada no se toca y la
+ * actualización automática sigue trayendo main (cuando el dueño fusione la PR, llega sola).
+ * Sin `gh` (o si la subida falla) el parche entra como UN commit local en la copia instalada
+ * («Auto-mejora: …»). En ambos casos solo si no hay cambios locales sin guardar y si el
+ * parche encaja con el código de ahora. El commit local se deshace con `git revert <commit>`.
  */
 
 /** Id del candidato tal como va en el nombre del parche y en el botón. */
@@ -176,7 +180,7 @@ export function reviewCard(c: PromotedCandidate, patch: string, receipt = ''): s
   }
   lines.push(
     '',
-    'Nada se aplica sin tu toque. «✅ Aplicar» lo guarda como un commit en tu copia (se deshace con git revert).',
+    'Nada se aplica sin tu toque. «✅ Aplicar» abre una PR en GitHub si tienes gh con sesión en el PC; si no, lo guarda como un commit en tu copia (se deshace con git revert).',
   );
   return lines.join('\n');
 }
@@ -206,13 +210,125 @@ function oneLine(s: string, max = 200): string {
   return t.length > max ? `${sliceSafe(t, max - 1)}…` : t;
 }
 
+/** Rama de GitHub para la PR de un candidato. */
+export function prBranch(c: PromotedCandidate): string {
+  return `auto-mejora/${c.id}`;
+}
+
+function markPatch(c: PromotedCandidate, suffix: string): void {
+  try {
+    renameSync(c.patchFile, c.patchFile.replace(/\.patch$/, `.${suffix}.patch`));
+  } catch {
+    // Si no se pudo renombrar, un segundo toque lo rechaza `git apply --check`.
+  }
+}
+
+function prBody(c: PromotedCandidate): string {
+  const lines = [
+    `Propuesta por la auto-mejora de Asistenta (candidato ${c.id}), aprobada desde Telegram con «✅ Aplicar».`,
+  ];
+  if (c.hypothesis) lines.push('', `Idea: ${c.hypothesis}`);
+  let receipt = '';
+  try {
+    if (c.receiptFile && existsSync(c.receiptFile)) receipt = readFileSync(c.receiptFile, 'utf8');
+  } catch {
+    receipt = '';
+  }
+  const checks = receiptLines(receipt);
+  if (checks.length) lines.push('', 'Verificación:', ...checks);
+  return lines.join('\n');
+}
+
+type PrOutcome =
+  | { kind: 'skip' }
+  | { kind: 'pr'; text: string }
+  | { kind: 'pushed'; text: string }
+  | { kind: 'failed'; why: string };
+
 /**
- * Aplica el candidato como un commit en la copia instalada. Se niega (sin tocar nada) si
- * hay cambios locales sin guardar o si el parche ya no encaja con el código actual.
+ * Sube el candidato a una rama `auto-mejora/<id>` y abre una PR con `gh`, sin tocar la copia
+ * instalada (se hace en una copia de trabajo temporal de git). `skip` si no hay `gh` con
+ * sesión o la copia no está en una rama; `failed` si algo falla antes de subir la rama.
+ */
+async function openPullRequest(
+  c: PromotedCandidate,
+  title: string,
+  git: GitRunner,
+  gh: GitRunner,
+): Promise<PrOutcome> {
+  const auth = await gh(['auth', 'status']);
+  if (auth.code !== 0) return { kind: 'skip' };
+  const base = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim();
+  if (!base || base === 'HEAD' || !/^[A-Za-z0-9._/-]{1,120}$/.test(base)) return { kind: 'skip' };
+  const branch = prBranch(c);
+  const dir = join(tmpdir(), `asistenta-automejora-${c.id}-${Date.now()}`);
+  await git(['branch', '-D', branch]);
+  const add = await git(['worktree', 'add', '--quiet', '-b', branch, dir, 'HEAD']);
+  if (add.code !== 0) return { kind: 'failed', why: oneLine(add.out) };
+  try {
+    const apply = await git(['-C', dir, 'apply', '--index', c.patchFile]);
+    if (apply.code !== 0) return { kind: 'failed', why: oneLine(apply.out) };
+    const commit = await git(['-C', dir, 'commit', '--quiet', '--no-verify', '-m', title]);
+    if (commit.code !== 0) return { kind: 'failed', why: oneLine(commit.out) };
+    // Credenciales de GitHub las da `gh` (ya con sesión), sin depender de `gh auth setup-git`.
+    const push = await git([
+      '-C',
+      dir,
+      '-c',
+      'credential.https://github.com.helper=',
+      '-c',
+      'credential.https://github.com.helper=!gh auth git-credential',
+      'push',
+      '--quiet',
+      'origin',
+      `HEAD:refs/heads/${branch}`,
+    ]);
+    if (push.code !== 0) return { kind: 'failed', why: oneLine(push.out) };
+  } finally {
+    await git(['worktree', 'remove', '--force', dir]);
+    await git(['branch', '-D', branch]);
+  }
+  const pr = await gh([
+    'pr',
+    'create',
+    '--base',
+    base,
+    '--head',
+    branch,
+    '--title',
+    title,
+    '--body',
+    prBody(c),
+  ]);
+  const url = /https:\/\/\S+\/pull\/\d+/.exec(pr.out)?.[0];
+  if (pr.code === 0 && url)
+    return {
+      kind: 'pr',
+      text: [
+        `✅ Abierta la PR en GitHub: ${url}`,
+        `(«${title}», rama ${branch} sobre ${base}). Tu copia no se ha tocado.`,
+        'Cuando la fusiones, la actualización automática la trae sola. Si no te convence, ciérrala.',
+      ].join('\n'),
+    };
+  return {
+    kind: 'pushed',
+    text: [
+      `Subí el cambio a la rama ${branch} en GitHub, pero no pude abrir la PR (${oneLine(pr.out)}).`,
+      `Ábrela tú desde GitHub (rama ${branch} → ${base}). Tu copia no se ha tocado.`,
+    ].join('\n'),
+  };
+}
+
+/**
+ * Aplica el candidato. Con `gh` con sesión en el PC abre una PR (la copia instalada no se
+ * toca y la actualización automática sigue); si no, o si la subida falla, lo guarda como un
+ * commit en la copia instalada. Se niega (sin tocar nada) si hay cambios locales sin guardar
+ * o si el parche ya no encaja con el código actual.
  */
 export async function applyCandidate(
   c: PromotedCandidate,
   git: GitRunner,
+  gh?: GitRunner,
 ): Promise<{ ok: boolean; text: string }> {
   const status = await git(['status', '--porcelain', '--untracked-files=no']);
   if (status.code !== 0)
@@ -231,10 +347,20 @@ export async function applyCandidate(
       ok: false,
       text: `No lo he aplicado: el parche ya no encaja con el código actual (cambió desde que se probó). Lanza otro ciclo con /evolucion ahora.\nDetalle: ${oneLine(check.out)}`,
     };
+  const title = `Auto-mejora: ${oneLine(c.hypothesis ?? `candidato ${c.id}`, 70)}`;
+  let note = '';
+  if (gh) {
+    const pr = await openPullRequest(c, title, git, gh);
+    if (pr.kind === 'pr' || pr.kind === 'pushed') {
+      markPatch(c, 'pr');
+      return { ok: true, text: pr.text };
+    }
+    if (pr.kind === 'failed')
+      note = `No pude subirlo a GitHub (${pr.why}); lo dejo como commit en tu copia.`;
+  }
   const apply = await git(['apply', '--index', c.patchFile]);
   if (apply.code !== 0)
     return { ok: false, text: `No lo he aplicado: git apply falló (${oneLine(apply.out)}).` };
-  const title = `Auto-mejora: ${oneLine(c.hypothesis ?? `candidato ${c.id}`, 70)}`;
   const commit = await git(['commit', '--quiet', '--no-verify', '-m', title]);
   if (commit.code !== 0) {
     // Sin commit, el cambio quedaría a medias en el índice: se deja la copia como estaba.
@@ -245,14 +371,11 @@ export async function applyCandidate(
     };
   }
   const sha = (await git(['rev-parse', '--short', 'HEAD'])).out.trim();
-  try {
-    renameSync(c.patchFile, c.patchFile.replace(/\.patch$/, '.aplicado.patch'));
-  } catch {
-    // Si no se pudo renombrar, un segundo toque lo rechaza `git apply --check`.
-  }
+  markPatch(c, 'aplicado');
   return {
     ok: true,
     text: [
+      ...(note ? [note] : []),
       `✅ Aplicado como commit ${sha} («${title}»).`,
       'Se usa al reiniciar Asistenta (npm run build y reiniciar).',
       `Para deshacerlo: git revert ${sha}. La actualización automática espera hasta que subas este commit (git push) o lo deshagas.`,
@@ -280,12 +403,31 @@ export async function discardCandidate(
 
 /** git de verdad en la copia instalada (`cwd`), sin lanzar: código de salida y salida. */
 export function gitIn(cwd: string): GitRunner {
+  return runnerIn('git', cwd);
+}
+
+/**
+ * El CLI `gh` de GitHub en la copia instalada, sin lanzar. Si no está instalado o no tiene
+ * sesión, `gh auth status` sale con error y «Aplicar» usa el commit local de siempre.
+ */
+export function ghIn(cwd: string): GitRunner {
+  return runnerIn('gh', cwd);
+}
+
+function runnerIn(bin: string, cwd: string): GitRunner {
   return (args) =>
     new Promise((resolve) => {
       execFile(
-        'git',
+        bin,
         args,
-        { cwd, windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
+        {
+          cwd,
+          windowsHide: true,
+          timeout: 60_000,
+          maxBuffer: 8 * 1024 * 1024,
+          // Sin consola: nunca esperar a que alguien teclee usuario/contraseña.
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        },
         (err, stdout, stderr) => {
           const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
           resolve({ code, out: `${stdout ?? ''}${stderr ?? ''}` });
