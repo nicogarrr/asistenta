@@ -121,6 +121,112 @@ export function planImport(
   return plan;
 }
 
+/** Tamaño máximo de un archivo de memoria (un .txt o .json de ChatGPT/Grok no pasa de esto). */
+export const IMPORT_FILE_MAX_BYTES = 1_000_000;
+
+/** ¿Es un archivo que /memoria importar sabe leer (.txt, .md, .json)? */
+export function isImportFile(name?: string, mime?: string): boolean {
+  const n = (name ?? '').toLowerCase();
+  const m = (mime ?? '').toLowerCase();
+  return (
+    /\.(?:txt|text|md|markdown|json)$/.test(n) || m.startsWith('text/') || m === 'application/json'
+  );
+}
+
+/** Claves de un JSON de memoria con la lista de datos dentro. */
+const LIST_KEYS = [
+  'memories',
+  'memory',
+  'memorias',
+  'memoria',
+  'facts',
+  'datos',
+  'items',
+  'entries',
+];
+/** Claves de cada dato cuando es un objeto. */
+const TEXT_KEYS = ['content', 'text', 'memory', 'fact', 'value', 'dato', 'texto'];
+
+function jsonFacts(v: unknown, depth = 0): string[] | null {
+  if (depth > 3) return null;
+  if (Array.isArray(v)) {
+    const out: string[] = [];
+    for (const it of v) {
+      if (typeof it === 'string') out.push(it);
+      else if (it && typeof it === 'object') {
+        const rec = it as Record<string, unknown>;
+        const key = TEXT_KEYS.find((k) => typeof rec[k] === 'string');
+        if (key) out.push(rec[key] as string);
+      }
+    }
+    return out.length ? out : null;
+  }
+  if (v && typeof v === 'object') {
+    const rec = v as Record<string, unknown>;
+    for (const k of LIST_KEYS) {
+      if (k in rec) {
+        const got = jsonFacts(rec[k], depth + 1);
+        if (got) return got;
+      }
+    }
+    // {"Vivo en": "Gijón"}: pares sueltos de texto.
+    const pairs = Object.entries(rec).filter(([, x]) => typeof x === 'string');
+    if (pairs.length >= 2 && pairs.length === Object.keys(rec).length)
+      return pairs.map(([k, x]) => `${k}: ${x}`);
+  }
+  return null;
+}
+
+/**
+ * Un archivo adjunto con la memoria de otro asistente → el mismo texto que si se pegara (con
+ * la cabecera, para que `planImport` lo lea igual). Antes /memoria importar solo leía lo
+ * pegado: un .txt de ChatGPT o un export en .json mandado como archivo no se leía.
+ * - .txt/.md: tal cual (sin BOM).
+ * - .json: una lista de textos, o de objetos con `content`/`text`, o `{"memories": [...]}`.
+ * - El historial entero de conversaciones de ChatGPT (conversations.json) no es su memoria:
+ *   se dice cómo sacarla.
+ */
+export function importTextFromFile(
+  name: string | undefined,
+  mime: string | undefined,
+  bytes: Uint8Array,
+): { text: string } | { error: string } {
+  if (bytes.length > IMPORT_FILE_MAX_BYTES)
+    return { error: 'Ese archivo es demasiado grande para ser una memoria (más de 1 MB).' };
+  const raw = Buffer.from(bytes)
+    .toString('utf8')
+    .replace(/^\uFEFF/, '');
+  const isJson =
+    /\.json$/i.test(name ?? '') ||
+    (mime ?? '').toLowerCase() === 'application/json' ||
+    /^\s*[[{]/.test(raw);
+  if (!isJson) {
+    const text = raw.replace(/\r\n?/g, '\n').trim();
+    return text ? { text } : { error: 'El archivo está vacío.' };
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    // Un .txt que empieza por «[» o «{» sin ser JSON: se lee como texto.
+    if (!/\.json$/i.test(name ?? '')) return { text: raw.replace(/\r\n?/g, '\n').trim() };
+    return { error: 'No puedo leer ese JSON (está mal formado).' };
+  }
+  if (Array.isArray(data) && data.some((c) => c && typeof c === 'object' && 'mapping' in c))
+    return {
+      error:
+        'Eso es el historial entero de tus conversaciones de ChatGPT, no lo que recuerda de ti. Usa /memoria importar sin archivo: te doy un texto para pegarle y me reenvías su respuesta (o guárdala en un .txt y mándamela).',
+    };
+  const facts = jsonFacts(data);
+  if (!facts?.length)
+    return { error: 'No encuentro una lista de datos en ese JSON (busco textos o «memories»).' };
+  const lines = facts
+    .map((f) => f.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((f) => `- ${f}`);
+  return { text: [IMPORT_HEADER, ...lines].join('\n') };
+}
+
 /** La lista para revisar antes de guardar. */
 export function importPreview(plan: ImportPlan): string {
   const notes: string[] = [];

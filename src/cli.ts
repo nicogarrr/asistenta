@@ -261,12 +261,15 @@ import { canExtract, DocMemory } from './memory/docs.js';
 import { upcomingDates } from './memory/fechas.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import {
+  IMPORT_FILE_MAX_BYTES,
   IMPORT_PREFIX,
   IMPORT_PROMPT,
   ImportsPendientes,
   importAnswer,
   importDoneLine,
   importPreview,
+  importTextFromFile,
+  isImportFile,
   isImportPaste,
   planImport,
 } from './memory/importar.js';
@@ -6073,12 +6076,37 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     importsPendientes.set(chatKey(inbound), plan.nuevos);
     await say(inbound, importPreview(plan), { quote: true });
   };
+  /**
+   * Un .txt/.md/.json adjunto con la memoria de otro asistente. `quiet`: sin «/memoria
+   * importar» delante, solo si el archivo empieza por la cabecera (si no, sigue su camino).
+   */
+  const importFromDocument = async (inbound: Inbound, quiet: boolean): Promise<boolean> => {
+    const fileId = inbound.documentFileId;
+    if (!fileId || !isImportFile(inbound.documentName, inbound.documentMimeType)) return false;
+    const fail = async (why: string): Promise<boolean> => {
+      if (quiet) return false;
+      await say(inbound, why, { quote: true });
+      return true;
+    };
+    if ((inbound.documentSizeBytes ?? 0) > IMPORT_FILE_MAX_BYTES)
+      return fail('Ese archivo es demasiado grande para ser una memoria (más de 1 MB).');
+    const bytes = await telegram.downloadFile(fileId, IMPORT_FILE_MAX_BYTES).catch(() => null);
+    if (!bytes) return fail('Telegram no me ha dado el archivo; prueba a mandarlo otra vez.');
+    const got = importTextFromFile(inbound.documentName, inbound.documentMimeType, bytes);
+    if (quiet && !('text' in got && isImportPaste(got.text))) return false;
+    if ('error' in got) return fail(got.error);
+    await showImport(inbound, got.text);
+    return true;
+  };
   const answerImport = async (inbound: Inbound): Promise<boolean> => {
     const text = inbound.text;
     if (isImportPaste(text)) {
       await showImport(inbound, text);
       return true;
     }
+    // Un archivo sin texto con la memoria de ChatGPT/Grok («MEMORIA PARA ASISTENTA» arriba).
+    if (!text.trim() && inbound.documentFileId && (await importFromDocument(inbound, true)))
+      return true;
     const pending = importsPendientes.peek(chatKey(inbound));
     if (!pending) return false;
     const keep = importAnswer(text, pending.length);
@@ -6103,9 +6131,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await showImport(inbound, args);
       return;
     }
+    // «/memoria importar» como pie de un .txt o .json (export de ChatGPT/Grok).
+    if (inbound.documentFileId) {
+      if (await importFromDocument(inbound, false)) return;
+      await say(inbound, 'Ese archivo no lo sé leer como memoria: mándame un .txt o un .json.', {
+        quote: true,
+      });
+      return;
+    }
     await say(
       inbound,
-      'Para traer lo que ChatGPT o Grok saben de ti: copia el mensaje de abajo, pégalo en ese asistente y reenvíame (o pégame) su respuesta tal cual. Antes de apuntar nada te enseño la lista.',
+      'Para traer lo que ChatGPT o Grok saben de ti: copia el mensaje de abajo, pégalo en ese asistente y reenvíame (o pégame) su respuesta tal cual, o mándamela en un .txt. Antes de apuntar nada te enseño la lista.',
       { quote: true },
     );
     await say(inbound, IMPORT_PROMPT);
