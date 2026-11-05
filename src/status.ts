@@ -61,6 +61,8 @@ export interface StatusInfo {
   droppedReminders?: string[];
   /** Solo en el chat privado del dueño: proyecto y modelo de esta conversación. */
   conversation?: string[];
+  /** Cuánto tarda en contestar (daemon/latency.ts). */
+  latency?: string;
 }
 
 /**
@@ -104,6 +106,7 @@ export function formatStatus(s: StatusInfo): string {
     );
     for (const e of s.log.recentErrors) lines.push(`- ${e}`);
   }
+  if (s.latency) lines.push(s.latency);
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);
   for (const d of s.droppedReminders ?? []) lines.push(`No pude avisarte de: ${d}`);
   if (s.conversation?.length) {
