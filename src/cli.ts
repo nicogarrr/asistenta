@@ -177,6 +177,7 @@ import { ProgressMilestones } from './daemon/progress-milestone.js';
 import { createPurchaseApprovals } from './daemon/purchase-approvals.js';
 import { durableMessageThread, openReplyThreadStore } from './daemon/reply-threads.js';
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
+import { RoutineResendQueue } from './daemon/routine-resend-queue.js';
 import { createRoutineTask } from './daemon/routine-task.js';
 import { createSpecialistAsk, denySpecialistAsksForChat } from './daemon/specialist-ask.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
@@ -3288,7 +3289,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     droppedRemindersPath: join(paths.state, 'dropped-reminders.jsonl'),
     // Sin red o con el modelo caído, la rutina se reintenta y llega con retraso.
     outageDelaysMs: envSwitchOn('PA_AUTO_RETRY') ? undefined : [],
+    // Informes que Telegram no aceptó: en disco, para reenviarlos tras un reinicio.
+    resendQueue: new RoutineResendQueue(join(paths.state, 'rutinas-reenvio.json')),
   });
+  runRoutineFire.resumePending();
 
   // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
   // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 (o no/false/off) lo desactiva.

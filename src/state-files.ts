@@ -81,6 +81,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   },
   { name: 'modelos.json', what: 'modelo elegido con /modelo en cada conversación', backup: 'file' },
   { name: 'routine-delivery.json', what: 'a dónde va la salida de cada rutina', backup: 'file' },
+  {
+    name: 'rutinas-reenvio.json',
+    what: 'informes de rutinas que Telegram no aceptó, pendientes de reenvío (sobreviven a un reinicio)',
+    backup: 'file',
+  },
   { name: 'trafico-avisos.json', what: 'lo ya avisado por cada aviso del tráfico', backup: 'file' },
   { name: 'command-routines.json', what: 'rutinas de comando aprobadas', backup: 'file' },
   {
