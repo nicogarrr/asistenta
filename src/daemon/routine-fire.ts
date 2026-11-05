@@ -22,6 +22,7 @@ import {
   settleOneShot,
 } from '../tools/reminder.js';
 import { AUTO_RETRY_DELAYS_MS, retryDelayText } from './auto-retry.js';
+import { type PendingResend, RESEND_MAX_AGE_MS } from './routine-resend-queue.js';
 
 /**
  * La tarea de una rutina no pudo hablar con el modelo (sin red o servicio caído).
@@ -86,7 +87,25 @@ export interface RoutineFireDeps {
   outageDelaysMs?: readonly number[];
   /** Programa un reintento (por defecto setTimeout sin retener el proceso). Para pruebas. */
   later?: (fn: () => void, ms: number) => { cancel: () => void };
+  /**
+   * Cola en disco de informes que Telegram no aceptó (RoutineResendQueue): sobrevive
+   * a un reinicio y `resumePending()` los reenvía al arrancar. Ausente = solo memoria.
+   */
+  resendQueue?: {
+    all: () => PendingResend[];
+    put: (entry: PendingResend) => void;
+    remove: (scope: string, routine: string) => void;
+  };
 }
+
+/** Lo que devuelve createRoutineFire: el disparo, más el reenvío de lo pendiente al arrancar. */
+export type RoutineFire = ((prompt: string, ctx: RoutineRunContext) => Promise<void>) & {
+  /** Reprograma los informes pendientes que dejó el arranque anterior; devuelve cuántos. */
+  resumePending: () => number;
+};
+
+/** Espera mínima tras arrancar antes de reenviar lo pendiente. */
+export const RESUME_MIN_WAIT_MS = 30_000;
 
 const defaultLater = (fn: () => void, ms: number): { cancel: () => void } => {
   const t = setTimeout(fn, ms);
@@ -99,14 +118,63 @@ const defaultLater = (fn: () => void, ms: number): { cancel: () => void } => {
  * disparador por evento): tick de objetivo, recordatorio o rutina que trabaja.
  * Extraído de serveCommand (src/cli.ts) sin cambiar el comportamiento.
  */
-export function createRoutineFire(
-  deps: RoutineFireDeps,
-): (prompt: string, ctx: RoutineRunContext) => Promise<void> {
+export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
   const { store } = deps;
   const delays = deps.outageDelaysMs ?? AUTO_RETRY_DELAYS_MS;
   const later = deps.later ?? defaultLater;
   /** Reintento pendiente por rutina: un disparo nuevo a su hora lo sustituye. */
   const pendingRetry = new Map<string, { cancel: () => void }>();
+  // La salida ya está hecha pero Telegram no la aceptó (sin red un rato, tras sus
+  // reintentos de 90 s): antes se perdía (el informe de las 8:00 no llegaba). Se
+  // reenvía la misma salida más tarde, sin volver a trabajar; un disparo nuevo a su
+  // hora la sustituye. Con cola en disco, también sobrevive a un reinicio.
+  const scheduleResend = (entry: PendingResend, waitMs?: number): void => {
+    const key = `${entry.scope}\u0000${entry.routine}`;
+    const delay = delays[entry.attempt];
+    if (delay === undefined) {
+      log.warn('routine output dropped after failed resends', { routine: entry.routine });
+      deps.resendQueue?.remove(entry.scope, entry.routine);
+      return;
+    }
+    deps.resendQueue?.put(entry);
+    const wait = waitMs ?? delay;
+    const handle = later(() => {
+      pendingRetry.delete(key);
+      const lateText = `⏰ ${entry.routine}${sendLateNote(Date.now() - entry.firstAt)}\n\n${entry.body}`;
+      void deps
+        .send(entry.chatId, lateText)
+        .then(() => {
+          deps.resendQueue?.remove(entry.scope, entry.routine);
+          deps.delivery.commit(entry.scope, entry.routine, entry.hash);
+          log.info('routine output resent', { routine: entry.routine, attempt: entry.attempt + 1 });
+        })
+        .catch((err: unknown) => {
+          log.warn('routine resend failed', { routine: entry.routine, err });
+          const next = entry.attempt + 1;
+          scheduleResend({ ...entry, attempt: next, dueAt: Date.now() + (delays[next] ?? 0) });
+        });
+    }, wait);
+    pendingRetry.set(key, handle);
+  };
+  /** Al arrancar: lo que quedó pendiente de reenviar antes del reinicio. */
+  const resumePending = (): number => {
+    const queue = deps.resendQueue;
+    if (!queue) return 0;
+    let n = 0;
+    for (const entry of queue.all()) {
+      if (Date.now() - entry.firstAt > RESEND_MAX_AGE_MS) {
+        log.warn('stale routine output dropped at startup', { routine: entry.routine });
+        queue.remove(entry.scope, entry.routine);
+        continue;
+      }
+      if (pendingRetry.has(`${entry.scope}\u0000${entry.routine}`)) continue;
+      // Lo que ya tocaba sale a los 30 s del arranque (Telegram listo), no antes.
+      scheduleResend(entry, Math.max(RESUME_MIN_WAIT_MS, entry.dueAt - Date.now()));
+      n++;
+    }
+    if (n) log.info('routine outputs pending resend after restart', { count: n });
+    return n;
+  };
   const fire = async (
     _prompt: string,
     ctx: RoutineRunContext,
@@ -117,6 +185,10 @@ export function createRoutineFire(
     if (attempt === 0) {
       pendingRetry.get(retryKey)?.cancel();
       pendingRetry.delete(retryKey);
+      // Un disparo nuevo a su hora sustituye al informe viejo pendiente de reenvío.
+      if (!isGoalRoutine(ctx.routine) && !isReminder(ctx.routine)) {
+        deps.resendQueue?.remove(ctx.scope, ctx.routine.name);
+      }
     }
     // A goal tick EXECUTES; it never delivers its prompt as a message.
     if (isGoalRoutine(ctx.routine)) {
@@ -240,30 +312,16 @@ export function createRoutineFire(
     // reenvía la misma salida más tarde, sin volver a trabajar; un disparo nuevo a su
     // hora la sustituye.
     if (!sent && !reminder && plan) {
-      const done = plan;
-      const resend = (n: number): void => {
-        const delay = delays[n];
-        if (delay === undefined) {
-          log.warn('routine output dropped after failed resends', { routine: ctx.routine.name });
-          return;
-        }
-        const handle = later(() => {
-          pendingRetry.delete(retryKey);
-          const lateText = `⏰ ${ctx.routine.name}${sendLateNote(Date.now() - firstAt)}\n\n${body}`;
-          void deps
-            .send(chatId, lateText)
-            .then(() => {
-              deps.delivery.commit(ctx.scope, ctx.routine.name, done.hash);
-              log.info('routine output resent', { routine: ctx.routine.name, attempt: n + 1 });
-            })
-            .catch((err: unknown) => {
-              log.warn('routine resend failed', { routine: ctx.routine.name, err });
-              resend(n + 1);
-            });
-        }, delay);
-        pendingRetry.set(retryKey, handle);
-      };
-      resend(0);
+      scheduleResend({
+        scope: ctx.scope,
+        routine: ctx.routine.name,
+        chatId,
+        body,
+        hash: plan.hash,
+        firstAt,
+        attempt: 0,
+        dueAt: Date.now() + (delays[0] ?? 0),
+      });
     }
     // A one-time reminder is a cron pinned to a date: it would fire again next year.
     // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
@@ -292,7 +350,9 @@ export function createRoutineFire(
       deps.sync();
     }
   };
-  return (prompt: string, ctx: RoutineRunContext) => fire(prompt, ctx);
+  return Object.assign((prompt: string, ctx: RoutineRunContext) => fire(prompt, ctx), {
+    resumePending,
+  });
 }
 
 /** « (con 7 min de retraso: a su hora no había conexión con el modelo)». */
