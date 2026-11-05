@@ -248,6 +248,16 @@ import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
 import { upcomingDates } from './memory/fechas.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
+import {
+  IMPORT_PREFIX,
+  IMPORT_PROMPT,
+  ImportsPendientes,
+  importAnswer,
+  importDoneLine,
+  importPreview,
+  isImportPaste,
+  planImport,
+} from './memory/importar.js';
 import { InstinctStore } from './memory/instincts.js';
 import {
   correctionHint,
@@ -5754,8 +5764,60 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Lo que el dueño cuenta de sí mismo: se apunta al momento en su perfil, «¿qué sabes
   // de mí?» lo enseña y «olvida eso» / «olvida lo de …» lo borra. Solo su chat privado.
   const recentFacts = new RecentFacts();
+  // Lo que ChatGPT o Grok saben de Nico (memory/importar.ts): pegado aquí, primero se enseña
+  // la lista y solo con su «sí» (o «sí menos 3») se apunta en el perfil.
+  const importsPendientes = new ImportsPendientes();
+  const showImport = async (inbound: Inbound, text: string): Promise<void> => {
+    const profile = snapshot.load();
+    const plan = planImport(
+      text,
+      profile.split(ENTRY_SEPARATOR),
+      Math.max(0, snapshot.maxChars - profile.length),
+    );
+    importsPendientes.set(chatKey(inbound), plan.nuevos);
+    await say(inbound, importPreview(plan), { quote: true });
+  };
+  const answerImport = async (inbound: Inbound): Promise<boolean> => {
+    const text = inbound.text;
+    if (isImportPaste(text)) {
+      await showImport(inbound, text);
+      return true;
+    }
+    const pending = importsPendientes.peek(chatKey(inbound));
+    if (!pending) return false;
+    const keep = importAnswer(text, pending.length);
+    if (keep === null) return false;
+    importsPendientes.clear(chatKey(inbound));
+    let saved = 0;
+    for (const i of keep) {
+      const fact = pending[i];
+      if (fact && snapshot.appendEntry(`${IMPORT_PREFIX} ${fact}`).ok) saved++;
+    }
+    await say(inbound, importDoneLine(saved), { quote: true });
+    return true;
+  };
+  const cmdImportar = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    if (args.trim()) {
+      await showImport(inbound, args);
+      return;
+    }
+    await say(
+      inbound,
+      'Para traer lo que ChatGPT o Grok saben de ti: copia el mensaje de abajo, pégalo en ese asistente y reenvíame (o pégame) su respuesta tal cual. Antes de apuntar nada te enseño la lista.',
+      { quote: true },
+    );
+    await say(inbound, IMPORT_PROMPT);
+  };
+
   const answerOwnerFacts = async (inbound: Inbound): Promise<boolean> => {
     const text = inbound.text;
+    if (await answerImport(inbound)) return true;
     if (isAboutMeRequest(text)) {
       const entries = snapshot.load().split(ENTRY_SEPARATOR);
       await say(inbound, aboutMeText(entries.filter((e) => e.trim())), { quote: true });
@@ -6469,6 +6531,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           : 'No hay nada guardado que coincida con eso.',
         { quote: true },
       );
+      return;
+    }
+    if (sub === 'importar' || sub === 'import') {
+      await cmdImportar(inbound, restText);
       return;
     }
     if (sub === 'revisar' || sub === 'contradicciones' || sub === 'review') {
