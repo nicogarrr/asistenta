@@ -25,6 +25,7 @@ const BEFORE = {
     'preguntar',
     'memory',
     'reminder',
+    'latido',
     'tareas',
     'agenda',
     'cuentas',
