@@ -1747,6 +1747,11 @@ export class Gate {
       // Tablero de tareas: un JSON local del dueño; ver es lectura, lo demás escribe local.
       case 'tareas':
         return argString(c.args, 'action') === 'ver' ? 'lee' : 'escribe-local';
+      // Páginas vivas del panel: base local del dueño, nada sale fuera.
+      case 'pagina_viva': {
+        const a = argString(c.args, 'accion');
+        return a === 'ver' || a === 'lista' ? 'lee' : 'escribe-local';
+      }
       case 'fetch': {
         const method = argString(c.args, 'method').toUpperCase();
         // GET/HEAD are reads. Anything else transmits to a third party whose
@@ -2897,6 +2902,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'cargar_herramienta',
   'tiempo',
   'divisas',
+  'pagina_viva',
   'aire',
   'trafico',
   'luz',

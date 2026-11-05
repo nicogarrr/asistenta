@@ -254,6 +254,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'compras',
     text: 'te paso dinero de una moneda a otra con el cambio oficial del BCE',
   },
+  pagina_viva: {
+    area: 'sistema',
+    text: 'te hago páginas en el panel (gastos, seguimientos) que una rutina puede rehacer',
+  },
   trafico: { area: 'agenda', text: 'te digo si hay obras, cortes o accidentes en la carretera' },
   luz: { area: 'agenda', text: 'te digo las horas más baratas de la luz, hoy y mañana' },
   cuentas: {
