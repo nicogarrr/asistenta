@@ -16,6 +16,7 @@
 
 import { type BriefingInput, briefingDue, buildBriefing, watchHit } from './briefing.js';
 import { localDay, wallClock, zonedTime } from './datecontext.js';
+import { skipsHolidays } from './festivos-rutinas.js';
 import { looksLikePhishing, phishingSignals } from './mail/triage.js';
 import type { MailMessage } from './mail/types.js';
 import { isReminder, reminderText } from './tools/reminder.js';
@@ -496,7 +497,9 @@ function sameLocalDay(a: Date, b: Date): boolean {
 
 /**
  * Rutinas y recordatorios que van a dispararse HOY (de ahora a medianoche), según el
- * runner en vivo. Las desactivadas y las que no tienen próxima ejecución no salen.
+ * runner en vivo. Las desactivadas y las que no tienen próxima ejecución no salen; un
+ * festivo (`holidayToday`), tampoco las «excepto festivos», que ese día no suenan (antes
+ * el resumen anunciaba «08:00 fichar» el 8 de diciembre y luego no sonaba).
  */
 export function scheduledForToday(
   routines: ReadonlyArray<{
@@ -507,6 +510,7 @@ export function scheduledForToday(
   }>,
   now: Date,
   timeZone?: string,
+  holidayToday = false,
 ): { routines: BriefingInput['routines']; reminders: BriefingInput['reminders'] } {
   const out = {
     routines: [] as BriefingInput['routines'],
@@ -514,6 +518,7 @@ export function scheduledForToday(
   };
   const today = routines
     .filter((r) => r.enabled && r.next)
+    .filter((r) => !(holidayToday && skipsHolidays(`${r.name} ${r.prompt ?? ''}`)))
     .map((r) => ({ r, at: Date.parse(r.next ?? '') }))
     .filter(
       ({ at }) => Number.isFinite(at) && at >= now.getTime() && sameLocalDay(new Date(at), now),

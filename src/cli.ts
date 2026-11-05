@@ -212,7 +212,7 @@ import {
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { repoRoot } from './evolve/worktree.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
-import { createProximoFestivo } from './festivos-rutinas.js';
+import { createHolidayCheck, createProximoFestivo } from './festivos-rutinas.js';
 import { PlaybookStore } from './gestor/playbooks.js';
 import { effectOverrideReason, GestorStore } from './gestor/store.js';
 import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
@@ -5318,10 +5318,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     weather: briefingWeather ? () => fetchWeatherLine(briefingWeather) : undefined,
     ...(() => {
-      const today = () => {
+      // «excepto festivos»: un festivo no suenan, así que el resumen no las anuncia.
+      const isHoliday = createHolidayCheck();
+      const today = async () => {
         const owner = briefingOwner();
         const key = owner ? ownerChatKey(owner) : undefined;
         if (!key) return { routines: [], reminders: [] };
+        const holiday = await isHoliday(localDay()).catch(() => false);
         const live = new Map(
           routineRunner.status().map((s) => [`${s.scope}\u0000${s.name}`, s.next]),
         );
@@ -5337,11 +5340,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             })),
           new Date(),
           localTimeZone(),
+          holiday,
         );
       };
       return {
-        routines: () => today().routines,
-        reminders: () => today().reminders,
+        routines: async () => (await today()).routines,
+        reminders: async () => (await today()).reminders,
       };
     })(),
     followups: () => followupsDue(ownerDmFollowups(followups, ownerDmFollowupKey()), new Date()),
