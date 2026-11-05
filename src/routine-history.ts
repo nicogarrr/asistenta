@@ -37,6 +37,12 @@ export interface RoutineRun {
 
 /** Ejecuciones que se guardan por rutina (las más recientes). */
 export const HISTORY_PER_ROUTINE = 10;
+/**
+ * Rutinas distintas con historial como mucho. Cada recordatorio de una vez es una rutina
+ * que se borra al sonar y su historial se quedaba para siempre: pasado el tope se olvidan
+ * las que llevan más tiempo sin ejecutarse.
+ */
+export const HISTORY_ROUTINES = 200;
 /** Caracteres de salida que se guardan por ejecución. */
 export const HISTORY_OUTPUT_CHARS = 300;
 
@@ -109,7 +115,17 @@ export class RoutineHistory {
     const data = this.#read();
     const k = keyOf(scope, name);
     const runs = [{ ...run, salida: clipOutput(run.salida) }, ...(data[k] ?? [])];
+    delete data[k];
     data[k] = runs.slice(0, HISTORY_PER_ROUTINE);
+    const keys = Object.keys(data);
+    if (keys.length > HISTORY_ROUTINES) {
+      const lastAt = (key: string): number => data[key]?.[0]?.at ?? 0;
+      const oldest = keys
+        .filter((key) => key !== k)
+        .sort((a, b) => lastAt(a) - lastAt(b))
+        .slice(0, keys.length - HISTORY_ROUTINES);
+      for (const key of oldest) delete data[key];
+    }
     this.#write(data);
   }
 
