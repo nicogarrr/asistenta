@@ -184,6 +184,19 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  */
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
 
+/**
+ * Consumo: tope de tokens por comprobación. En 3 s (4,5 s en ahorro) cabe como mucho una
+ * frase de ~15 palabras (~30 tokens); la palabra de activación va al principio. Con ruido o
+ * música whisper a veces entra en bucle («de la gente que… de la gente que…») y decodifica
+ * hasta 448 tokens: medido con whisper-base, una pasada así costó 6–17 s de CPU frente a
+ * ~1,4 s de una normal (con small, ~60 ms por token: hasta ~27 s). 64 tokens deja el doble de
+ * margen a una frase real y acota la peor pasada a unas pocas veces la normal.
+ */
+export const WAKE_MAX_NEW_TOKENS = 64;
+
+/** Lo que lanza transformers.js cuando whisper no genera ningún token (medido con small y base). */
+const EMPTY_DECODE = /token_ids must be a non-empty array/;
+
 /** How long `stop()` waits for the capture to exit before warning about a leak. */
 const CAPTURE_STOP_TIMEOUT_MS = 3_000;
 
@@ -474,6 +487,7 @@ type WakeAsrPipeline = (
     chunk_length_s: number;
     stride_length_s: number;
     initial_prompt?: string;
+    max_new_tokens?: number;
   },
 ) => Promise<{ text: string }>;
 
@@ -502,17 +516,27 @@ export async function defaultTranscriber(
 ): Promise<string> {
   return usingWhisper(DEFAULT_MODEL, async () => {
     const pipe = await loadWakePipeline(DEFAULT_MODEL);
-    const output = await withTimeout(
-      pipe(samples, {
-        language: 'spanish',
-        task: 'transcribe',
-        chunk_length_s: 30,
-        stride_length_s: 5,
-        ...(initialPrompt ? { initial_prompt: initialPrompt } : {}),
-      }),
-      TRANSCRIBE_TIMEOUT_MS,
-      `whisper did not finish a wake check within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
-    );
+    let output: { text: string };
+    try {
+      output = await withTimeout(
+        pipe(samples, {
+          language: 'spanish',
+          task: 'transcribe',
+          chunk_length_s: 30,
+          stride_length_s: 5,
+          max_new_tokens: WAKE_MAX_NEW_TOKENS,
+          ...(initialPrompt ? { initial_prompt: initialPrompt } : {}),
+        }),
+        TRANSCRIBE_TIMEOUT_MS,
+        `whisper did not finish a wake check within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
+      );
+    } catch (err) {
+      // Whisper sin ningún token (ruido o música sin voz): transformers.js lanza en vez de
+      // devolver texto vacío. No es un fallo del oyente sino «no se oyó nada»; contado como
+      // fallo, tres ventanas así seguidas apagaban la palabra de activación hasta reiniciar.
+      if (err instanceof Error && EMPTY_DECODE.test(err.message)) return '';
+      throw err;
+    }
     return output.text;
   });
 }
