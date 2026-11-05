@@ -50,8 +50,34 @@ function Invoke-Pa([string[]] $Orden) {
     [pscustomobject]@{ Code = $p.ExitCode; Text = ($out.Result + $err.Result).Trim() }
 }
 
+# Atajo sin lanzar node (consumo): el daemon escribe agent.heartbeat («<ms>») y
+# telegram.estado («1 <ms>») cada 15 s. Si los dos tienen menos de 45 s y el proceso de
+# agent.pid vive, es verde seguro (pa status pide menos: 2 min). Cualquier otra cosa, o
+# cualquier duda, devuelve $null y se pregunta a pa status como siempre. Antes era un
+# node completo cada minuto, 24 h al día, también con todo bien.
+$frescoMs = 45000
+function Read-VerdeSinNode {
+    try {
+        $ahora = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $latido = ([IO.File]::ReadAllText((Join-Path $stateDir 'agent.heartbeat'))).Trim()
+        if ($latido -notmatch '^[1-9][0-9]{0,15}$') { return $null }
+        $edad = $ahora - [int64]$latido
+        if ($edad -lt 0 -or $edad -ge $frescoMs) { return $null }
+        $tg = ([IO.File]::ReadAllText((Join-Path $stateDir 'telegram.estado'))).Trim()
+        if ($tg -notmatch '^1 ([1-9][0-9]{0,15})$') { return $null }
+        $edad = $ahora - [int64]$Matches[1]
+        if ($edad -lt 0 -or $edad -ge $frescoMs) { return $null }
+        $idTexto = ([IO.File]::ReadAllText((Join-Path $stateDir 'agent.pid'))).Trim()
+        if ($idTexto -notmatch '^[1-9][0-9]{0,9}$') { return $null }
+        if (-not (Get-Process -Id ([int]$idTexto) -ErrorAction SilentlyContinue)) { return $null }
+        return 'verde'
+    } catch { return $null }
+}
+
 # Verde: en marcha y conectada a Telegram; ámbar: en marcha pero sin Telegram; rojo: parada.
 function Get-Estado {
+    $atajo = Read-VerdeSinNode
+    if ($atajo) { return $atajo }
     $r = Invoke-Pa $Ordenes.Estado
     try { $s = $r.Text | ConvertFrom-Json } catch { return 'rojo' }
     if (-not ($s.processState -eq 'alive' -and $s.heartbeatState -eq 'fresh')) { return 'rojo' }
