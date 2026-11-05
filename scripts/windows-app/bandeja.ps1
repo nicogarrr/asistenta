@@ -221,17 +221,27 @@ $salir.add_Click({
 $icono.ContextMenuStrip = $menu
 $icono.add_DoubleClick({ $estado.PerformClick() })
 
-# Gancho para el dictado (dictado-1): mientras exista este archivo, el punto se pone
-# naranja («grabando»). Solo se mira si existe; no se lee nada de dentro.
+# Dictado: mientras exista `dictado.grabando`, el punto se pone naranja («grabando»).
+# Solo se mira si existe; no se lee nada de dentro. Consumo: el temporizador de 1 s solo
+# corre mientras el dictado está encendido (`dictado.activo`, lo pone el daemon con
+# PA_DICTADO=1); sin dictado la bandeja no se despierta cada segundo para nada.
 $grabando = Join-Path $stateDir 'dictado.grabando'
+$dictadoActivo = Join-Path $stateDir 'dictado.activo'
 $rapido = New-Object System.Windows.Forms.Timer
 $rapido.Interval = 1000
 $rapido.add_Tick({ if (Test-Path -LiteralPath $grabando) { $icono.Icon = $naranja } elseif ($icono.Icon -eq $naranja) { Update-Estado } })
-$rapido.Start()
+function Update-Dictado {
+    if (Test-Path -LiteralPath $dictadoActivo) { if (-not $rapido.Enabled) { $rapido.Start() } }
+    elseif ($rapido.Enabled) {
+        $rapido.Stop()
+        if ($icono.Icon -eq $naranja) { Update-Estado }
+    }
+}
+Update-Dictado
 
 $lento = New-Object System.Windows.Forms.Timer
 $lento.Interval = 60000
-$lento.add_Tick({ Update-Estado })
+$lento.add_Tick({ Update-Estado; Update-Dictado })
 $lento.Start()
 
 # Primer arranque sin configurar (aún no hay .env): encenderla solo daría un punto rojo.
