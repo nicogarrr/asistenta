@@ -49,6 +49,13 @@ const STATED: readonly RegExp[] = [
   /^(?:me llamo|vivo en|trabajo en|trabajo de|soy de|nací el|naci el|mi cumple(?:años)? es)\s+\S/i,
   /^soy\s+(?:alérgic|alergic|vegetarian|vegan|celíac|celiac|intolerante|diabétic|diabetic)/i,
   /^tengo\s+(?:un|una|dos|tres)\s+(?:perr|gat|hij|herman)/i,
+  // «no como carne», «no bebo alcohol», «no fumo»: lo que no toma.
+  /^no\s+(?:como|bebo|tomo|fumo|pruebo)(?:\s+\S|$)/i,
+  // estado civil y situación: «estoy casado con Ana», «estoy jubilada».
+  /^estoy\s+(?:casad[oa]|divorciad[oa]|separad[oa]|prometid[oa]|solter[oa]|viud[oa]|jubilad[oa]|embarazada)(?:\s+\S|$)/i,
+  // equipo y deporte: «soy del Atleti», «juego al pádel», «practico yoga».
+  /^soy\s+del\s+\S/i,
+  /^(?:juego\s+(?:al|a la|a)|practico)\s+\S/i,
   // preferencias sobre cómo tratarle
   /^(?:no me (?:escribas|mandes|envíes|envies|llames|hables|avises|despiertes|molestes)|prefiero|me gusta|no me gusta|me encanta|odio)\s+\S/i,
 ];
@@ -66,7 +73,7 @@ export function statedFact(text: string): string | null {
     .replace(SAVE_TRAILER, '')
     .replace(TRAILER, '')
     .replace(/[.!]+$/, '');
-  if (one.length < 8 || one.length > 140) return null;
+  if (one.length < 7 || one.length > 140) return null;
   // «antes de las 9 de la mañana» es una hora, no «mañana»: no la hace pasajera.
   const timeless = one.replace(/(\d(?:\s+y\s+(?:media|cuarto))?)\s+de la ma(?:ñ|n)ana\b/gi, '$1');
   if (/[?¿]/.test(one) || /^si\s/i.test(one) || TEMPORARY.test(timeless)) return null;
@@ -186,8 +193,11 @@ export function factKey(fact: string): string | null {
       .replace(/n$/, '');
     return `mi ${mine[2]}|${verb}`;
   }
-  const self = /^(me llamo|vivo en|trabajo (?:en|de)|soy de|naci el)\s/.exec(t)?.[1];
+  const self = /^(me llamo|vivo en|trabajo (?:en|de)|soy del|soy de|naci el)\s/.exec(t)?.[1];
   if (self) return self.startsWith('trabajo') ? 'trabajo' : self;
+  // «estoy divorciado» deja viejo «estoy casado con Ana».
+  if (/^estoy (?:casad|divorciad|separad|prometid|solter|viud)[oa]\b/.test(t))
+    return 'estado civil';
   return null;
 }
 
