@@ -47,6 +47,19 @@ export interface ProviderHandle {
    * false = no queda ninguna libre. Ausente = una sola clave.
    */
   rotateKey?: () => boolean;
+  /**
+   * PA_UTILITY_MODEL con las cabeceras por sesión: para resúmenes y extracción de
+   * hechos. Ausente = se usa el principal.
+   */
+  utilityFor?: (sessionId?: string) => Model<string>;
+}
+
+/** PA_UTILITY_MODEL si hay que registrarlo (no es el principal ni el respaldo). */
+export function utilityModelIds(
+  config: Pick<Config, 'model' | 'fallbackModel' | 'utilityModel'>,
+): string[] {
+  const id = config.utilityModel?.trim() ?? '';
+  return id === '' || id === config.model || id === config.fallbackModel ? [] : [id];
 }
 
 /**
@@ -231,6 +244,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
         ...new Set([
           ...fallbackChainIds(config).filter((id) => id !== config.fallbackModel),
           ...extraModelIds(config),
+          ...utilityModelIds(config),
         ]),
       ].map((id) => extraModelDef(config, id)),
     ],
@@ -299,6 +313,14 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
           return moved;
         }
       : undefined;
+  const utilityId = config.utilityModel?.trim() ?? '';
+  const utility =
+    utilityId && utilityId !== config.model
+      ? models.getModel(config.provider, utilityId)
+      : undefined;
+  const utilityFor = utility
+    ? (sessionId?: string): Model<string> => withGoHeaders(utility, sessionId)
+    : undefined;
   return {
     models,
     model,
@@ -308,6 +330,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
     modelById,
     fallbackChainFor,
     rotateKey,
+    utilityFor,
   };
 }
 

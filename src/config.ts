@@ -29,6 +29,12 @@ export interface Config {
    * Con cuota agotada (o caído) se pasa al siguiente; sin repetir ni el principal.
    */
   fallbackModels?: string[];
+  /**
+   * PA_UTILITY_MODEL: modelo barato (p. ej. un -free) para el trabajo de fondo que no
+   * es conversación: resúmenes al compactar y extracción de hechos. Si falla, se usa
+   * el principal. Vacío = todo con el principal, como antes.
+   */
+  utilityModel?: string;
   baseUrl: string;
   variant?: string | undefined;
   /** Wall-clock ceiling for a single tool call. */
@@ -252,6 +258,7 @@ export function loadConfig(): Config {
       str('PA_MODEL') ?? presetDefaults.model,
     ),
     extraModels: parseModelList(process.env.PA_MODELS),
+    utilityModel: str('PA_UTILITY_MODEL'),
     fallbackModels: parseModelList(process.env.PA_FALLBACK_MODELS).length
       ? parseModelList(process.env.PA_FALLBACK_MODELS)
       : undefined,
