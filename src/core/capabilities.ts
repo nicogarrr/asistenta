@@ -152,6 +152,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'previsión del tiempo (Open-Meteo, sin clave): solo lectura por red; la Gate decide.',
   },
   {
+    name: 'divisas',
+    note: 'cambio de moneda con los tipos del BCE (Frankfurter, sin clave): solo lectura por red; la Gate decide.',
+  },
+  {
     name: 'trafico',
     note: 'incidencias de tráfico de la DGT (feed DATEX II, sin clave): lectura por red; el aviso es una rutina local.',
   },
