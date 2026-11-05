@@ -244,6 +244,18 @@ export interface ChannelHandlers {
     data: string;
   }): Promise<{ text: string; buttons: Array<{ label: string; action: string }> }>;
   /**
+   * Una posición del dueño: ubicación compartida o actualización de una ubicación en
+   * directo (Telegram la manda como mensaje editado). Para los avisos al llegar
+   * (src/llegada.ts). No es un mensaje: no abre turno.
+   */
+  onLocationUpdate?(update: {
+    channel: string;
+    chatId: string;
+    userId: string;
+    latitude: number;
+    longitude: number;
+  }): void | Promise<void>;
+  /**
    * Botón de la lista de la compra (callback `compra:…`, ver src/compra.ts): tacha o
    * destacha y devuelve la lista nueva; el adaptador edita el mismo mensaje. Nunca
    * resuelve ni consume una aprobación.

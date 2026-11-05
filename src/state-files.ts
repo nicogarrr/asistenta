@@ -145,6 +145,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'avisos-llegada.json',
+    what: 'avisos «cuando llegue a casa…» pendientes (se borran al saltar)',
+    backup: 'file',
+  },
+  {
     name: 'lista-compra.json',
     what: 'lista de la compra por chat (/compra, botones para tachar)',
     backup: 'file',
