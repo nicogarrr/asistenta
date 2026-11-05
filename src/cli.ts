@@ -661,6 +661,7 @@ import { createGasolinerasTool } from './tools/gasolineras.js';
 import { createGastosTool, refrescarPaginaGastos } from './tools/gastos.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
+import { createGoogleTool } from './tools/google.js';
 import { createLuzTool } from './tools/luz.js';
 import { createMailTool } from './tools/mail.js';
 import { createMailRulesTool } from './tools/mail-rules.js';
@@ -2835,6 +2836,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         everyMs: () => githubAvisosConf?.everyMs ?? githubAvisosEveryMs(),
       }),
       // «¿Cuánto he gastado este mes?»: los cobros que el Ojo ya apunta del correo; solo el dueño.
+      // Google Calendar (escribir), Contactos y Drive con su OAuth; solo el dueño.
+      createGoogleTool({
+        google: () => ({ vault: { get: vaultGet, set: vaultSet, delete: vaultDelete } }),
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
       // Spotify por API (PA_SPOTIFY_CLIENT_ID): «pon X», pausa, siguiente… solo el dueño.
       createSpotifyTool({
         spotify: () => ({
@@ -6599,6 +6605,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** /altavoz [pc|tele|off]: notas de voz que suenan solas al llegar (solo el dueño, en privado). */
+  /** /google [conectar]: qué permisos hay y, con conectar, el permiso en el navegador del PC. */
+  const cmdGoogle = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const { googleChatCommand } = await import('./tools/google.js');
+    const { openInBrowser } = await import('./panel-abrir.js');
+    const r = await googleChatCommand(args, {
+      vault: { get: vaultGet, set: vaultSet, delete: vaultDelete },
+      openBrowser: (url) => openInBrowser(url),
+      notify: (text) => void say(inbound, text, { quote: false }),
+    });
+    await say(inbound, r.text, { quote: true, buttons: r.buttons });
+  };
   /** /spotify: estado, conectar (permiso en el navegador del PC), desconectar, pausa… */
   const cmdSpotify = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -9451,6 +9474,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
     { names: ['voz'], run: (inbound) => cmdTailscale(inbound, 'voz') },
     { names: ['spotify'], run: (inbound, args) => cmdSpotify(inbound, args) },
+    { names: ['google'], run: (inbound, args) => cmdGoogle(inbound, args) },
     { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
     {
       names: ['recordatorios', 'reminders'],

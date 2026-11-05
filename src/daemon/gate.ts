@@ -9,6 +9,7 @@ import {
   approvalScopeKey,
   BROWSER_FREE_ACTIONS,
   Gate,
+  GOOGLE_READ_ACTIONS,
   protectedRepoPaths,
   SPOTIFY_FREE_ACTIONS,
 } from '../permissions.js';
@@ -141,6 +142,8 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
       // Spotify del dueño: poner, pausar, pasar o cambiar de altavoz es música, no dinero
       // ni ficheros; preguntar cada «siguiente» lo haría inútil.
       ...SPOTIFY_FREE_ACTIONS,
+      // Google: buscar eventos, contactos y Drive es leer su cuenta; los cambios preguntan.
+      ...GOOGLE_READ_ACTIONS,
     ],
     // Autonomous up to the last click. A purchase is a chain of ordinary browsing
     // actions, and asking about each of them is what stopped the Renfe flow before it

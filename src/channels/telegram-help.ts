@@ -249,6 +249,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         command: 'actualizacion',
         description: 'si me actualizo sola desde main',
       },
+      {
+        command: 'google',
+        args: '[conectar]',
+        description: 'tu Google: calendario, contactos y Drive',
+      },
       { command: 'tailscale', description: 'si el panel y la voz van desde el móvil' },
       { command: 'panel', description: 'el panel dentro de Telegram (con Tailscale)' },
       { command: 'voz', description: 'hablar conmigo desde el móvil (con Tailscale)' },

@@ -1,6 +1,6 @@
 # Conectar tu Google Calendar
 
-Gratis y sin servicios de pago: usas tu propio cliente de Google. Se hace una sola vez, en el PC donde corre Asistenta. Asistenta solo **lee** tu calendario: no crea, mueve ni borra eventos.
+Gratis y sin servicios de pago: usas tu propio cliente de Google. Se hace una sola vez, en el PC donde corre Asistenta. Asistenta lee tu calendario y, desde el 5-nov-2026, también apunta, mueve y borra eventos (pregunta antes cada cambio), busca contactos y lee tu Drive. Los pasos del permiso nuevo están en docs/SETUP-INTEGRACIONES.md.
 
 ## Crear tu cliente de Google (10 minutos, una vez)
 

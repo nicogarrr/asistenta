@@ -20,12 +20,42 @@ export const GOOGLE_KEYS = {
 
 const CAL = 'https://www.googleapis.com/auth/calendar';
 export const GOOGLE_SCOPES = {
-  // Solo lectura: Asistenta no crea, mueve ni borra eventos.
   calendar: [`${CAL}.readonly`],
+  /** Crear, mover y borrar eventos (cada cambio pide aprobación en el chat). */
+  calendarWrite: [`${CAL}.events`],
+  contacts: ['https://www.googleapis.com/auth/contacts.readonly'],
+  drive: ['https://www.googleapis.com/auth/drive.readonly'],
   gmailRead: ['https://www.googleapis.com/auth/gmail.readonly'],
 } as const;
-/** Lo mínimo que se usa hoy: leer tu calendario. */
-export const DEFAULT_SCOPES: string[] = [...GOOGLE_SCOPES.calendar];
+/** Lo que pide «conectar»: calendario (leer y escribir), contactos y Drive (solo lectura). */
+export const DEFAULT_SCOPES: string[] = [
+  ...GOOGLE_SCOPES.calendar,
+  ...GOOGLE_SCOPES.calendarWrite,
+  ...GOOGLE_SCOPES.contacts,
+  ...GOOGLE_SCOPES.drive,
+];
+
+/** Permiso de Google que pide cada función, para decir cuál falta. */
+export type GooglePermiso = 'calendar' | 'calendarWrite' | 'contacts' | 'drive';
+export const PERMISO_TEXTO: Record<GooglePermiso, string> = {
+  calendar: 'leer tu Google Calendar',
+  calendarWrite: 'apuntar, mover y borrar eventos en tu Google Calendar',
+  contacts: 'buscar en tus contactos de Google',
+  drive: 'buscar y leer tus archivos de Google Drive',
+};
+
+/** ¿Los permisos concedidos cubren esta función? */
+export function tienePermiso(granted: readonly string[], p: GooglePermiso): boolean {
+  // Escribir eventos también deja leerlos.
+  if (p === 'calendar' && GOOGLE_SCOPES.calendarWrite.every((s) => granted.includes(s)))
+    return true;
+  return GOOGLE_SCOPES[p].every((s) => granted.includes(s));
+}
+
+/** Frase para cuando falta un permiso: el siguiente paso, sin jerga. */
+export function faltaPermiso(p: GooglePermiso): string {
+  return `Para ${PERMISO_TEXTO[p]} necesito que vuelvas a darle permiso a Google (una vez). Escribe /google conectar estando en el PC y acepta todas las casillas.`;
+}
 
 export const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -37,6 +67,7 @@ export const GOOGLE_HOSTS = new Set([
   'oauth2.googleapis.com',
   'www.googleapis.com',
   'gmail.googleapis.com',
+  'people.googleapis.com',
 ]);
 
 export const NOT_CONNECTED =

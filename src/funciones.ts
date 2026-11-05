@@ -162,6 +162,7 @@ const COMMAND_AREA: Readonly<Record<string, FuncionAreaId>> = {
  */
 export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'spotify',
+  'google',
   'tailscale',
   'panel',
   'voz',
@@ -220,6 +221,10 @@ export function funcionCommands(): FuncionCommand[] {
 export const TOOL_ABILITIES: Readonly<
   Record<string, { area: FuncionAreaId; text: string } | null>
 > = {
+  google: {
+    area: 'agenda',
+    text: 'apunto, muevo o borro eventos en tu Google Calendar, busco contactos y leo tu Drive',
+  },
   spotify: {
     area: 'audio',
     text: 'pongo en Spotify lo que digas, pauso, paso de canción y cambio de altavoz',

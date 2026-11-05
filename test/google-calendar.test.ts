@@ -60,8 +60,14 @@ const items = [
 ];
 
 describe('Google Calendar', () => {
-  it('pide solo leer el calendario (nada de escribir eventos ni leer el correo)', () => {
-    expect(DEFAULT_SCOPES).toEqual(['https://www.googleapis.com/auth/calendar.readonly']);
+  it('pide calendario, contactos y Drive, pero nunca el correo (Nico aprobó escribir eventos el 5-nov)', () => {
+    expect(DEFAULT_SCOPES).toEqual([
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/contacts.readonly',
+      'https://www.googleapis.com/auth/drive.readonly',
+    ]);
+    expect(DEFAULT_SCOPES.some((s) => s.includes('gmail'))).toBe(false);
   });
 
   it('convierte los eventos de Google a iCal que la agenda entiende', async () => {
