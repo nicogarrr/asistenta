@@ -478,17 +478,17 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
         throw new Error('la nota de voz está vacía o en silencio');
       }
 
-      const pipe = await loadWhisperPipeline(model);
       const padded = padWithSilence(samples, sampleRate, EDGE_PAD_SECONDS);
       const seconds = samples.length / sampleRate;
-      let text: string;
-      if (seconds <= PROMPTED_MAX_SECONDS) {
-        text = await withTimeout(
-          transcribeShort(pipe, padded, seconds),
-          TRANSCRIBE_TIMEOUT_MS,
-          `whisper did not finish transcribing within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
-        );
-      } else {
+      const text = await usingWhisper(model, async () => {
+        const pipe = await loadWhisperPipeline(model);
+        if (seconds <= PROMPTED_MAX_SECONDS) {
+          return await withTimeout(
+            transcribeShort(pipe, padded, seconds),
+            TRANSCRIBE_TIMEOUT_MS,
+            `whisper did not finish transcribing within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
+          );
+        }
         const output = await withTimeout(
           pipe(padded, {
             // Forced rather than auto-detected. Whisper's detector is unreliable on
@@ -505,8 +505,8 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
           TRANSCRIBE_TIMEOUT_MS,
           `whisper did not finish transcribing within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
         );
-        text = output.text;
-      }
+        return output.text;
+      });
 
       return {
         text: text.trim(),
@@ -551,8 +551,9 @@ export interface SttDeps {
 /**
  * Consumo: el modelo grande de las notas de voz (turbo, ~3 GB de RAM) se quedaba en memoria
  * para siempre tras la primera nota. Tras este rato sin notas se descarga; la siguiente nota
- * lo vuelve a cargar del disco (unos segundos, sin descargar nada). whisper-small no se toca
- * nunca: lo usa la palabra de activación, que tiene que contestar al momento.
+ * lo vuelve a cargar del disco (unos segundos, sin descargar nada). whisper-small se queda
+ * mientras la palabra de activación esté encendida (tiene que contestar al momento); con ella
+ * apagada (`/wake off`) también sale tras el mismo rato sin usarse (0,7–1,2 GB).
  */
 export const BIG_MODEL_IDLE_MS = 10 * 60_000;
 /** Con `PA_AHORRO=1` (ver ahorro.ts): 2 min. */
@@ -564,16 +565,52 @@ export function bigModelIdleMs(env: NodeJS.ProcessEnv = process.env): number {
 let notesBusy = 0;
 let lastNoteAt = 0;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+/** Oyentes de la palabra de activación con whisper-small encendidos ahora mismo. */
+let wakeListeners = 0;
+/** Transcripciones en curso con cualquier modelo (notas, palabra de activación, dictado). */
+let whisperBusy = 0;
+/** Último uso de whisper-small (o el momento en que se apagó la palabra de activación). */
+let lastSmallUseAt = 0;
 
-/** Descarga de la RAM los modelos de notas (no small) si no hay notas en curso ni recientes. */
+/**
+ * La palabra de activación avisa al encenderse y al apagarse: mientras escucha, whisper-small
+ * no sale nunca de la RAM; al apagarse, cuenta el reposo desde ese momento.
+ */
+export function setWakeListening(on: boolean, now: number = Date.now()): void {
+  wakeListeners = Math.max(0, wakeListeners + (on ? 1 : -1));
+  lastSmallUseAt = now;
+  if (!on && wakeListeners === 0) scheduleRelease();
+}
+
+/** Marca una transcripción en curso: nada se libera bajo una pasada que todavía usa el modelo. */
+export async function usingWhisper<T>(model: string, run: () => Promise<T>): Promise<T> {
+  whisperBusy++;
+  if (model === SMALL_STT_MODEL) lastSmallUseAt = Date.now();
+  try {
+    return await run();
+  } finally {
+    whisperBusy--;
+    if (model === SMALL_STT_MODEL) {
+      lastSmallUseAt = Date.now();
+      if (wakeListeners === 0) scheduleRelease();
+    }
+  }
+}
+
+/**
+ * Descarga de la RAM los modelos sin uso reciente: los de notas (turbo) tras el reposo sin
+ * notas; whisper-small solo si además la palabra de activación está apagada.
+ */
 export async function releaseIdleWhisper(
   now: number = Date.now(),
   idleMs: number = bigModelIdleMs(),
 ): Promise<string[]> {
-  if (notesBusy > 0 || now - lastNoteAt < idleMs) return [];
+  if (notesBusy > 0 || whisperBusy > 0 || now - lastNoteAt < idleMs) return [];
   const released: string[] = [];
   for (const [model, memo] of [...inflight]) {
-    if (model === SMALL_STT_MODEL) continue;
+    if (model === SMALL_STT_MODEL && (wakeListeners > 0 || now - lastSmallUseAt < idleMs)) {
+      continue;
+    }
     inflight.delete(model);
     released.push(model);
     try {
@@ -582,7 +619,7 @@ export async function releaseIdleWhisper(
     } catch {
       // Una carga que falló ya no ocupa nada; una que no se deja liberar la recoge el GC.
     }
-    log.info('stt big model released after idle', {
+    log.info('stt model released after idle', {
       model,
       idleMin: Math.round(idleMs / 60_000),
     });
@@ -605,6 +642,9 @@ export function resetSttStateForTests(): void {
   inflight.clear();
   notesBusy = 0;
   lastNoteAt = 0;
+  wakeListeners = 0;
+  whisperBusy = 0;
+  lastSmallUseAt = 0;
   if (releaseTimer) clearTimeout(releaseTimer);
   releaseTimer = null;
   bigFailedAt = 0;

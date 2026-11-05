@@ -6,13 +6,14 @@ import {
   resetSttStateForTests,
   SMALL_STT_MODEL,
   setImportTransformersForTests,
+  setWakeListening,
   TURBO_STT_MODEL,
   transcribeVoiceNote,
 } from '../src/voice/stt.js';
 
 // Consumo: el modelo grande de las notas de voz (turbo, ~3 GB) se quedaba en la RAM para
-// siempre tras la primera nota. Tras 10 min sin notas se descarga; small (palabra de
-// activación) nunca.
+// siempre tras la primera nota. Tras 10 min sin notas se descarga; small, nunca mientras la
+// palabra de activación escucha (consumo2-small-libera: apagada, también sale).
 const st = { loads: [] as string[], disposed: [] as string[] };
 function inject() {
   setImportTransformersForTests(
@@ -44,10 +45,11 @@ describe('consumo: el modelo grande de notas de voz sale de la RAM sin uso', () 
     expect(BIG_MODEL_IDLE_MS).toBe(10 * 60_000);
   });
 
-  it('sin notas recientes se libera turbo (dispose) y small se queda', async () => {
+  it('sin notas recientes se libera turbo (dispose) y small se queda (palabra de activación encendida)', async () => {
     inject();
     await loadWhisperPipeline(TURBO_STT_MODEL);
     await loadWhisperPipeline(SMALL_STT_MODEL);
+    setWakeListening(true);
     const released = await releaseIdleWhisper(Date.now() + BIG_MODEL_IDLE_MS + 1);
     expect(released).toEqual([TURBO_STT_MODEL]);
     expect(st.disposed).toEqual([TURBO_STT_MODEL]);

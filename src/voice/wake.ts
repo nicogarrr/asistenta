@@ -52,7 +52,7 @@ import { log } from '../log.js';
 import { listCaptureDevices } from '../screen/media.js';
 import { Mutex, withTimeout } from '../utils.js';
 import { WHISPER_SAMPLE_RATE } from './audio.js';
-import { loadWhisperPipeline, SMALL_STT_MODEL } from './stt.js';
+import { loadWhisperPipeline, SMALL_STT_MODEL, setWakeListening, usingWhisper } from './stt.js';
 import { OWW_FRAME_SAMPLES, OwwWakeDetector } from './wakeword-oww.js';
 
 /**
@@ -500,19 +500,21 @@ export async function defaultTranscriber(
   samples: Float32Array,
   initialPrompt?: string,
 ): Promise<string> {
-  const pipe = await loadWakePipeline(DEFAULT_MODEL);
-  const output = await withTimeout(
-    pipe(samples, {
-      language: 'spanish',
-      task: 'transcribe',
-      chunk_length_s: 30,
-      stride_length_s: 5,
-      ...(initialPrompt ? { initial_prompt: initialPrompt } : {}),
-    }),
-    TRANSCRIBE_TIMEOUT_MS,
-    `whisper did not finish a wake check within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
-  );
-  return output.text;
+  return usingWhisper(DEFAULT_MODEL, async () => {
+    const pipe = await loadWakePipeline(DEFAULT_MODEL);
+    const output = await withTimeout(
+      pipe(samples, {
+        language: 'spanish',
+        task: 'transcribe',
+        chunk_length_s: 30,
+        stride_length_s: 5,
+        ...(initialPrompt ? { initial_prompt: initialPrompt } : {}),
+      }),
+      TRANSCRIBE_TIMEOUT_MS,
+      `whisper did not finish a wake check within ${TRANSCRIBE_TIMEOUT_MS / 1000}s`,
+    );
+    return output.text;
+  });
 }
 
 /**
@@ -824,6 +826,10 @@ export class WakeWordListener {
   #onError: ((err: Error) => void) | undefined;
   #capture: WakeCapture;
   #transcriber: (samples: Float32Array, initialPrompt?: string) => Promise<string>;
+  /** Usa el whisper-small compartido con las notas (sin transcriptor inyectado). */
+  #sharedWhisper: boolean;
+  /** Avisó a stt.ts de que escucha: whisper-small no puede salir de la RAM. */
+  #holdsSharedWhisper = false;
   #initialPrompt: string | undefined;
   #onAudio: ((pcm: Float32Array) => void) | undefined;
   #held = false;
@@ -877,6 +883,7 @@ export class WakeWordListener {
     this.#onError = opts.onError;
     this.#capture = opts.capture ?? new FfmpegMicCapture();
     this.#transcriber = opts.transcriber ?? defaultTranscriber;
+    this.#sharedWhisper = opts.transcriber === undefined;
     this.#initialPrompt = opts.initialPrompt;
     this.#onAudio = opts.onAudio;
     this.#engine = opts.engine ?? 'whisper';
@@ -991,7 +998,13 @@ export class WakeWordListener {
       }
       // El motor oww puntua por frame dentro de #handleChunk: no hay ventana
       // de 3s ni pasada whisper que programar.
-      if (this.#engine === 'whisper') this.#scheduleCheck();
+      if (this.#engine === 'whisper') {
+        if (this.#sharedWhisper && !this.#holdsSharedWhisper) {
+          this.#holdsSharedWhisper = true;
+          setWakeListening(true);
+        }
+        this.#scheduleCheck();
+      }
     });
   }
 
@@ -1010,6 +1023,11 @@ export class WakeWordListener {
       }
       this.#ring.clear();
       this.#owwCarry = new Float32Array(0);
+      if (this.#holdsSharedWhisper) {
+        // Apagada la palabra de activación, whisper-small sale de la RAM tras el reposo.
+        this.#holdsSharedWhisper = false;
+        setWakeListening(false);
+      }
       const detector = this.#oww;
       this.#oww = null;
       if (detector) {
