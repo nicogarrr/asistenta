@@ -91,7 +91,29 @@ export function stickerText(msg: object): string | null {
   return `[Sticker ${emoji}]`;
 }
 
-/** El texto de lo compartido (contacto, encuesta o sticker), o null si no es nada de eso. */
+/**
+ * Un dado (o dardo, balón, bolos, tragaperras) de Telegram con su resultado. Antes
+ * recibía «Aún no juego a los dados»; ahora «tira un dado y elige tú» funciona: el
+ * asistente ve qué salió.
+ */
+export function diceText(msg: object): string | null {
+  const d = (msg as { dice?: Record<string, unknown> }).dice;
+  if (!d || typeof d !== 'object') return null;
+  const emoji = typeof d.emoji === 'string' ? d.emoji.trim().slice(0, 8) : '';
+  const value = Number(d.value);
+  if (!emoji || !Number.isInteger(value) || value < 1 || value > 64) return null;
+  const what: Record<string, string> = {
+    '🎲': `Dado 🎲: salió un ${value}`,
+    '🎯': `Dardo 🎯: ${value === 6 ? 'en el centro' : `${value} de 6`}`,
+    '🏀': `Canasta 🏀: ${value >= 4 ? 'encestó' : 'falló'}`,
+    '⚽': `Penalti ⚽: ${value >= 3 ? 'gol' : 'fallado'}`,
+    '🎳': `Bolos 🎳: ${value === 6 ? 'pleno' : `${value} de 6`}`,
+    '🎰': `Tragaperras 🎰: ${value === 64 ? '¡777, premio!' : 'sin premio'}`,
+  };
+  return `[${what[emoji] ?? `Tirada ${emoji}: ${value}`}]`;
+}
+
+/** El texto de lo compartido (contacto, encuesta, sticker o dado), o null si no es nada de eso. */
 export function sharedKindText(msg: object): string | null {
-  return sharedContactText(msg) ?? sharedPollText(msg) ?? stickerText(msg);
+  return sharedContactText(msg) ?? sharedPollText(msg) ?? stickerText(msg) ?? diceText(msg);
 }
