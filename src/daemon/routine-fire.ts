@@ -235,6 +235,36 @@ export function createRoutineFire(
         return false;
       });
     if (sent && plan && !reminder) deps.delivery.commit(ctx.scope, ctx.routine.name, plan.hash);
+    // La salida ya está hecha pero Telegram no la aceptó (sin red un rato, tras sus
+    // reintentos de 90 s): antes se perdía (el informe de las 8:00 no llegaba). Se
+    // reenvía la misma salida más tarde, sin volver a trabajar; un disparo nuevo a su
+    // hora la sustituye.
+    if (!sent && !reminder && plan) {
+      const done = plan;
+      const resend = (n: number): void => {
+        const delay = delays[n];
+        if (delay === undefined) {
+          log.warn('routine output dropped after failed resends', { routine: ctx.routine.name });
+          return;
+        }
+        const handle = later(() => {
+          pendingRetry.delete(retryKey);
+          const lateText = `⏰ ${ctx.routine.name}${sendLateNote(Date.now() - firstAt)}\n\n${body}`;
+          void deps
+            .send(chatId, lateText)
+            .then(() => {
+              deps.delivery.commit(ctx.scope, ctx.routine.name, done.hash);
+              log.info('routine output resent', { routine: ctx.routine.name, attempt: n + 1 });
+            })
+            .catch((err: unknown) => {
+              log.warn('routine resend failed', { routine: ctx.routine.name, err });
+              resend(n + 1);
+            });
+        }, delay);
+        pendingRetry.set(retryKey, handle);
+      };
+      resend(0);
+    }
     // A one-time reminder is a cron pinned to a date: it would fire again next year.
     // Deleted only once it was delivered; if Telegram failed it is retried in 5 minutes
     // instead of vanishing.
@@ -266,6 +296,11 @@ export function createRoutineFire(
 }
 
 /** « (con 7 min de retraso: a su hora no había conexión con el modelo)». */
+/** Lo que se añade a la salida de una rutina que a su hora no se pudo enviar. */
+export function sendLateNote(ms: number): string {
+  return ` (con ${retryDelayText(Math.max(60_000, ms))} de retraso: a su hora no se pudo enviar)`;
+}
+
 export function lateNote(ms: number): string {
   return ` (con ${retryDelayText(Math.max(60_000, ms))} de retraso: a su hora no había conexión con el modelo)`;
 }
