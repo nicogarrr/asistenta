@@ -309,7 +309,14 @@ import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
 import { aplicarModeloPanel, MODELOS_PANEL } from './modelos-panel.js';
-import { createTemasTool, TemasStore, tarjetasDeTemas, temasDelPerfil } from './noticias-temas.js';
+import {
+  createTemasTool,
+  type Resumidor,
+  resumirTemas,
+  TemasStore,
+  tarjetasDeTemas,
+  temasDelPerfil,
+} from './noticias-temas.js';
 import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
@@ -1882,6 +1889,34 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * rebuilding the same context from scattered rows each time.
    */
   const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  /** El modelo barato (PA_UTILITY_MODEL) para resumir «Tus temas»; sin él, undefined. */
+  const temasResumidor = async (): Promise<Resumidor | undefined> => {
+    if (!config.utilityModel?.trim()) return undefined;
+    try {
+      const handle = await createProviderHandle(config);
+      const model = handle.utilityFor?.('pa-temas');
+      if (!model) return undefined;
+      return async (prompt, signal) => {
+        const reply = await handle.models.completeSimple(
+          model,
+          {
+            systemPrompt: 'Resumes titulares de noticias en una frase, fiel y sin añadir nada.',
+            messages: [
+              { role: 'user', content: [{ type: 'text', text: prompt }], timestamp: Date.now() },
+            ],
+          },
+          { maxTokens: 200, sessionId: 'pa-temas', signal },
+        );
+        return reply.content
+          .map((b) => (b.type === 'text' ? b.text : ''))
+          .join('')
+          .trim();
+      };
+    } catch (err) {
+      log.warn('temas: sin modelo barato, van los titulares', { err: String(err) });
+      return undefined;
+    }
+  };
   // «Tus temas» (noticias-temas.ts): lo que sigue y los titulares que ya vio.
   const temasStore = new TemasStore(join(paths.state, 'temas.json'));
   const temasDeNico = (): string[] => {
@@ -5530,9 +5565,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     lastSent: () => weeklyState.lastSent('briefing'),
     markSent: (at) => weeklyState.markSent('briefing', at),
     owner: briefingOwner,
-    send: (chatId, text) =>
+    send: (chatId, text, buttons) =>
       telegram
-        .send({ channel: 'telegram', account: telegram.account, chatId, text })
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId,
+          text,
+          ...(buttons?.length ? { buttons } : {}),
+        })
         .then(() => true),
     festivo: createProximoFestivo(),
     agenda: async () => {
@@ -5590,7 +5631,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!briefingOwner()) return [];
       const cards = await noticiasDeTemas();
       temasStore.markSeen(cards.map((t) => t.url));
-      return cards;
+      // Con PA_UTILITY_MODEL, una línea por tema hecha por el modelo barato (nunca el principal).
+      return resumirTemas(cards, await temasResumidor());
     },
     dates: () => {
       const owner = briefingOwner();

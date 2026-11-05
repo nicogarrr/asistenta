@@ -2403,7 +2403,9 @@ export function buildKeyboard(buttons: Array<{ label: string; action: string }>)
   const perRow = 2;
   usableButtons(buttons).forEach((b, i) => {
     if (i > 0 && i % perRow === 0) kb.row();
-    kb.text(b.label, b.action);
+    // «url:https://…»: botón que abre el enlace (las noticias de «Tus temas»).
+    if (b.action.startsWith('url:')) kb.url(b.label, b.action.slice(4));
+    else kb.text(b.label, b.action);
   });
   return kb;
 }
@@ -2658,8 +2660,12 @@ const TV_BUTTON_STALE =
  */
 export function usableButtons<T extends { label: string; action: string }>(buttons: T[]): T[] {
   return buttons.filter((b) => {
+    if (!b.label?.trim()) return false;
+    // Un botón-enlace lleva la URL, no un callback: https y como mucho 2048 bytes.
+    if (b.action?.startsWith('url:'))
+      return /^url:https:\/\/\S+$/.test(b.action) && Buffer.byteLength(b.action, 'utf8') <= 2052;
     const bytes = Buffer.byteLength(b.action ?? '', 'utf8');
-    return Boolean(b.label?.trim()) && bytes >= 1 && bytes <= 64;
+    return bytes >= 1 && bytes <= 64;
   });
 }
 
