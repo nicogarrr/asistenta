@@ -15,6 +15,7 @@ import { Mutex, withTimeout } from '../utils.js';
 import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './formatters.js';
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import { sharedKindText } from './telegram-compartido.js';
+import { addedEmojis, reactionMood, reactionText } from './telegram-reacciones.js';
 import {
   bindMoreButtons,
   COMMAND_CALLBACK_PREFIX,
@@ -233,6 +234,11 @@ export class TelegramChannel implements ChannelAdapter {
     this.#bot = new Bot(this.#options.token);
   }
 
+  /** Texto de las respuestas recientes, para citar la que recibe una reacción. */
+  readonly #sentTexts = new BoundedMap<string, { text: string; threadId?: string }>(300);
+  /** Respuestas que ya abrieron un turno por una reacción: una vez por mensaje. */
+  readonly #reactedTurns = new BoundedMap<string, true>(300);
+
   /** Mensaje con el texto completo de «📖 Ver todo» → mensaje recortado del que salió. */
   readonly #replyAliases = new Map<string, string>();
 
@@ -277,6 +283,7 @@ export class TelegramChannel implements ChannelAdapter {
     bot.on('message', (ctx) => this.#onMessage(ctx));
     bot.on('edited_message', (ctx) => this.#onEdited(ctx));
     bot.on('callback_query:data', (ctx) => this.#onCallback(ctx));
+    bot.on('message_reaction', (ctx) => this.#onReaction(ctx));
 
     // Command menu in the Telegram UI, so the useful commands are discoverable
     // without remembering them. Telegram caps this at 100 and orders as given.
@@ -330,6 +337,9 @@ export class TelegramChannel implements ChannelAdapter {
       this.#clock.reset();
       try {
         await bot.start({
+          // Sin lista explícita Telegram no manda las reacciones (message_reaction está
+          // fuera de las actualizaciones por defecto). Son las que este canal escucha.
+          allowed_updates: TELEGRAM_ALLOWED_UPDATES,
           onStart: (me) => {
             // A late onStart after stop() must not resurrect the channel.
             if (this.#stopped) return;
@@ -771,6 +781,51 @@ export class TelegramChannel implements ChannelAdapter {
     });
   }
 
+  /**
+   * Una reacción del dueño a una respuesta reciente del bot. Si es de duda o rechazo
+   * (👎, 🤔…), llega al asistente como un mensaje que cita lo que dijo, en el mismo
+   * hilo, para que lo corrija; una vez por mensaje. Un 👍 o un ❤️ solo queda en el
+   * registro. Las reacciones a mensajes que no son suyos, o a respuestas tan viejas
+   * que ya no recuerda, no hacen nada.
+   */
+  async #onReaction(ctx: Context): Promise<void> {
+    const handlers = this.#handlers;
+    const r = ctx.messageReaction;
+    const user = r?.user;
+    if (!handlers || !r || !user || !this.#options.allowedUserIds.includes(user.id)) return;
+    const chatId = String(r.chat.id);
+    const messageId = String(r.message_id);
+    const key = `${chatId}:${messageId}`;
+    const said = this.#sentTexts.get(key);
+    if (!said) return;
+    const added = addedEmojis(r.old_reaction, r.new_reaction);
+    if (added.length === 0) return;
+    const emoji = added.find((e) => reactionMood(e) === 'negativa');
+    if (!emoji) {
+      handlers.log('info', 'telegram reaction', { emoji: added.join(' '), messageId });
+      return;
+    }
+    if (this.#reactedTurns.has(key)) return;
+    this.#reactedTurns.set(key, true);
+    const inbound: Inbound = {
+      channel: this.name,
+      account: this.account,
+      chatId,
+      threadId: said.threadId,
+      userId: String(user.id),
+      displayName: user.username ? `@${user.username}` : user.first_name,
+      text: reactionText(emoji, said.text),
+      authorised: true,
+      isGroup: r.chat.type !== 'private',
+      // La respuesta del asistente cita su propio mensaje, y el turno va al hilo de esa
+      // respuesta (replyToMessageId), no a la conversación principal.
+      messageId,
+      receivedAt: new Date().toISOString(),
+      sentAt: r.date ? new Date(r.date * 1000).toISOString() : undefined,
+      replyToMessageId: this.#resolveReply(chatId, messageId),
+    };
+    await handlers.onMessage(inbound);
+  }
   /** Mensajes ya avisados como editados (chat:id), para avisar una sola vez. */
   readonly #editNoted = new Set<string>();
   /** Última versión de cada texto editado (chat:id), para el botón «Mandar corregido». */
@@ -1460,6 +1515,10 @@ export class TelegramChannel implements ChannelAdapter {
           );
         }
         onSent?.(String(sentId));
+        this.#sentTexts.set(`${String(chatId)}:${sentId}`, {
+          text: chunk,
+          threadId: outbound.threadId,
+        });
       }
       if (firstId === null && sent?.message_id) firstId = String(sent.message_id);
     }
@@ -2470,6 +2529,17 @@ const ALBUM_MAX_PHOTOS = 10;
 /** Aviso único de un álbum con vídeos: las fotos y el texto sí se leen. */
 export const ALBUM_VIDEO_NOTE =
   'Aún no puedo ver vídeos ni GIF: del álbum te contesto a las fotos y al texto.';
+
+/**
+ * Las actualizaciones que pide el bot a Telegram: las que escucha `start()`. La lista
+ * es explícita porque las reacciones no llegan si no se piden.
+ */
+export const TELEGRAM_ALLOWED_UPDATES = [
+  'message',
+  'edited_message',
+  'callback_query',
+  'message_reaction',
+] as const;
 
 /** Respuesta a un mensaje editado: la edición no se lee como mensaje nuevo. */
 export const EDITED_MESSAGE_NOTE =
