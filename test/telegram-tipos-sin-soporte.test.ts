@@ -51,15 +51,15 @@ async function receive(message: Record<string, unknown>) {
 afterEach(() => harness.listeners.clear());
 
 describe('mensajes que Asistenta aún no sabe leer', () => {
-  it('un sticker recibe un aviso en vez de silencio', async () => {
-    const { got, replies } = await receive({ sticker: { file_id: 's', emoji: '👍' } });
+  it('un sticker sin emoji recibe un aviso en vez de silencio', async () => {
+    const { got, replies } = await receive({ sticker: { file_id: 's' } });
     expect(got).toHaveLength(0);
     expect(replies).toEqual(['Aún no sé ver stickers. Si quieres algo, escríbemelo.']);
   });
 
-  it('un contacto también avisa', async () => {
-    const contact = await receive({ contact: { phone_number: '600', first_name: 'Ana' } });
-    expect(contact.replies[0]).toMatch(/contactos/);
+  it('un dado también avisa', async () => {
+    const dice = await receive({ dice: { emoji: '🎲', value: 3 } });
+    expect(dice.replies[0]).toMatch(/dados/);
   });
 
   it('un vídeo sin texto avisa', async () => {
