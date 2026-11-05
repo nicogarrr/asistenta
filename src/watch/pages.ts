@@ -138,9 +138,52 @@ export function parseAmount(raw: string): [string, string] | null {
   return [whole, dec.padEnd(2, '0') || '00'];
 }
 
-/** Primer precio en euros del texto, normalizado ("1.299,5 EUR" -> "1299,50 EUR"), o null. */
+const PRICE_ALL = new RegExp(PRICE.source, 'gi');
+
+/**
+ * Lo que va justo delante de un importe y dice que NO es el precio de venta: el tachado
+ * («Antes 1.299 €», «PVP», «precio recomendado»), lo que te ahorras, o el umbral de envío
+ * gratis de la cabecera. En texto plano el tachado ya no se ve, así que la palabra es la
+ * única pista. Una palabra de precio actual («ahora», «precio:», «oferta») corta la mirada.
+ */
+const NOT_SALE_PRICE =
+  /\b(?:antes|pvp|p\.v\.p|rrp|precio (?:recomendado|anterior|original|habitual|de referencia|de venta recomendado)|tachado|ahorr\w*|descuento|dto|envio\w*|gastos de envio)\b/;
+const CURRENT_PRICE_WORD = /\b(?:ahora|precio|oferta|por solo|solo|final|total)\b[^a-z]*$/;
+
+function isNotSalePrice(before: string): boolean {
+  let ctx = fold(before).slice(-48);
+  const cut = Math.max(
+    ctx.lastIndexOf('. '),
+    ctx.lastIndexOf('|'),
+    ctx.lastIndexOf('•'),
+    ctx.lastIndexOf('·'),
+  );
+  if (cut >= 0) ctx = ctx.slice(cut + 1);
+  if (CURRENT_PRICE_WORD.test(ctx)) return false;
+  return NOT_SALE_PRICE.test(ctx);
+}
+
+/**
+ * Precio en euros del texto, normalizado ("1.299,5 EUR" -> "1299,50 EUR"), o null.
+ * Es el primero que no está marcado como precio de antes, ahorro o envío; si todos lo
+ * están, el primero (como siempre).
+ */
 export function extractPrice(text: string): string | null {
-  const m = PRICE.exec(text);
+  let m: RegExpExecArray | null = null;
+  let first: RegExpExecArray | null = null;
+  let segStart = 0;
+  PRICE_ALL.lastIndex = 0;
+  for (let hit = PRICE_ALL.exec(text); hit; hit = PRICE_ALL.exec(text)) {
+    first ??= hit;
+    const lineStart = text.lastIndexOf('\n', hit.index) + 1;
+    const before = text.slice(Math.max(segStart, lineStart), hit.index);
+    segStart = hit.index + hit[0].length;
+    if (!isNotSalePrice(before)) {
+      m = hit;
+      break;
+    }
+  }
+  m ??= first;
   if (!m) return null;
   const raw = (m[1] ?? m[2] ?? '').replace(/[\u00a0\u202f\u2009]/g, '');
   const parsed = parseAmount(raw);
