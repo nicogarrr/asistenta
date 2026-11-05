@@ -163,7 +163,7 @@ import {
 } from './core/provider.js';
 import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
-import { programadaRutinaEs } from './cron/cadencia.js';
+import { horarioEnLista, programadaRutinaEs } from './cron/cadencia.js';
 import { parseNatural, parseNaturalConCadencia } from './cron/scheduler.js';
 import {
   AUTO_RETRY_DELAYS_MS,
@@ -4723,7 +4723,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         `Rutinas: ${list.length}`,
         ...list.map((r) =>
           [
-            `- ${r.name} (${r.kind})${r.schedule ? ` [${r.schedule}]` : ''}`,
+            `- ${r.name} (${r.kind})${r.schedule ? ` [${horarioEnLista(r)}]` : ''}`,
             summarizeRoutine(r),
           ].join(': '),
         ),

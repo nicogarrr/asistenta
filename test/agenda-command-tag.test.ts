@@ -59,8 +59,8 @@ describe('/agenda marca las rutinas de comando', () => {
     commands.propose(THREAD, 'saldo', spec);
     const out = agenda(true);
     expect(out).toContain('Rutinas programadas: 2');
-    expect(out).toMatch(/- resumen \[0 9 \* \* \*\] — próxima: /);
-    expect(out).toContain('- saldo ⚙️ comando, sin aprobar (no se ejecuta) [0 8 * * *]');
+    expect(out).toMatch(/- resumen \[cada día a las 09:00\] — próxima: /);
+    expect(out).toContain('- saldo ⚙️ comando, sin aprobar (no se ejecuta) [cada día a las 08:00]');
   });
 
   it('aprobada y con PA_CRON_COMANDOS apagado lo dice', () => {
@@ -72,7 +72,7 @@ describe('/agenda marca las rutinas de comando', () => {
   it('aprobada y activa muestra el comando exacto', () => {
     commands.propose(THREAD, 'saldo', spec);
     commands.approve(THREAD, 'saldo', approvalCode(spec));
-    expect(agenda(true)).toContain('- saldo ⚙️ comando: node saldo.js [0 8 * * *]');
+    expect(agenda(true)).toContain('- saldo ⚙️ comando: node saldo.js [cada día a las 08:00]');
   });
 
   it('otro chat no ve estas rutinas', () => {

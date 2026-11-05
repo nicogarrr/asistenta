@@ -17,7 +17,7 @@ import {
   looksLikeCommandAdd,
   parseCommandAdd,
 } from '../command-routine.js';
-import { horarioRutinaEs, programadaRutinaEs } from '../cron/cadencia.js';
+import { horarioEnLista, horarioRutinaEs, programadaRutinaEs } from '../cron/cadencia.js';
 import { programadaEs, scheduleEs } from '../cron/describe-es.js';
 import { parseCronAdd, parseNatural } from '../cron/scheduler.js';
 import { localDay, wallDateMinute } from '../datecontext.js';
@@ -595,7 +595,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     `Rutinas programadas: ${list.length}`,
     ...list.map(
       (r) =>
-        `- ${r.name}${commandRoutineTag(r, deps.commands, commandsOn)} [${r.schedule}] — ${
+        `- ${r.name}${commandRoutineTag(r, deps.commands, commandsOn)} [${horarioEnLista(r)}] — ${
           r.enabled
             ? `próxima: ${nextRunLabel(
                 r.schedule ?? null,
@@ -667,7 +667,7 @@ export function scheduledAgendaText(deps: {
     const state = r.enabled ? '' : ' (desactivada)';
     const running = held?.running ? ' [en curso]' : '';
     const tag = commandRoutineTag(r, deps.commands, commandsOn);
-    return `- ${r.name}${tag}${state} [${r.schedule ?? 'sin horario'}] — próxima: ${nextRunLabel(
+    return `- ${r.name}${tag}${state} [${horarioEnLista(r)}] — próxima: ${nextRunLabel(
       r.schedule,
       held?.next ?? null,
     )}${running}`;
