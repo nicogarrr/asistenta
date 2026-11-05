@@ -36,6 +36,6 @@ describe('/calendario: confirmación al apuntar', () => {
   it('cli.ts ya no usa toLocaleString para la confirmación', () => {
     const cli = readFileSync('src/cli.ts', 'utf8');
     expect(cli).not.toContain("start.toLocaleString('es-ES')");
-    expect(cli).toContain('confirmacionCalendario(title, start, new Date())');
+    expect(cli).toContain('confirmacionCalendario(title, start, new Date(), undefined, end)');
   });
 });
