@@ -243,6 +243,17 @@ export interface ChannelHandlers {
     userId: string;
     data: string;
   }): Promise<{ text: string; buttons: Array<{ label: string; action: string }> }>;
+  /**
+   * Botón de la lista de la compra (callback `compra:…`, ver src/compra.ts): tacha o
+   * destacha y devuelve la lista nueva; el adaptador edita el mismo mensaje. Nunca
+   * resuelve ni consume una aprobación.
+   */
+  onCompraButton?(press: {
+    channel: string;
+    chatId: string;
+    userId: string;
+    data: string;
+  }): Promise<{ text: string; buttons: Array<{ label: string; action: string }> }>;
   log(
     level: 'debug' | 'info' | 'warn' | 'error',
     msg: string,
