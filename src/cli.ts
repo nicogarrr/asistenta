@@ -35,7 +35,15 @@ import {
   projectLinkedReply,
   projectStateReply,
 } from './project-context.js';
-import { formatTokens, LastTurns, rewindLastTurn } from './retry-turn.js';
+import {
+  formatTokens,
+  LastTurns,
+  RETRY_BUTTON_LABEL,
+  RETRY_STALE_TEXT,
+  retryMatches,
+  retryTarget,
+  rewindLastTurn,
+} from './retry-turn.js';
 import { fileFallbackText, foldAccents, sliceSafe } from './text.js';
 import { startWebhookServer, webhookConfig } from './webhook.js';
 import './envfile.js';
@@ -1863,6 +1871,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const voiceDefault = (await vaultGet('agent:voice')) === 'on';
   /** Mensajes en los que Nico pidió la respuesta en voz o dijo que conduce. */
   const voiceAsked = new Set<string>();
+  /** Turnos que fallaron sin reintento automático: su respuesta lleva «🔄 Reintentar». */
+  const retryOffered = new Set<string>();
 
   // Originals are kept in private state/media for the recall TTL and chat cap.
   // Handles and originals survive restart; no other chat can resolve them.
@@ -3084,10 +3094,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     else takeFullReply(thread.key);
     // Recortada: botón «📖 Ver todo» (además de poder escribir «más»).
     // Si acaba con una pregunta de sí o no, botones «Sí» / «No» (telegram-respuestas.ts).
+    // Si el turno falló, «🔄 Reintentar» (manda sobre «Sí» / «No»).
+    const retry = retryOffered.delete(inbound.messageId) ? retryButtons(thread) : undefined;
     const buttons =
       short.truncated && text.trim()
-        ? [moreButton(thread.key, inbound.chatId, inbound.threadId)]
-        : quickReplyButtons(short.text);
+        ? [moreButton(thread.key, inbound.chatId, inbound.threadId), ...(retry ?? [])]
+        : (retry ?? quickReplyButtons(short.text));
     // Todos los trozos apuntan al hilo (antes solo el primero): responder al segundo
     // trozo de una respuesta larga sigue esta conversación.
     const id = await say(inbound, short.text, {
@@ -5853,10 +5865,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
     });
 
+  /** «🔄 Reintentar» para el último mensaje del dueño en este hilo, si se sabe cuál es. */
+  const retryButtons = (thread: Thread): Outbound['buttons'] => {
+    const id = lastTurns.get(thread.key)?.messageId;
+    const button = id ? commandButton(RETRY_BUTTON_LABEL, 'reintentar', id) : undefined;
+    return button ? [button] : undefined;
+  };
+
   // F7: /reintentar repite el último mensaje sin la respuesta anterior en el historial.
   const cmdReintentar = async (inbound: Inbound): Promise<void> => {
     const thread = await resolveThread(inbound);
     const last = lastTurns.get(thread.key);
+    // El botón «🔄 Reintentar» lleva el id del mensaje que falló: si después hubo otro,
+    // no se repite uno distinto del que el dueño ve encima del botón.
+    if (last && !retryMatches(last, retryTarget(inbound.text))) {
+      await say(inbound, RETRY_STALE_TEXT, { quote: true });
+      return;
+    }
     if (!last) {
       await say(inbound, 'No tengo un mensaje tuyo reciente en esta conversación que repetir.', {
         quote: true,
@@ -7675,6 +7700,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Sin red o con el servicio del modelo caído: se reintenta solo, sin que el dueño
       // vuelva a escribirlo. Los reintentos que fallan otra vez no escriben nada.
       const retrying = opts.autoRetry !== undefined;
+      let autoRetryLater = false;
       if (
         autoRetryOn &&
         !out &&
@@ -7691,10 +7717,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.info('auto retry', { thread: thread.name, attempt, delayMs: delay });
         if (retrying) text2 = delay === null ? AUTO_RETRY_GAVE_UP : '';
         else if (delay !== null) text2 = `${text2} ${autoRetryNote(delay)}`;
+        autoRetryLater = delay !== null;
       }
       // El panel no tiene la cola de reintentos de Telegram: se le dice que fue la red
       // y la página lo reintenta sola (src/webui/page.ts, programarReintento).
       if (out && autoRetryOn && !result.text.trim() && isOutageError(result.error)) out.outage?.();
+      // Falló y no se reintenta solo: un toque lo repite (antes había que escribir
+      // /reintentar o copiar el mensaje otra vez).
+      if (!out && result.error !== null && !autoRetryLater && !opts.external)
+        retryOffered.add(inbound.messageId);
       if (out) out.answer(text2);
       else if (text2) await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
@@ -7821,7 +7852,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     } catch (err) {
       log.error('turn threw', { thread: thread.name, err });
-      await tell(inbound, friendlyError(err, 'Algo falló: '), { quote: true });
+      await tell(inbound, friendlyError(err, 'Algo falló: '), {
+        quote: true,
+        buttons: opts.external ? undefined : retryButtons(thread),
+      });
     } finally {
       finished = true;
       thread.active = false;
@@ -8913,6 +8947,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               lastTurns.remember(thread.key, {
                 text: turnInbound.text,
                 images: turnInbound.images,
+                messageId: turnInbound.messageId,
                 agent: thread.agent,
                 mark: thread.agent.messages.length,
                 compactions: thread.agent.compactions,

@@ -16,7 +16,12 @@ import { cleanForTelegram, stripMarks, stripVoicePrefix, telegramHtml } from './
 import { TELEGRAM_COMMANDS } from './telegram-commands.js';
 import { sharedKindText } from './telegram-compartido.js';
 import { addedEmojis, reactionMood, reactionText } from './telegram-reacciones.js';
-import { QUICK_REPLY_DONE, QUICK_REPLY_PREFIX, quickReplyText } from './telegram-respuestas.js';
+import {
+  choiceText,
+  QUICK_REPLY_DONE,
+  QUICK_REPLY_PREFIX,
+  quickReplyText,
+} from './telegram-respuestas.js';
 import {
   bindMoreButtons,
   COMMAND_CALLBACK_PREFIX,
@@ -936,7 +941,10 @@ export class TelegramChannel implements ChannelAdapter {
     const handlers = this.#handlers;
     const message = ctx.callbackQuery?.message;
     const user = ctx.from;
-    const text = quickReplyText(code);
+    // «Sí»/«No», o una opción de «¿A o B?» (su texto es la etiqueta del propio botón).
+    const text =
+      quickReplyText(code) ??
+      choiceText(code, (message as { reply_markup?: unknown } | undefined)?.reply_markup);
     if (!handlers || !message || !user || !text) {
       await ctx.answerCallbackQuery({ text: QUICK_REPLY_USED }).catch(() => {});
       return;

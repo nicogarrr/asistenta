@@ -47,6 +47,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // aprobación del dueño (un commit local que se deshace con git revert); «🗑 Descartar»
   // no toca la copia. El daemon exige dueño en privado para aplicar y descartar.
   ['evolucion', new Set(['parche', 'aplicar', 'descartar'])],
+  // «🔄 Reintentar» bajo una respuesta que falló: repite ESE mensaje (arg = su id), como
+  // /reintentar; si ya hubo otro después, no repite nada.
+  ['reintentar', new Set([''])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 
