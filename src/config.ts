@@ -24,6 +24,11 @@ export interface Config {
   fallbackModel?: string;
   /** PA_MODELS: otros modelos (separados por comas) que /modelo puede elegir. */
   extraModels?: string[];
+  /**
+   * PA_FALLBACK_MODELS: más modelos de respaldo, en orden, tras PA_FALLBACK_MODEL.
+   * Con cuota agotada (o caído) se pasa al siguiente; sin repetir ni el principal.
+   */
+  fallbackModels?: string[];
   baseUrl: string;
   variant?: string | undefined;
   /** Wall-clock ceiling for a single tool call. */
@@ -247,6 +252,9 @@ export function loadConfig(): Config {
       str('PA_MODEL') ?? presetDefaults.model,
     ),
     extraModels: parseModelList(process.env.PA_MODELS),
+    fallbackModels: parseModelList(process.env.PA_FALLBACK_MODELS).length
+      ? parseModelList(process.env.PA_FALLBACK_MODELS)
+      : undefined,
     baseUrl: str('PA_BASE_URL') ?? presetDefaults.baseUrl,
     variant: process.env.PA_MODEL_VARIANT ?? presetDefaults.variant,
     contextWindowTokens: num('PA_CONTEXT_WINDOW', 1_048_576),
