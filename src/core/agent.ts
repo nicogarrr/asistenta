@@ -297,6 +297,35 @@ export function detectLoop(history: string[]): LoopKind {
   return null;
 }
 
+/** Capturas (o fotos) más recientes que van en cada petición al modelo. */
+export const IMAGES_SENT = 3;
+
+/**
+ * Las capturas que ya no van en ninguna petición, fuera también del historial guardado.
+ *
+ * Cada petición lleva solo las {@link IMAGES_SENT} imágenes más recientes
+ * (truncateOldImages en transformContext), pero el historial en memoria guardaba todas
+ * en base64 (~150–300 KB cada una) hasta el resumen, y el resumen las contaba a 1.500
+ * tokens cada una: dos tareas con el PC (≈40 capturas, ≈60k «tokens» que nunca se
+ * mandaban) disparaban un resumen del historial, con su espera, antes del siguiente
+ * mensaje. Lo que ve el modelo no cambia. Devuelve null si no hay nada que quitar
+ * (sin copiar nada).
+ */
+export function forgetUnsentImages(
+  messages: AgentMessage[],
+  keep = IMAGES_SENT,
+): AgentMessage[] | null {
+  let images = 0;
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as Array<{ type?: unknown }>) {
+      if (block?.type === 'image') images++;
+    }
+  }
+  return images > keep ? truncateOldImages(messages, keep) : null;
+}
+
 /**
  * Drop old screenshots from the request context, newest-first.
  *
@@ -718,9 +747,11 @@ export class PersonalAgent {
       streamFn,
       sessionId: `pa-${sessionId}`,
       // Screenshots older than the latest few are stale by definition. Truncating
-      // them per request (never in the stored transcript) is the difference between
+      // them per request (and, since fiable2, in the stored transcript at the start of
+      // the next run: forgetUnsentImages) is the difference between
       // a 20-step run costing 30k image tokens and costing 6k.
-      transformContext: async (messages) => truncateOldImages(pruneOldToolResults(messages), 3),
+      transformContext: async (messages) =>
+        truncateOldImages(pruneOldToolResults(messages), IMAGES_SENT),
       // The model may ask for a deferred tool mid-run; the next request carries it.
       prepareNextTurnWithContext: loadout
         ? (ctx) => {
@@ -1185,6 +1216,10 @@ export class PersonalAgent {
     let fellBack = false;
     const primaryModel = this.#agent.state.model;
     try {
+      // Las capturas que ya no van en ninguna petición dejan de ocupar memoria y de
+      // contar para el resumen (forgetUnsentImages).
+      const slim = forgetUnsentImages(this.#agent.state.messages);
+      if (slim) this.#agent.state.messages = slim;
       await this.#compact();
       if (this.#loadout) {
         const added = this.#loadout.loadFor(prompt);
