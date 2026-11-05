@@ -1,5 +1,5 @@
 import type { Agent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
-import type { Model } from '@earendil-works/pi-ai';
+import type { AssistantMessage, Model, MutableModels } from '@earendil-works/pi-ai';
 import { appendCallAudit, hashArgs } from '../audit/calls.js';
 import { takePageAfterFailedCall } from '../browser/page-after-call.js';
 import type { Config } from '../config.js';
@@ -553,6 +553,44 @@ export function sameToolLimit(tool: string): number {
   return tool === 'browser' ? 40 : 10;
 }
 
+type CompleteFn = (
+  model: Model<string>,
+  context: Parameters<MutableModels['completeSimple']>[1],
+  options?: Parameters<MutableModels['completeSimple']>[2],
+) => Promise<AssistantMessage>;
+
+/**
+ * Trabajo de fondo (resumen, extracción): primero el modelo barato si lo hay; si
+ * lanza, devuelve error o vuelve vacío, el principal. Un aborto (fin de turno,
+ * plazo) no se reintenta.
+ */
+export async function completeInBackground(
+  complete: CompleteFn,
+  utility: Model<string> | undefined,
+  main: Model<string>,
+  context: Parameters<CompleteFn>[1],
+  options?: Parameters<CompleteFn>[2],
+): Promise<AssistantMessage> {
+  if (utility) {
+    try {
+      const reply = await complete(utility, context, options);
+      const text = reply.content.some((b) => b.type === 'text' && b.text.trim() !== '');
+      if (reply.stopReason !== 'error' && reply.stopReason !== 'aborted' && text) return reply;
+      log.warn('utility model gave no answer: using the main model', {
+        model: utility.id,
+        error: reply.errorMessage?.slice(0, 120),
+      });
+    } catch (err) {
+      if (options?.signal?.aborted) throw err;
+      log.warn('utility model failed: using the main model', {
+        model: utility.id,
+        error: String(err).slice(0, 120),
+      });
+    }
+  }
+  return complete(main, context, options);
+}
+
 export class PersonalAgent {
   readonly #agent: Agent;
   readonly #config: Config;
@@ -735,6 +773,7 @@ export class PersonalAgent {
       modelById,
       fallbackChainFor,
       rotateKey,
+      utilityFor,
     } = await createProviderHandle(config);
     // pi-agent-core solo se carga al crear un agente: las órdenes `pa …` que no
     // hablan con el modelo (ayuda, vault, stop…) no lo pagan al arrancar.
@@ -894,8 +933,18 @@ export class PersonalAgent {
       { fallbackChainFor, rotateKey },
     );
     // Summaries come from the same model, with no tools and a short answer cap.
+    // Resúmenes y extracción de hechos: con PA_UTILITY_MODEL van al modelo barato y,
+    // si falla, al principal (completeInBackground).
+    const background: CompleteFn = (_m, ctx, o) =>
+      completeInBackground(
+        models.completeSimple.bind(models) as CompleteFn,
+        utilityFor?.(`pa-${sessionId}`),
+        modelFor(`pa-${sessionId}`),
+        ctx,
+        o,
+      );
     personal.#summarize = async (prompt) => {
-      const reply = await models.completeSimple(
+      const reply = await background(
         modelFor(`pa-${sessionId}`),
         {
           systemPrompt:
@@ -925,7 +974,7 @@ export class PersonalAgent {
       personal.#factMemory = opts.factMemory;
       const factMemory = opts.factMemory;
       personal.#extractFacts = async (transcript) => {
-        const reply = await models.completeSimple(
+        const reply = await background(
           modelFor(`pa-${sessionId}`),
           {
             systemPrompt:
