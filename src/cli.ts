@@ -218,6 +218,8 @@ import {
 import { detectMemoryWorthy } from './memory/nudges.js';
 import {
   aboutMeText,
+  aboutTopicRequest,
+  aboutTopicText,
   factSavedLine,
   forgetRequest,
   forgotLine,
@@ -5571,6 +5573,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const entries = snapshot.load().split(ENTRY_SEPARATOR);
       await say(inbound, aboutMeText(entries.filter((e) => e.trim())), { quote: true });
       return true;
+    }
+    // «¿qué recuerdas del dentista?»: lo apuntado sobre eso, al momento. Si no hay nada en el
+    // perfil lo lleva el modelo, que también mira el resto de la memoria.
+    const topic = aboutTopicRequest(text);
+    if (topic) {
+      const reply = aboutTopicText(snapshot.load().split(ENTRY_SEPARATOR), topic);
+      if (reply) {
+        await say(inbound, reply, { quote: true });
+        return true;
+      }
     }
     const forget = forgetRequest(text);
     if (forget) {
