@@ -248,7 +248,10 @@ export const TOOL_ABILITIES: Readonly<
     text: 'te digo dónde están tus paquetes leyendo los correos de envío',
   },
   festivos: { area: 'agenda', text: 'te digo si un día es festivo y qué puentes vienen' },
-  tiempo: { area: 'agenda', text: 'te digo el tiempo de hoy a 7 días donde vives' },
+  tiempo: {
+    area: 'agenda',
+    text: 'te digo el tiempo hora a hora y a 7 días, en casa o en cualquier ciudad',
+  },
   aire: { area: 'agenda', text: 'te digo cómo está el aire y si hay polen donde vives' },
   divisas: {
     area: 'compras',
