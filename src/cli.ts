@@ -226,6 +226,7 @@ import {
   aboutMeText,
   aboutTopicRequest,
   aboutTopicText,
+  alreadySaid,
   factSavedLine,
   forgetRequest,
   forgotLine,
@@ -233,6 +234,7 @@ import {
   RecentFacts,
   SAID_PREFIX,
   statedFact,
+  supersededBy,
 } from './memory/owner-facts.js';
 import { ownerQuietHours } from './memory/owner-quiet.js';
 import { contradictionsReply } from './memory/review.js';
@@ -5608,7 +5610,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const fact = statedFact(text);
     if (fact && !looksLikeCredential(fact)) {
       const entry = `${SAID_PREFIX} ${fact}`;
-      if (snapshot.appendEntry(entry).ok) recentFacts.remember(chatKey(inbound), entry);
+      const current = snapshot.load().split(ENTRY_SEPARATOR);
+      // Dicho otra vez tal cual: no se apunta dos veces (antes el perfil se llenaba de copias).
+      if (alreadySaid(current, fact)) {
+        recentFacts.remember(chatKey(inbound), entry);
+        return false;
+      }
+      // «Mi dentista es el Dr. López» con el Dr. García ya apuntado: se sustituye, no se suma
+      // (antes quedaban los dos y el modelo no sabía cuál valía).
+      const old = supersededBy(current, fact);
+      for (const e of old) snapshot.removeEntries(e);
+      if (snapshot.appendEntry(entry).ok) {
+        recentFacts.remember(chatKey(inbound), entry, Date.now(), old);
+      }
     }
     // El turno sigue: el modelo contesta con el dato ya en el perfil.
     return false;
@@ -7462,7 +7476,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const factSaved =
         saidNow !== null && saidNow === `${SAID_PREFIX} ${statedFact(inbound.text) ?? ''}`;
       if (factSaved && !/apunt|guard|anot|record/i.test(result.text)) {
-        result = { ...result, text: `${result.text}\n\n${factSavedLine(saidNow)}`.trim() };
+        const replaced = recentFacts.replacedOf(chatKey(inbound));
+        result = {
+          ...result,
+          text: `${result.text}\n\n${factSavedLine(saidNow, replaced)}`.trim(),
+        };
       }
 
       // La marca [[aprendido: …]] nunca llega al dueño; si vale, se guarda la regla en la

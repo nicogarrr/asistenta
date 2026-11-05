@@ -136,6 +136,59 @@ export function aboutTopicText(entries: readonly string[], topic: string, max = 
   return `Sobre ${label} tengo apuntado:\n${last.map((e) => `• ${e}`).join('\n')}${more}\n\nPara borrar algo: «olvida lo de ${label}».`;
 }
 
+/**
+ * De qué trata el dato, para no guardar dos versiones de lo mismo: «mi dentista es el Dr.
+ * López» sustituye a «Mi dentista es el Dr. García», pero «mi hermana vive en Bilbao» no
+ * sustituye a «mi hermana se llama Lucía». null si el dato no tiene un sujeto claro
+ * («me gusta…», «recuerda que…»): esos se suman.
+ */
+export function factKey(fact: string): string | null {
+  const t = foldAccents(
+    fact
+      .replace(/^\[(?:auto|dicho)\]\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
+  const mine =
+    /^(mis?)\s+([\p{L}-]+(?:\s+[\p{L}-]+){0,3}?)\s+(es|son|se llama|se llaman|vive|viven|esta|estan|trabaja|trabajan)\s/u.exec(
+      t,
+    );
+  if (mine?.[2] && mine[3]) {
+    const verb = mine[3]
+      .replace(/^son$/, 'es')
+      .replace(/^se llaman$/, 'se llama')
+      .replace(/n$/, '');
+    return `mi ${mine[2]}|${verb}`;
+  }
+  const self = /^(me llamo|vivo en|trabajo (?:en|de)|soy de|naci el)\s/.exec(t)?.[1];
+  if (self) return self.startsWith('trabajo') ? 'trabajo' : self;
+  return null;
+}
+
+/** Las entradas del perfil que el dato nuevo deja viejas (mismo sujeto, otro valor). */
+export function supersededBy(entries: readonly string[], fact: string): string[] {
+  const key = factKey(fact);
+  if (!key) return [];
+  const same = foldAccents(fact).trim();
+  return entries.filter(
+    (e) => e.trim() && factKey(e) === key && foldAccents(plainEntry(e)) !== same,
+  );
+}
+
+/** La entrada sin prefijo interno ni recorte. */
+function plainEntry(entry: string): string {
+  return entry
+    .replace(/^\[(?:auto|dicho)\]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** ¿Ya está apuntado tal cual (sin mirar tildes ni mayúsculas)? */
+export function alreadySaid(entries: readonly string[], fact: string): boolean {
+  const same = foldAccents(fact).replace(/\s+/g, ' ').trim();
+  return entries.some((e) => foldAccents(plainEntry(e)) === same);
+}
+
 export type ForgetRequest = { kind: 'last' } | { kind: 'match'; query: string };
 
 /** «olvida eso», «olvídalo», «olvida lo del dentista», «borra lo de que vivo en Madrid». */
@@ -203,10 +256,17 @@ export function forgotLine(removed: readonly string[]): string {
 /** La línea que confirma que algo se apuntó, si la respuesta no lo dice ya. */
 export const FACT_SAVED_LINE = '📝 Apuntado. Si no quieres que lo recuerde, dime «olvida eso».';
 
-/** Igual, diciendo qué se apuntó: así se ve si lo entendió bien. */
-export function factSavedLine(entry: string): string {
+/**
+ * Igual, diciendo qué se apuntó: así se ve si lo entendió bien. Si sustituyó a algo
+ * («mi dentista es…» con otro dentista ya apuntado), dice qué había antes.
+ */
+export function factSavedLine(entry: string, replaced: readonly string[] = []): string {
   const shown = showEntry(entry);
   if (!shown) return FACT_SAVED_LINE;
+  const old = replaced.map(showEntry).filter(Boolean);
+  if (old.length > 0) {
+    return `📝 Actualizado: «${shown}» (antes: ${old.map((e) => `«${e}»`).join(', ')}). Si no quieres que lo recuerde, dime «olvida eso».`;
+  }
   return `📝 Apuntado: «${shown}». Si no quieres que lo recuerde, dime «olvida eso».`;
 }
 
@@ -215,10 +275,16 @@ export const FORGET_LAST_WINDOW_MS = 30 * 60_000;
 
 /** Lo último apuntado por chat, para que «olvida eso» sepa qué es «eso». */
 export class RecentFacts {
-  readonly #last = new Map<string, { entry: string; at: number }>();
+  readonly #last = new Map<string, { entry: string; at: number; replaced: readonly string[] }>();
 
-  remember(chat: string, entry: string, at = Date.now()): void {
-    this.#last.set(chat, { entry, at });
+  remember(chat: string, entry: string, at = Date.now(), replaced: readonly string[] = []): void {
+    this.#last.set(chat, { entry, at, replaced });
+  }
+
+  /** Lo que la entrada recién apuntada sustituyó (vacío si no sustituyó nada). */
+  replacedOf(chat: string, now = Date.now()): readonly string[] {
+    const last = this.#last.get(chat);
+    return last && now - last.at <= FORGET_LAST_WINDOW_MS ? last.replaced : [];
   }
 
   /** La entrada recién apuntada en ese chat, sin sacarla. */
