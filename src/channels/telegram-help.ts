@@ -167,7 +167,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'investiga',
         args: '[amplio] <pregunta> [| a, b, c]',
-        description: 'informe a fondo con fuentes citadas; «amplio» = tabla por elemento',
+        description: 'informe con fuentes citadas; «amplio» = tabla',
       },
       { command: 'vigila', args: '<enlace> [nombre]', description: 'te aviso si cambia el precio' },
       { command: 'vigilando', description: 'lo que estoy vigilando' },
@@ -178,8 +178,9 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'ocr',
         args: '[md|todo]',
-        description: 'como pie de un PDF o foto: texto seleccionable',
+        description: 'pie de un PDF o foto: texto seleccionable',
       },
+      { command: 'expertos', description: 'apuntes por tema' },
     ],
   },
   {
