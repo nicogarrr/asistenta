@@ -151,12 +151,71 @@ function diaHablado(text: string): { text: string; weekday: number | null } {
   };
 }
 
+const NUM_REL: Readonly<Record<string, number>> = {
+  un: 1,
+  una: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  quince: 15,
+  veinte: 20,
+  treinta: 30,
+};
+const RELATIVO = new RegExp(
+  String.raw`^\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?(?:en|dentro\s+de)\s+(?:(media\s+hora)|(\d{1,3}|${Object.keys(NUM_REL).join('|')})\s+(minutos?|mins?|horas?|dias?|semanas?)(\s+y\s+media)?)(?![a-z])[\s,:|.-]*`,
+);
+
+/**
+ * «en 2 horas dentista», «dentro de media hora llamar a Ana», «dentro de 2 semanas a las 9
+ * revisión», «en 3 días a las 10 ITV»: antes no se entendía y se volvía a preguntar.
+ * Minutos y horas cuentan desde ahora; días y semanas necesitan la hora detrás. null si
+ * el texto no empieza así (lo lee el formato normal).
+ */
+function relativo(
+  original: string,
+  now: Date,
+  timeZone: string | undefined,
+): { start: Date; title: string } | null | undefined {
+  const r = RELATIVO.exec(fold(original));
+  if (!r) return undefined;
+  const rest = original.slice(r[0].length).trim();
+  const unit = r[3] ?? '';
+  const n = r[1] ? 0.5 : Number(NUM_REL[r[2] ?? ''] ?? r[2]);
+  const half = r[4] ? 0.5 : 0;
+  if (r[1] || unit.startsWith('min') || unit.startsWith('hora')) {
+    // Una hora detrás («en 2 horas a las 9») no cuadra: se pregunta.
+    if (!rest || /^a\s+las?\s+\d/i.test(fold(rest))) return null;
+    const minutes = r[1] ? 30 : unit.startsWith('min') ? n + half : (n + half) * 60;
+    if (!(minutes > 0)) return null;
+    const at = Math.floor(now.getTime() / 60_000) * 60_000 + Math.round(minutes) * 60_000;
+    return { start: new Date(at), title: rest };
+  }
+  if (half || !(n > 0)) return null;
+  const today = wallClock(now, timeZone);
+  const [y, mo, d] = addDays(
+    today.year,
+    today.month,
+    today.day,
+    unit.startsWith('semana') ? n * 7 : n,
+  );
+  const dated = parseFechaCalendario(`el ${d}/${mo}/${y} ${rest}`, now, timeZone);
+  return dated;
+}
+
 export function parseFechaCalendario(
   text: string,
   now: Date = new Date(),
   timeZone?: string,
 ): { start: Date; title: string } | null {
   const original = text.normalize('NFC').trim();
+  const rel = relativo(original, now, timeZone);
+  if (rel !== undefined) return rel;
   const said = diaHablado(fold(original));
   const m = RE.exec(horaHablada(said.text));
   if (!m) return null;
