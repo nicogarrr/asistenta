@@ -433,14 +433,33 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     const rest = parseNaturalCore(withoutSkipHolidays(normalised));
     return rest ? { schedule: rest.schedule, prompt: text.trim() } : null;
   }
-  // «cada segundo martes», «el primer lunes de mes», «el último viernes»: tampoco cabe en
-  // un cron. Antes «cada segundo martes» sonaba todos los días.
-  if (
-    new RegExp(`\\b(?:primer|primero|segundo|tercer|tercero|cuarto|ultimo)s? (?:${DAY})\\b`).test(
-      normalised,
-    )
-  )
-    return null;
+  // «el primer lunes de cada mes», «cada segundo martes», «el último viernes de cada mes»:
+  // croner los dice con «1#1», «2#2», «5#L». Antes se preguntaba siempre (y antes aún
+  // «cada segundo martes» sonaba todos los días). Sin «de cada mes» ni «cada» delante
+  // («el primer lunes», «el último viernes») no se sabe si es cada mes: se pregunta.
+  const nth = new RegExp(
+    `\\b(cada )?(?:el |los )?(primer|primero|segundo|tercer|tercero|cuarto|ultimo)s? (${DAY})\\b`,
+  ).exec(normalised);
+  if (nth) {
+    const monthly =
+      !!nth[1] ||
+      /\b(?:de cada mes|de todos los meses|del mes|de mes|cada mes|todos los meses|mensualmente)\b/.test(
+        normalised,
+      );
+    const which = NTH_WEEK[nth[2] as string];
+    const dow = DAY_VALUE[nth[3] as string];
+    // Un solo día de la semana: «el primer lunes y el tercer jueves» se pregunta.
+    const more = new RegExp(
+      `\\b(?:primer|primero|segundo|tercer|tercero|cuarto|ultimo)s? (?:${DAY})\\b`,
+      'g',
+    );
+    if (!monthly || which === undefined || dow === undefined) return null;
+    if ((normalised.match(more) ?? []).length > 1) return null;
+    return {
+      schedule: `${minute} ${hasTime ? hours : 8} * * ${dow}#${which}`,
+      prompt: text.trim(),
+    };
+  }
 
   // «cada 25 de diciembre», «todos los años el 6 de enero»: una vez al año. Antes una
   // fecha del año (o «cada año», «cada trimestre», «una vez al mes») caía en «todos
@@ -670,6 +689,16 @@ const DAY_VALUE: Record<string, number> = {
   domingos: 0,
 };
 const DAY = 'lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
+/** «el primer/segundo/…/último lunes» → la semana del mes que entiende croner (`1#2`, `5#L`). */
+const NTH_WEEK: Record<string, string> = {
+  primer: '1',
+  primero: '1',
+  segundo: '2',
+  tercer: '3',
+  tercero: '3',
+  cuarto: '4',
+  ultimo: 'L',
+};
 /** «entre semana», «los días laborables», «cada día laborable», «los laborables». */
 const LABORABLES =
   /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|laboral(?:es)?|habil(?:es)?|de diario)|los laborables|de lunes a viernes)\b/;

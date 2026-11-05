@@ -82,6 +82,14 @@ const SCHEDULE_WORDS = new Set([
   'una',
   'viernes',
   'y',
+  // «el primer lunes de cada mes…», «el último viernes…»: la semana del mes es horario.
+  'primer',
+  'primero',
+  'segundo',
+  'tercer',
+  'tercero',
+  'cuarto',
+  'ultimo',
 ]);
 
 export function routineNameFromPrompt(prompt: string): string {
