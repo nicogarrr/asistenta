@@ -67,6 +67,75 @@ export function isAboutMeRequest(text: string): boolean {
   );
 }
 
+/** Palabras que no dicen de qué tema se habla. */
+const TOPIC_STOP = new Set(
+  'de del la el los las lo un una unos unas mi mis tu tus su sus que y o a al en con sobre para por eso esto'.split(
+    ' ',
+  ),
+);
+
+/**
+ * «¿qué recuerdas del dentista?», «qué tienes apuntado sobre el coche», «qué sabes de mi
+ * hermana»: el tema por el que pregunta; null si no es eso (o si es «de mí»: eso es
+ * {@link isAboutMeRequest}). Con «sabes» solo vale «de mi/mis …»: «¿qué sabes de Python?»
+ * es una pregunta de cultura, no de lo que tengo apuntado de él.
+ */
+export function aboutTopicRequest(text: string): string | null {
+  const t = foldAccents(text.replace(/\s+/g, ' '))
+    .replace(/[¿?¡!.]/g, '')
+    .trim();
+  const m =
+    /^(?:y\s+)?que\s+(sabes|recuerdas|te acuerdas|tienes apuntado|tienes guardado|te dije|te he dicho|te conte|te he contado)\s+(?:tu\s+)?(?:de|del|sobre|acerca de|acerca del)\s+(.{2,60})$/.exec(
+      t,
+    );
+  if (!m?.[1] || !m[2]) return null;
+  const topic = m[2].trim();
+  if (/^(?:mi|ti|mi mismo|nosotros)$/.test(topic)) return null;
+  if (m[1] === 'sabes' && !/^mis?\s/.test(topic)) return null;
+  const words = topicWords(topic);
+  return words.length > 0 ? topic : null;
+}
+
+function topicWords(topic: string): string[] {
+  return foldAccents(topic)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !TOPIC_STOP.has(w));
+}
+
+/** ¿La palabra del tema está en la entrada? «padres» casa con «padre», «coche» con «coches». */
+function wordIn(word: string, tokens: readonly string[]): boolean {
+  const stem = word.length >= 5 ? word.slice(0, Math.max(4, word.length - 2)) : word;
+  return tokens.some((t) =>
+    word.length >= 5 ? t.startsWith(stem) : t === word || t === `${word}s`,
+  );
+}
+
+/**
+ * Las entradas del perfil que hablan del tema: primero las que tienen todas sus palabras;
+ * si ninguna, las que tienen alguna.
+ */
+export function entriesAbout(entries: readonly string[], topic: string): string[] {
+  const words = topicWords(topic);
+  if (words.length === 0) return [];
+  const tokenized = entries
+    .filter((e) => e.trim())
+    .map((e) => ({ e, tokens: foldAccents(showEntry(e)).split(/[^\p{L}\p{N}]+/u) }));
+  const all = tokenized.filter((x) => words.every((w) => wordIn(w, x.tokens))).map((x) => x.e);
+  if (all.length > 0) return all;
+  return tokenized.filter((x) => words.some((w) => wordIn(w, x.tokens))).map((x) => x.e);
+}
+
+/** La respuesta a «¿qué recuerdas de X?» con lo que hay apuntado; null si no hay nada. */
+export function aboutTopicText(entries: readonly string[], topic: string, max = 10): string | null {
+  const found = entriesAbout(entries, topic).map(showEntry).filter(Boolean);
+  if (found.length === 0) return null;
+  const last = found.slice(-max);
+  const hidden = found.length - last.length;
+  const more = hidden > 0 ? `\n(y ${hidden} más)` : '';
+  const label = topic.replace(/^(?:mis?|el|la|los|las)\s+/i, '');
+  return `Sobre ${label} tengo apuntado:\n${last.map((e) => `• ${e}`).join('\n')}${more}\n\nPara borrar algo: «olvida lo de ${label}».`;
+}
+
 export type ForgetRequest = { kind: 'last' } | { kind: 'match'; query: string };
 
 /** «olvida eso», «olvídalo», «olvida lo del dentista», «borra lo de que vivo en Madrid». */
