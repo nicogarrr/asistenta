@@ -264,23 +264,84 @@ export function helpCommands(): string[] {
   return HELP_SECTIONS.flatMap((section) => section.entries.map((entry) => entry.command));
 }
 
+const HELP_INTRO =
+  'Háblame normal: entiendo frases como «recuérdame mañana a las 9 llamar al médico» o «apaga la tele». Los comandos son atajos.';
+
+function sectionBlock(section: HelpSection, bold: boolean): string {
+  const lines = section.entries.map((entry) => {
+    const usage = entry.args ? `/${entry.command} ${entry.args}` : `/${entry.command}`;
+    return `${usage} — ${entry.description}`;
+  });
+  return [bold ? `**${section.title}**` : section.title, ...lines].join('\n');
+}
+
 /**
- * /help: secciones con título y una línea por comando. Con `bold`, los títulos van
- * entre `**` para enviarse con format 'marks' (negrita real en Telegram); el resto
- * no lleva marcas, así que nada más cambia de aspecto.
+ * /help entera, en un solo texto: secciones con título y una línea por comando. Con `bold`,
+ * los títulos van entre `**` para enviarse con format 'marks' (negrita real en Telegram); el
+ * resto no lleva marcas, así que nada más cambia de aspecto. Lo que se envía es `helpPages`.
  */
 export function helpText(opts: { bold?: boolean } = {}): string {
-  const blocks = HELP_SECTIONS.map((section) => {
-    const lines = section.entries.map((entry) => {
-      const usage = entry.args ? `/${entry.command} ${entry.args}` : `/${entry.command}`;
-      return `${usage} — ${entry.description}`;
-    });
-    return [opts.bold ? `**${section.title}**` : section.title, ...lines].join('\n');
+  return [HELP_INTRO, ...HELP_SECTIONS.map((s) => sectionBlock(s, opts.bold === true))].join(
+    '\n\n',
+  );
+}
+
+/** Caracteres por página de /help (Telegram corta a 4096; queda sitio para el pie). */
+export const HELP_PAGE_CHARS = 3600;
+
+const len = (s: string): number => Array.from(s).length;
+
+/**
+ * /help en páginas que caben en un mensaje de Telegram. Antes era un solo mensaje y estaba a
+ * 3987 de 4000 caracteres: un comando nuevo (/latido, /temas, /expertos…) ya no cabía. Las
+ * secciones van enteras y en orden; cada página menos la última acaba con «/help 2» (o el
+ * número que toque) para seguir.
+ */
+export function helpPages(opts: { bold?: boolean } = {}): string[] {
+  const bold = opts.bold === true;
+  const pages: string[][] = [[HELP_INTRO]];
+  for (const section of HELP_SECTIONS) {
+    const block = sectionBlock(section, bold);
+    const page = pages[pages.length - 1] as string[];
+    if (page.length > 0 && len([...page, block].join('\n\n')) > HELP_PAGE_CHARS)
+      pages.push([block]);
+    else page.push(block);
+  }
+  const total = pages.length;
+  return pages.map((blocks, i) => {
+    const head = i === 0 ? [] : [`Ayuda (${i + 1}/${total})`];
+    const foot = i < total - 1 ? [`Más comandos: /help ${i + 2}`] : [];
+    return [...head, ...blocks, ...foot].join('\n\n');
   });
-  return [
-    'Háblame normal: entiendo frases como «recuérdame mañana a las 9 llamar al médico» o «apaga la tele». Los comandos son atajos.',
-    ...blocks,
-  ].join('\n\n');
+}
+
+const fold = (s: string): string => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+
+/**
+ * Lo que contesta «/help <algo>»: «/help 2», «/help más» (la página siguiente) o «/help
+ * vigila» (los comandos que hablan de eso, con su sección). Sin nada, la primera página.
+ */
+export function helpReply(args: string, opts: { bold?: boolean } = {}): string {
+  const pages = helpPages(opts);
+  const want = fold(args).replace(/^\/+/, '');
+  if (!want) return pages[0] as string;
+  if (/^(?:mas|\+|siguiente|sigue|resto)$/.test(want))
+    return pages[Math.min(1, pages.length - 1)] as string;
+  if (/^\d{1,2}$/.test(want)) {
+    const n = Math.min(Math.max(Number(want), 1), pages.length);
+    return pages[n - 1] as string;
+  }
+  const hits: string[] = [];
+  for (const section of HELP_SECTIONS) {
+    const found = section.entries.filter(
+      (e) => fold(e.command).includes(want) || fold(e.description).includes(want),
+    );
+    if (found.length)
+      hits.push(sectionBlock({ title: section.title, entries: found }, opts.bold === true));
+  }
+  if (!hits.length)
+    return `No tengo comandos con «${args.trim()}». Pídemelo con tus palabras, o mira /funciones para ver lo que sé hacer. Todos los comandos: /help`;
+  return hits.join('\n\n');
 }
 
 /** /start: bienvenida corta (saludo, cómo usarla, permisos), en vez del muro de /help. */
