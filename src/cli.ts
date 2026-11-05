@@ -7153,9 +7153,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? ({ kind: 'show' } as const)
       : /^(?:limpiar|limpia|tachados)$/i.test(a)
         ? ({ kind: 'clearDone' } as const)
-        : /^(?:vaciar|vacia|vacía|borrar)$/i.test(a)
-          ? ({ kind: 'clearAll' } as const)
-          : ({ kind: 'add', items: itemsFromText(a) } as const);
+        : /^(?:texto|copiar|compartir)$/i.test(a)
+          ? ({ kind: 'text' } as const)
+          : /^(?:vaciar|vacia|vacía|borrar)$/i.test(a)
+            ? ({ kind: 'clearAll' } as const)
+            : ({ kind: 'add', items: itemsFromText(a) } as const);
     const view = runCompraIntent(store, intent);
     await say(inbound, view.text, { quote: true, buttons: view.buttons });
   };
