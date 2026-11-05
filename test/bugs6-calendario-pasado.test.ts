@@ -46,7 +46,11 @@ describe('/calendario con una fecha que ya pasó', () => {
     for (const t of ['no', 'mañana a las 10 dentista', 'sí pero mañana'])
       expect(esSiCalendario(t), t).toBe(false);
     expect(cli).toContain('preguntaFechaPasada(start, new Date())');
-    expect(cli).toMatch(/`confirmado \$\{start\.toISOString\(\)\} \| \$\{title\}`/);
+    // bugs28: la respuesta la lee respuestaCalendarioPasado (agenda/calendario-respuesta.ts).
+    expect(cli).toContain('respuestaCalendarioPasado(t, start, title)');
+    expect(readFileSync('src/agenda/calendario-respuesta.ts', 'utf8')).toMatch(
+      /`confirmado \$\{start\.toISOString\(\)\} \| \$\{title\}`/,
+    );
     expect(cli).toContain('/^(?:add|anadir|añadir|confirmado)\\s+(.+?)\\s*\\|\\s*(.+)$/i');
   });
 });

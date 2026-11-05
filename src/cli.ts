@@ -393,11 +393,8 @@ function delegateTool(
     : delegateWiring.tool;
 }
 
-import {
-  confirmacionCalendario,
-  esSiCalendario,
-  preguntaFechaPasada,
-} from './agenda/calendario-pasado.js';
+import { confirmacionCalendario, preguntaFechaPasada } from './agenda/calendario-pasado.js';
+import { respuestaCalendarioPasado } from './agenda/calendario-respuesta.js';
 import { parseFechaCalendario } from './agenda/fecha-natural.js';
 import { appendEvent } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
@@ -6593,12 +6590,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const pasado = confirmed ? null : preguntaFechaPasada(start, new Date());
     if (pasado) {
       preguntas.ask(chatKey(inbound), 'calendario', {
-        answer: (t) =>
-          esSiCalendario(t)
-            ? `confirmado ${start.toISOString()} | ${title}`
-            : parseFechaCalendario(t)
-              ? `add ${t}`
-              : null,
+        answer: (t) => respuestaCalendarioPasado(t, start, title),
       });
       await say(inbound, pasado, { quote: true });
       return;
