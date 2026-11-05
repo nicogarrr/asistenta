@@ -461,6 +461,7 @@ import {
   weatherConfigFromEnv,
 } from './briefing-daily.js';
 import { briefingDoctorLine, briefingHour, envOn } from './briefing-env.js';
+import { answerBtw, BTW_USAGE, btwFromText } from './btw.js';
 import { permisosListaReply } from './channels/permisos-lista.js';
 import { helpText, startText, startWelcomeDue } from './channels/telegram-help.js';
 import {
@@ -477,6 +478,14 @@ import {
   fireCommandRoutine,
   isCommandRoutine,
 } from './command-routine.js';
+import {
+  CompraStore,
+  compraIntent,
+  compraPress,
+  createCompraTool,
+  itemsFromText,
+  runCompraIntent,
+} from './compra.js';
 import { fetchGoQuota } from './core/go-quota.js';
 import { dailyBudgetExceeded, recentTurns, recordUsage, usageReport } from './core/usage.js';
 import {
@@ -485,6 +494,7 @@ import {
   formatUsageReport,
   parseUsageDays,
 } from './core/usage-format.js';
+import { busyNoteFor } from './daemon/busy-note.js';
 import { envHashDoctorLine } from './doctor-env-hash.js';
 import { envUnknownKeysDoctorLine } from './doctor-env-keys.js';
 import { envLinesDoctorLine } from './doctor-env-lines.js';
@@ -1548,6 +1558,10 @@ interface Thread {
   generation: number;
   /** True while a turn is executing, not merely queued. */
   active: boolean;
+  /** Cuándo empezó el turno en marcha (para el aviso de cola, daemon/busy-note.ts). */
+  activeSince?: number;
+  /** `activeSince` del turno por el que ya se avisó de que un mensaje queda en cola. */
+  busyNoted?: number;
   /** Short label shown by /topics. */
   label: string;
   createdAt: number;
@@ -2591,6 +2605,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createLuzTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
+      // «añade leche», «ya he comprado el pan»: la lista de la compra de este chat (/compra con botones).
+      createCompraTool(new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey)),
       createMailRulesTool({ account: () => loadMailAccount() }),
       createGoalTool({
         goals: goalStore,
@@ -6859,6 +6875,44 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, text, { quote: true });
   };
 
+  /**
+   * /btw <pregunta>: pregunta rápida al margen. Se contesta al momento, sin herramientas,
+   * sin esperar ni parar el turno en marcha y sin entrar en su historial (src/btw.ts).
+   */
+  const cmdBtw = async (inbound: Inbound, args: string): Promise<void> => {
+    const question = args.trim();
+    if (!question) {
+      await say(inbound, BTW_USAGE, { quote: true });
+      return;
+    }
+    const chatKey_ = chatKey(inbound);
+    const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
+    const busy = mine.find((t) => t.active);
+    const context = busy ?? mine.find((t) => t.name === 'main') ?? mine[0];
+    const reply = await answerBtw(question, {
+      llm: await researchLlm(),
+      messages: context?.agent.messages ?? [],
+      busy: Boolean(busy),
+      timeZone: localTimeZone(),
+    });
+    await say(inbound, reply, { quote: true });
+  };
+
+  /** /compra [cosas|limpiar|vaciar]: la lista de la compra con un botón por cosa para tachar. */
+  const cmdCompra = async (inbound: Inbound, args: string): Promise<void> => {
+    const store = new CompraStore(join(paths.state, 'lista-compra.json'), chatKey(inbound));
+    const a = args.trim();
+    const intent = !a
+      ? ({ kind: 'show' } as const)
+      : /^(?:limpiar|limpia|tachados)$/i.test(a)
+        ? ({ kind: 'clearDone' } as const)
+        : /^(?:vaciar|vacia|vacía|borrar)$/i.test(a)
+          ? ({ kind: 'clearAll' } as const)
+          : ({ kind: 'add', items: itemsFromText(a) } as const);
+    const view = runCompraIntent(store, intent);
+    await say(inbound, view.text, { quote: true, buttons: view.buttons });
+  };
+
   const cmdStop = async (inbound: Inbound): Promise<void> => {
     const chatKey_ = chatKey(inbound);
     const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
@@ -7254,6 +7308,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return null;
     };
     thread.active = true;
+    thread.activeSince = Date.now();
     turnWatchdog.begin(thread.key, Date.now());
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
@@ -8732,6 +8787,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       run: (inbound) => say(inbound, undoLast(), { quote: true }).then(() => {}),
     },
     { names: ['steer', 'corrige'], run: (inbound, args) => cmdSteer(inbound, args) },
+    { names: ['btw', 'almargen'], run: (inbound, args) => cmdBtw(inbound, args) },
+    { names: ['compra', 'lista'], run: (inbound, args) => cmdCompra(inbound, args) },
     { names: ['pendientes', 'followups'], run: (inbound) => cmdFollowups(inbound) },
     { names: ['entreno_hoy'], run: (inbound) => cmdGym(inbound, 'hoy') },
     { names: ['ultimo'], run: (inbound) => cmdGym(inbound, 'ultimo') },
@@ -8882,6 +8939,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ),
       };
     },
+    onCompraButton: async (press) =>
+      compraPress(
+        new CompraStore(join(paths.state, 'lista-compra.json'), `${press.channel}:${press.chatId}`),
+        press.data,
+      ),
     onUpdateButton: async (press) => {
       const { createUpdateButton } = await import('./autoupdate-boton.js');
       const { autostartRepo } = await import('./autostart.js');
@@ -9050,6 +9112,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               return;
             }
           }
+          // «añade leche y pan a la lista», «¿qué falta en la lista?»: al momento, con botones.
+          {
+            const intent = isOwnerDm(inbound, vigilanteOwnerId) ? compraIntent(inbound.text) : null;
+            if (intent) {
+              const store = new CompraStore(join(paths.state, 'lista-compra.json'), chatKey_);
+              const view = runCompraIntent(store, intent);
+              await say(inbound, view.text, { quote: true, buttons: view.buttons });
+              return;
+            }
+          }
+          // «btw ¿qué hora es en Tokio?» con algo en marcha en este chat: al margen, como /btw.
+          {
+            const aside = isOwnerDm(inbound, vigilanteOwnerId) ? btwFromText(inbound.text) : null;
+            if (aside && [...threads.values()].some((t) => t.chatKey === chatKey_ && t.active)) {
+              await cmdBtw(inbound, aside);
+              return;
+            }
+          }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
           // «baja el volumen de la tele», y navegando «abajo», «atrás»: al momento, sin modelo.
           if (inbound.text && (await tvFastPath(inbound, inbound.text))) return;
@@ -9109,6 +9189,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               onSent: threadForSentIds(messageThread, chatKey(inbound), thread.key),
             });
             return;
+          }
+          // Con una tarea larga en marcha en este hilo, el mensaje queda en cola: se dice
+          // una vez por tarea, con la pista de /btw para lo rápido (daemon/busy-note.ts).
+          {
+            const note = busyNoteFor(thread, Date.now());
+            if (note) void say(inbound, note, { quote: true }).catch(() => {});
           }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.
