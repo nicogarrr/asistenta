@@ -37,6 +37,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: '<instrucción>',
         description: 'corrige lo que estoy haciendo sin pararlo',
       },
+      {
+        command: 'btw',
+        args: '<pregunta>',
+        description: 'pregunta rápida sin parar lo que hago',
+      },
       { command: 'estado', description: 'cómo estoy: herramientas y errores de hoy' },
       {
         command: 'funciones',
@@ -55,7 +60,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         command: 'borrar_chat',
-        description: 'borra memoria, historial y perfil de este chat (pide escribir BORRAR)',
+        description: 'borra memoria, historial y perfil (pide escribir BORRAR)',
       },
       {
         command: 'proyecto',
@@ -113,7 +118,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'tv',
         args: '[orden]',
-        description: 'orden directa a la tele, sin gastar tokens; sin orden, mando con botones',
+        description: 'orden a la tele; sin orden, mando con botones',
       },
       {
         command: 'ordenador',
@@ -167,7 +172,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'investiga',
         args: '[amplio] <pregunta> [| a, b, c]',
-        description: 'informe a fondo con fuentes citadas; «amplio» = tabla por elemento',
+        description: 'informe a fondo con fuentes; «amplio» = tabla',
       },
       { command: 'vigila', args: '<enlace> [nombre]', description: 'te aviso si cambia el precio' },
       { command: 'vigilando', description: 'lo que estoy vigilando' },
