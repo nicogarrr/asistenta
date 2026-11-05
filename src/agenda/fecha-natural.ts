@@ -286,8 +286,50 @@ export function parseFechaCalendario(
   const rel = relativo(original, now, timeZone);
   if (rel !== undefined) return rel;
   const said = diaHablado(fold(original));
-  if (!RE.test(horaHablada(said.text))) return tituloDelante(original, now, timeZone);
+  if (!RE.test(horaHablada(said.text))) {
+    return tituloDelante(original, now, timeZone) ?? horaDetras(original, now, timeZone);
+  }
   return parseDirecto(original, now, timeZone);
+}
+
+const DAY_HEAD = new RegExp(String.raw`^${DAY}\s+`);
+const TIME_IN = new RegExp(String.raw`(?:^|\s)(${TIME})(?=\s|$)`);
+
+/**
+ * La hora detrás del título: «el lunes reunión con Ana a las 9:30», «pasado mañana comida
+ * con Luis a las 14», «mañana dentista a las 5 de la tarde». Antes se contestaba «No he
+ * pillado la fecha o la hora». Se lee como «<día> <hora> <título>» y vale solo si el
+ * título que sale es exactamente el resto (sin la hora).
+ */
+function horaDetras(
+  original: string,
+  now: Date,
+  timeZone: string | undefined,
+): { start: Date; title: string } | null {
+  const folded = fold(original);
+  const lead = (LEAD_RE.exec(folded)?.[1] ?? '').length;
+  const day = DAY_HEAD.exec(folded.slice(lead));
+  if (!day) return null;
+  const restAt = lead + day[0].length;
+  const time = TIME_IN.exec(folded.slice(restAt));
+  if (!time?.[1]) return null;
+  const timeAt = restAt + (time.index ?? 0) + time[0].length - time[1].length;
+  const timeEnd = timeAt + time[1].length;
+  // «de 9 a 11:30 curso»: un tramo, no un título con la hora detrás; se pregunta.
+  if (TITULO_COLGADO.test(folded.slice(restAt, timeAt).trim())) return null;
+  const title = `${original.slice(restAt, timeAt)} ${original.slice(timeEnd)}`
+    .replace(/\s+/g, ' ')
+    .replace(/[\s,;:.!-]+$/, '')
+    .trim();
+  // «el lunes 9 dentista a las 10»: el número es del día, no del título; se pregunta.
+  if (!title || /^\d/.test(title) || TITULO_COLGADO.test(fold(title))) return null;
+  if (/(?:^|\s)(?:de|desde|entre)\s+\d/.test(fold(title))) return null;
+  const r = parseDirecto(
+    `${original.slice(0, restAt)}${original.slice(timeAt, timeEnd)} ${title}`,
+    now,
+    timeZone,
+  );
+  return r && r.title === title ? r : null;
 }
 
 /** La fecha delante y el título detrás («mañana a las 9 dentista»). */
