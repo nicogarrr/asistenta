@@ -239,6 +239,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'agenda',
     text: 'vigilo algo cada pocos minutos en este chat y solo te escribo si cambia',
   },
+  aviso_llegada: {
+    area: 'agenda',
+    text: 'te recuerdo algo al llegar a casa o a otra ciudad (con tu ubicación en directo)',
+  },
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
   gasolineras: { area: 'agenda', text: 'te digo las gasolineras más baratas y te aviso si bajan' },
   temas: {
@@ -251,6 +255,7 @@ export const TOOL_ABILITIES: Readonly<
     text: 'busco y leo tus correos; respondo, reenvío o escribo solo si apruebas el borrador exacto',
   },
   tareas: { area: 'agenda', text: 'apunto tus tareas de la semana y te digo qué tienes' },
+  compra: { area: 'agenda', text: 'llevo tu lista de la compra y la tachas con botones' },
   repartos: {
     area: 'agenda',
     text: 'te digo dónde están tus paquetes leyendo los correos de envío',
