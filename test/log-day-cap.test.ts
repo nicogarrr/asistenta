@@ -24,11 +24,15 @@ const logDir = join(stateDir, 'log');
 const today = (): string => join(logDir, `${localDay()}.jsonl`);
 
 describe('tope diario del registro', () => {
-  it('al llegar al tope escribe un aviso una vez y deja de crecer; la consola sigue', () => {
+  it('al llegar al tope escribe un aviso una vez y deja de crecer; la consola (terminal) sigue', () => {
+    // En una terminal se sigue viendo; redirigida a fichero no (fiable3-log-consola).
+    const tty = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     for (let i = 0; i < 200; i++) log.error(`bucle de errores ${i}`, { i, pad: 'x'.repeat(80) });
     const printed = out.mock.calls.length;
     out.mockRestore();
+    Object.defineProperty(process.stdout, 'isTTY', { value: tty, configurable: true });
     expect(printed).toBe(200);
     expect(readdirSync(logDir)).toHaveLength(1);
     const text = readFileSync(today(), 'utf8');

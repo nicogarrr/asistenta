@@ -27,6 +27,9 @@ try {
     if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { throw 'Falta dist\cli.js; ejecuta npm run build.' }
     if (-not [IO.Path]::IsPathRooted($StateDir)) { throw 'StateDir debe ser una ruta absoluta.' }
     $env:PA_STATE_DIR = $StateDir
+    # Su stdout acaba en log\launcher.stdout.log, que solo se rota al arrancar: ahi van
+    # solo avisos y errores (el registro completo ya esta en log\AAAA-MM-DD.jsonl).
+    if (-not $env:PA_LOG_CONSOLE) { $env:PA_LOG_CONSOLE = 'warn' }
     . (Join-Path $PSScriptRoot 'private-logs.ps1')
     Assert-PrivateLogTargets $StateDir
     $logDir = Join-Path $StateDir 'log'

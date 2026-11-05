@@ -24,6 +24,24 @@ export function parseLogLevel(raw: string | undefined): { level: LogLevel; inval
 
 const parsedLevel = parseLogLevel(process.env.PA_LOG_LEVEL);
 const threshold = LEVEL_ORDER[parsedLevel.level];
+
+/**
+ * PA_LOG_CONSOLE: desde qué nivel va también a la consola (stdout). Vacío = lo
+ * mismo que PA_LOG_LEVEL; `off` = nada. El lanzador oculto de Windows lo pone a
+ * `warn`: su stdout acaba en log/launcher.stdout.log, que solo se rota al arrancar,
+ * y con días o semanas sin reiniciar era una copia entera de log/ sin tope.
+ */
+export function consoleThreshold(raw: string | undefined, fileThreshold: number): number {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === '') return fileThreshold;
+  if (v === 'off' || v === 'no' || v === 'nada') return Number.POSITIVE_INFINITY;
+  const parsed = parseLogLevel(v);
+  return parsed.invalid !== undefined
+    ? fileThreshold
+    : Math.max(fileThreshold, LEVEL_ORDER[parsed.level]);
+}
+
+const consoleLevel = consoleThreshold(process.env.PA_LOG_CONSOLE, threshold);
 if (parsedLevel.invalid !== undefined) {
   process.stderr.write(
     `PA_LOG_LEVEL=${JSON.stringify(parsedLevel.invalid)} no es válido (debug | info | warn | error); uso info.\n`,
@@ -208,16 +226,23 @@ function write(
       note: 'fields were not serializable',
     });
   }
-  if (toConsole) process.stdout.write(`${line}\n`);
+  let room: 'write' | 'full-now' | 'skip' = 'write';
   try {
     mkdirSync(paths.log, { recursive: true });
     const day = localDay();
     const file = join(paths.log, `${day}.jsonl`);
-    const room = dayCap.room(day, file, Buffer.byteLength(line) + 1);
+    room = dayCap.room(day, file, Buffer.byteLength(line) + 1);
     if (room === 'full-now') appendFileSync(file, `${dayCapMarker(ts)}\n`);
     if (room === 'write' || FATAL.test(msg)) appendFileSync(file, `${line}\n`);
   } catch {
     // Never let logging be the reason a turn dies.
+  }
+  // Con el día lleno, una consola que no es una terminal (redirigida a un fichero,
+  // como launcher.stdout.log en Windows) tampoco recibe más: si no, el tope del día
+  // no servía de nada y un bucle de errores llenaba el disco por la consola.
+  const capped = room === 'skip' && !process.stdout.isTTY && !FATAL.test(msg);
+  if (toConsole && LEVEL_ORDER[level] >= consoleLevel && !capped) {
+    process.stdout.write(`${line}\n`);
   }
 }
 
