@@ -520,6 +520,14 @@ import {
   funcionesButtonText,
   funcionesText,
 } from './funciones.js';
+import {
+  crearLlegada,
+  createLlegadaTool,
+  type LlegadaDeps,
+  LlegadaStore,
+  llegadaFiredText,
+  llegadaIntent,
+} from './llegada.js';
 import { parseMcpServers } from './mcp/client.js';
 import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
 import { guardReaTools, withRea } from './mcp/rea.js';
@@ -651,7 +659,7 @@ import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/sy
 import { createTasksTool } from './tools/tasks.js';
 import { createTraficoTool, TraficoVistosStore } from './tools/trafico.js';
 import { createTvTool, explainTvError, tvLastOrderAt } from './tools/tv.js';
-import { briefingWeatherLine, createWeatherTool } from './tools/weather.js';
+import { briefingWeatherLine, createWeatherTool, geocodePlace } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
@@ -2693,6 +2701,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createLuzTool({ store, scopeOf: scope, sync: () => routineRunner.sync() }),
       createAccountsTool(),
       createTasksTool({ board: new TaskBoard(join(paths.state, 'tareas.json')), scopeOf: scope }),
+      // «cuando llegue a casa recuérdame…»: salta con la ubicación en directo (src/llegada.ts).
+      createLlegadaTool(llegadaDeps(), () => thread.chatKey.split(':')[1] ?? ''),
       // «añade leche», «ya he comprado el pan»: la lista de la compra de este chat (/compra con botones).
       createCompraTool(new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey)),
       createMailRulesTool({ account: () => loadMailAccount() }),
@@ -3407,6 +3417,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
   const traficoVistos = new TraficoVistosStore(join(paths.state, 'trafico-avisos.json'));
+  /** Avisos al llegar: casa = PA_BRIEFING_LAT/LON; otros sitios, por nombre (Open-Meteo). */
+  const llegadaDeps = (): LlegadaDeps => ({
+    store: new LlegadaStore(join(paths.state, 'avisos-llegada.json')),
+    home: () => weatherConfigFromEnv(),
+    geocode: (place) => geocodePlace(place),
+  });
   const sendToChat = (
     chatId: string,
     text: string,
@@ -9078,6 +9094,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         ),
       };
     },
+    onLocationUpdate: async (u) => {
+      if (!isOwnerDm(u, vigilanteOwnerId)) return;
+      for (const aviso of llegadaDeps().store.position(u.chatId, u)) {
+        await sendToChat(u.chatId, llegadaFiredText(aviso));
+      }
+    },
     onCompraButton: async (press) =>
       compraPress(
         new CompraStore(join(paths.state, 'lista-compra.json'), `${press.channel}:${press.chatId}`),
@@ -9247,6 +9269,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               firedReminders.justFired(sameChat, { take: true });
               const reply = snoozeReminder(store, fired, when, new Date());
               routineRunner.sync();
+              await say(inbound, reply, { quote: true });
+              return;
+            }
+          }
+          // «cuando llegue a casa recuérdame sacar la basura»: aviso por ubicación, sin modelo.
+          {
+            const llegada = isOwnerDm(inbound, vigilanteOwnerId)
+              ? llegadaIntent(inbound.text)
+              : null;
+            if (llegada) {
+              const reply = await crearLlegada(
+                llegadaDeps(),
+                inbound.chatId,
+                llegada.place,
+                llegada.text,
+              );
               await say(inbound, reply, { quote: true });
               return;
             }

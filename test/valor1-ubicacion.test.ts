@@ -80,7 +80,7 @@ describe('una ubicación compartida llega al asistente como texto', () => {
     const { got } = await receive({
       location: { latitude: 40.416775, longitude: -3.70379, live_period: 900 },
     });
-    expect(got[0]?.text).toContain('(en directo; solo veo el punto de partida)');
+    expect(got[0]?.text).toContain('(en directo; la sigo para los avisos al llegar)');
     expect(got[0]?.text).toContain(LINK);
   });
 

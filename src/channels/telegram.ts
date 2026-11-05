@@ -288,6 +288,26 @@ export class TelegramChannel implements ChannelAdapter {
     ).catch(() => {});
   }
 
+  #reportPosition(chatId: string, userId: number, loc: unknown): void {
+    const handlers = this.#handlers;
+    const l = loc as { latitude?: unknown; longitude?: unknown } | undefined;
+    const latitude = Number(l?.latitude);
+    const longitude = Number(l?.longitude);
+    if (!handlers?.onLocationUpdate || !Number.isFinite(latitude) || !Number.isFinite(longitude))
+      return;
+    void Promise.resolve(
+      handlers.onLocationUpdate({
+        channel: this.name,
+        chatId,
+        userId: String(userId),
+        latitude,
+        longitude,
+      }),
+    ).catch((err: unknown) => {
+      handlers.log('warn', 'location update failed', { error: String(err) });
+    });
+  }
+
   #dropOpenQuickReply(chatId: string, onlyMessageId?: number): void {
     const open = this.#openQuickReplies.get(chatId);
     if (open === undefined) return;
@@ -457,6 +477,10 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
+    // Una ubicación (en directo o no) también es una posición para los avisos al llegar.
+    if ('location' in msg && !('venue' in msg) && !isGroup) {
+      this.#reportPosition(String(ctx.chat?.id ?? ''), user.id, msg.location);
+    }
     // Contesta escribiendo: los botones «Sí/No» / «¿A o B?» que quedaban ya no valen.
     this.#dropOpenQuickReply(String(ctx.chat?.id ?? ''));
 
@@ -902,6 +926,12 @@ export class TelegramChannel implements ChannelAdapter {
     if (!this.#handlers || !msg || !user) return;
     if (ctx.chat?.type !== 'private') return;
     if (!this.#options.allowedUserIds.includes(user.id)) return;
+    // Ubicación en directo: cada movimiento llega como edición. Va a los avisos al
+    // llegar (src/llegada.ts); nunca es un «mensaje editado».
+    if ('location' in msg && !('venue' in msg)) {
+      this.#reportPosition(String(ctx.chat.id), user.id, msg.location);
+      return;
+    }
     if ('location' in msg || 'venue' in msg) return;
     const key = `${ctx.chat.id}:${msg.message_id}`;
     const text = (msg.text ?? '').trim();
@@ -2747,7 +2777,7 @@ export function sharedLocationText(msg: object): string | null {
   const place = [title ? `«${title}»` : '', address].filter(Boolean).join(', ');
   const live =
     !m.venue && typeof m.location?.live_period === 'number' && m.location.live_period > 0
-      ? ' (en directo; solo veo el punto de partida)'
+      ? ' (en directo; la sigo para los avisos al llegar)'
       : '';
   const label = m.venue ? 'Sitio compartido' : 'Ubicación compartida';
   return `[${label}${live}: ${place ? `${place} — ` : ''}${coords} — ${link}]`;

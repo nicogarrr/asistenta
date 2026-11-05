@@ -239,6 +239,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'agenda',
     text: 'vigilo algo cada pocos minutos en este chat y solo te escribo si cambia',
   },
+  aviso_llegada: {
+    area: 'agenda',
+    text: 'te recuerdo algo al llegar a casa o a otra ciudad (con tu ubicación en directo)',
+  },
   agenda: { area: 'agenda', text: 'te digo qué tienes hoy: recordatorios, rutinas y seguimientos' },
   gasolineras: { area: 'agenda', text: 'te digo las gasolineras más baratas y te aviso si bajan' },
   temas: {
