@@ -66,7 +66,10 @@ describe('«excepto festivos» se salta los festivos de verdad (festivos1)', () 
       await vi.advanceTimersByTimeAsync(2 * 60_000);
       // La normal suena en festivo (no dice nada de festivos); la «excepto festivos», no.
       expect(ran).toEqual(['correo@2026-12-08']);
-      expect(asked).toEqual([HOLIDAY]);
+      // Solo se pregunta por los días de la «excepto festivos» (también los próximos, para
+      // que «Próxima ejecución» se salte los festivos), y cada día una vez.
+      expect(asked).toContain(HOLIDAY);
+      expect(new Set(asked).size).toBe(asked.length);
       // Ni la recuperación de huecos perdidos la hace sonar más tarde ese día.
       await vi.advanceTimersByTimeAsync(4 * 3_600_000);
       expect(ran).toEqual(['correo@2026-12-08']);
