@@ -111,14 +111,34 @@ export class TemasStore {
 /** «Soy del Sporting», «soy del Real Madrid» apuntados → su equipo es un tema. */
 export function temasDelPerfil(entries: readonly string[]): string[] {
   const out: string[] = [];
+  const add = (tema: string | undefined) => {
+    const t = tema?.replace(/\s+/g, ' ').trim();
+    if (!t || t.length < 2) return;
+    if (!out.some((x) => foldAccents(x).toLowerCase() === foldAccents(t).toLowerCase()))
+      out.push(t);
+  };
   for (const e of entries) {
-    const body = e.replace(/^\[(?:auto|dicho|importado)\]\s*/i, '').trim();
-    const m = /^soy (?:del|de la|hincha del|socio del|aficionad[oa] del)\s+(.{2,40}?)[.!]?$/iu.exec(
+    const body = e
+      .replace(/^\[(?:auto|dicho|importado)\]\s*/i, '')
+      .trim()
+      .replace(/[.!]+$/u, '');
+    // Su equipo: «Soy del Sporting» (con mayúscula: «soy de Gijón» no es un equipo).
+    const team = /^soy (?:del|de la|hincha del|socio del|aficionad[oa] del)\s+(.{2,40})$/iu.exec(
       body,
-    );
-    const team = m?.[1]?.trim();
-    if (team && /^\p{Lu}/u.test(team) && !out.some((t) => foldAccents(t) === foldAccents(team)))
-      out.push(team);
+    )?.[1];
+    if (team && /^\p{Lu}/u.test(team.trim())) {
+      add(team);
+      continue;
+    }
+    // Lo que sigue: «sigo la F1», «sigo mucho el ciclismo», «soy fan de Rosalía», «soy muy
+    // aficionado al ciclismo», «me encanta la Fórmula 1». Solo frases cortas y de afición:
+    // «me gusta la pizza» no trae titulares.
+    const sigue =
+      /^(?:sigo(?: mucho| siempre)?|soy (?:muy )?(?:fan|fanatic[oa]|seguidor[a]?) de|soy (?:muy )?aficionad[oa] (?:a|al|a la|de)|me encanta(?:n)?)\s+(?:(?:el|la|los|las)\s+)?(.{2,30})$/iu.exec(
+        body,
+      )?.[1];
+    if (sigue && !/\b(?:comer|dormir|leer|cocinar|pizza|chocolate|caf[eé]|series?)\b/iu.test(sigue))
+      add(sigue.replace(/^(?:a|el|la|los|las)\s+/iu, ''));
   }
   return out;
 }
