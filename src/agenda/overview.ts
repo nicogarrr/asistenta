@@ -14,7 +14,32 @@ export interface AgendaOverviewDeps {
   goals: () => Array<Pick<Goal, 'title' | 'status' | 'plan'>>;
   /** Tablero de tareas de este chat (opcional): lo pendiente de estos días y lo atrasado. */
   tasks?: () => Array<Pick<BoardTask, 'title' | 'day' | 'time' | 'status'>>;
+  /** El tiempo de hoy en una línea (el mismo del resumen de la mañana), si está configurado. */
+  weather?: () => Promise<string | null>;
   now?: () => number;
+}
+
+/** Lo que espera el tiempo antes de contestar la agenda sin él. */
+export const AGENDA_WEATHER_MS = 4_000;
+
+async function weatherLine(deps: AgendaOverviewDeps): Promise<string | null> {
+  if (!deps.weather) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const line = await Promise.race([
+      deps.weather(),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), AGENDA_WEATHER_MS);
+        timer.unref?.();
+      }),
+    ]);
+    const clean = line?.replace(/\s+/g, ' ').trim();
+    return clean ? `Tiempo hoy: ${clean.replace(/^tiempo(?: hoy)?\s*:\s*/iu, '')}` : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 const labels: Record<Goal['status'], string> = {
   proposed: 'propuesto, espera aprobación',
@@ -34,6 +59,8 @@ export async function readAgendaOverview(
     ? Math.max(1, Math.min(60, Math.round(requestedDays)))
     : 7;
   // The calendar reads from today; the agenda shows today plus `days` after it.
+  // «¿Qué tengo hoy?» con el tiempo arriba (antes había que preguntarlo aparte); en paralelo.
+  const weather = weatherLine(deps);
   const calendar = await deps.calendar(calendarDaysFor(days));
   const agenda = await buildAgenda({
     calendar: async () => calendar.events,
@@ -44,7 +71,7 @@ export async function readAgendaOverview(
   if (calendar.reason) agenda.notes.push(calendar.reason);
   const goals = deps.goals().filter((g) => g.status !== 'done' && g.status !== 'cancelled');
   const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
-  const sections = [formatAgenda(agenda), deps.routines()];
+  const sections = [await weather, formatAgenda(agenda), deps.routines()];
   const today = localDay(new Date(deps.now?.() ?? Date.now()));
   const last = localDay(new Date(new Date(`${today}T12:00:00`).getTime() + days * 86_400_000));
   const tasks = (deps.tasks?.() ?? [])

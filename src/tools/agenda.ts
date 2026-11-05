@@ -11,7 +11,7 @@ export function createAgendaTool(
     name: 'agenda',
     label: 'Agenda personal',
     description:
-      'Read the personal overview: local/calendar feed events, pending follow-ups, scheduled routines/reminders and open goals with their next step. Use for qué tengo hoy, qué queda pendiente, qué está programado. Read-only, owner private chat only. Does not include email, change events, activate goals or execute routines. The remote iCal feed can be stale.',
+      "Read the personal overview: today's weather (when configured), local/calendar feed events, pending follow-ups, scheduled routines/reminders and open goals with their next step. Use for qué tengo hoy, qué queda pendiente, qué está programado. Read-only, owner private chat only. Does not include email, change events, activate goals or execute routines. The remote iCal feed can be stale.",
     parameters: Params(),
     executionMode: 'parallel',
     execute: async (_id, args) => ({
