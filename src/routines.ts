@@ -278,6 +278,9 @@ export interface ScheduledRoutine {
  */
 const SELF_TRIGGER_COOLDOWN_MS = 60_000;
 
+/** Disparos que se miran por delante para saltar festivos seguidos (puentes, Semana Santa). */
+const HOLIDAY_LOOKAHEAD = 14;
+
 /** F1: grace to recover a missed fire is half the period, clamped to 2 min–2 h. */
 const CATCHUP_MIN_GRACE_MS = 2 * 60_000;
 const CATCHUP_MAX_GRACE_MS = 2 * 60 * 60_000;
@@ -514,6 +517,14 @@ export class RoutineRunner {
   /** Slots already recovered or reported, so a slot is handled once. */
   readonly #handledSlots = new Set<string>();
   readonly #missed = new Map<string, string>();
+  /**
+   * «Excepto festivos»: lo que ya se sabe de cada día local («YYYY-MM-DD» → festivo o no),
+   * para que status() (síncrono: /cron, el panel) no anuncie como próxima una fecha festiva
+   * que no va a sonar. Se llena en segundo plano (#warmHolidays) al arrancar, al cambiar las
+   * rutinas y tras cada disparo.
+   */
+  readonly #holidayDays = new Map<string, boolean>();
+  #holidayRefresh: Promise<void> | null = null;
   #started = false;
 
   constructor(deps: RoutineRunnerDeps) {
@@ -531,6 +542,7 @@ export class RoutineRunner {
     if (this.#started) return;
     this.#started = true;
     this.sync();
+    void this.refreshHolidays();
     if (this.#catchUp) {
       this.#catchUpAll();
       this.#catchUpTimer = setInterval(() => this.#catchUpAll(), CATCHUP_CHECK_MS);
@@ -573,6 +585,44 @@ export class RoutineRunner {
       if (this.#jobs.has(key)) continue;
       this.#register(routine);
     }
+    void this.refreshHolidays();
+  }
+
+  /**
+   * Mira (con la caché de festivos) los próximos días en que suenan las rutinas «excepto
+   * festivos», para que status() pueda saltarse los festivos. Nunca lanza.
+   */
+  refreshHolidays(): Promise<void> {
+    if (!this.#holidayRefresh) {
+      this.#holidayRefresh = this.#warmHolidays().finally(() => {
+        this.#holidayRefresh = null;
+      });
+    }
+    return this.#holidayRefresh;
+  }
+
+  async #warmHolidays(): Promise<void> {
+    const days = new Set<string>();
+    for (const [key, held] of this.#jobs) {
+      const [scope = '', name = ''] = key.split('\u0000');
+      let routine: Routine | null = null;
+      try {
+        routine = this.#store.getRoutine(scope, name);
+      } catch {
+        continue;
+      }
+      if (!routine || !skipsHolidays(`${routine.name} ${routine.prompt ?? ''}`)) continue;
+      for (const run of held.job.nextRuns(HOLIDAY_LOOKAHEAD)) days.add(localDay(run));
+    }
+    if (this.#holidayDays.size > 400) this.#holidayDays.clear();
+    for (const day of days) {
+      if (this.#holidayDays.has(day)) continue;
+      try {
+        this.#holidayDays.set(day, await this.#isHoliday(day));
+      } catch {
+        // Sin datos ese día cuenta como laborable, igual que al sonar.
+      }
+    }
   }
 
   status(): ScheduledRoutine[] {
@@ -603,10 +653,16 @@ export class RoutineRunner {
     } catch {
       return next;
     }
-    const cadencia = routine ? cadenciaDeRutina(routine) : null;
-    if (!routine || !cadencia || !next) return next;
-    for (const run of job.nextRuns(cadencia.n + 2)) {
-      if (!fueraDeCadencia(cadencia, run, routine.lastRunAt)) return run;
+    if (!routine || !next) return next;
+    const cadencia = cadenciaDeRutina(routine);
+    // «Excepto festivos»: un día que ya se sabe festivo no suena (ver #runScheduled).
+    const holidays = skipsHolidays(`${routine.name} ${routine.prompt ?? ''}`);
+    if (!cadencia && !holidays) return next;
+    const count = Math.max(cadencia ? cadencia.n + 2 : 0, holidays ? HOLIDAY_LOOKAHEAD : 0);
+    for (const run of job.nextRuns(count)) {
+      if (cadencia && fueraDeCadencia(cadencia, run, routine.lastRunAt)) continue;
+      if (holidays && this.#holidayDays.get(localDay(run)) === true) continue;
+      return run;
     }
     return next;
   }
@@ -828,7 +884,8 @@ export class RoutineRunner {
       const day = localDay(slot);
       let holiday = false;
       try {
-        holiday = await this.#isHoliday(day);
+        holiday = this.#holidayDays.get(day) ?? (await this.#isHoliday(day));
+        this.#holidayDays.set(day, holiday);
       } catch (err) {
         log.warn('festivos: no pude mirar si hoy es festivo; la rutina suena', {
           scope: routine.scope,
@@ -849,6 +906,7 @@ export class RoutineRunner {
       }
     }
     await this.#runRoutine(routine, late);
+    if (skipsHolidays(`${routine.name} ${routine.prompt ?? ''}`)) void this.refreshHolidays();
   }
 
   async #runRoutine(routine: Routine, late?: { scheduledFor: Date }): Promise<boolean> {
