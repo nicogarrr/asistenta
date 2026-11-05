@@ -24,6 +24,7 @@ import {
   takeFullReply,
   takeMoreToken,
 } from './telegram-shared.js';
+import { videoToHear, withVideoMark } from './telegram-video.js';
 import type { ChannelAdapter, ChannelAudio, ChannelHandlers, Inbound, Outbound } from './types.js';
 
 // Lo que no necesita grammY vive en telegram-shared.ts (cli.ts lo usa sin cargar grammY).
@@ -426,7 +427,9 @@ export class TelegramChannel implements ChannelAdapter {
     // Audio sent "as a file" arrives as a document: same bytes, so it takes the same
     // road (saved, transcribed, playable on the PC) instead of the document one.
     const asFile = msg.document && isAudioDocument(msg.document) ? msg.document : undefined;
-    const incomingAudio = voice ?? audio ?? note ?? asFile;
+    // Un vídeo normal también se oye (telegram-video.ts): antes solo avisaba «no veo vídeos».
+    const heardVideo = (voice ?? audio ?? note ?? asFile) ? null : videoToHear(msg);
+    const incomingAudio = voice ?? audio ?? note ?? asFile ?? heardVideo ?? undefined;
 
     const inbound: Inbound = {
       channel: this.name,
@@ -478,6 +481,7 @@ export class TelegramChannel implements ChannelAdapter {
         'duration' in incomingAudio ? (incomingAudio.duration ?? undefined) : undefined;
       inbound.audioSizeBytes = (incomingAudio as { file_size?: number }).file_size ?? undefined;
       if (!inbound.text) inbound.text = '';
+      if (heardVideo) inbound.text = withVideoMark(inbound.text, forwarded ?? undefined);
     }
 
     if (msg.photo?.length) {
@@ -542,7 +546,7 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     // Un vídeo o GIF con texto: el texto llega al asistente, pero el vídeo no se
     // ve. Antes se ignoraba sin decirlo y la respuesta parecía hablar del vídeo.
-    const unseen = unseenVideoNote(msg);
+    const unseen = heardVideo ? null : unseenVideoNote(msg);
     if (unseen && inbound.text) {
       await ctx
         .reply(unseen, {

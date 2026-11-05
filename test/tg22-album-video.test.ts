@@ -116,9 +116,10 @@ describe('álbum con vídeo', () => {
     expect(replies).toEqual([ALBUM_VIDEO_NOTE]);
   });
 
-  it('un vídeo suelto sigue con su aviso de siempre', async () => {
+  it('un vídeo suelto que no se puede bajar (más de 20 MB) sigue con su aviso de siempre', async () => {
     const { got, replies, send } = await open();
-    await send(video('v'));
+    const big = video('v');
+    await send({ video: { ...big.video, file_size: 30 * 1024 * 1024 } });
     expect(got).toHaveLength(0);
     expect(replies).toHaveLength(1);
     expect(replies[0]).toContain('vídeos');

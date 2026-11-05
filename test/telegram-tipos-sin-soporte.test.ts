@@ -48,6 +48,9 @@ async function receive(message: Record<string, unknown>) {
   return { got, replies };
 }
 
+/** Un vídeo de más de 20 MB no se puede bajar ni oír: sigue con el aviso. */
+const BIG = 30 * 1024 * 1024;
+
 afterEach(() => harness.listeners.clear());
 
 describe('mensajes que Asistenta aún no sabe leer', () => {
@@ -63,13 +66,18 @@ describe('mensajes que Asistenta aún no sabe leer', () => {
   });
 
   it('un vídeo sin texto avisa', async () => {
-    const { got, replies } = await receive({ video: { file_id: 'v', duration: 3 } });
+    const { got, replies } = await receive({
+      video: { file_id: 'v', duration: 3, file_size: BIG },
+    });
     expect(got).toHaveLength(0);
     expect(replies[0]).toMatch(/vídeos/);
   });
 
   it('un vídeo con texto sigue llegando al asistente y avisa de que el vídeo no se ve', async () => {
-    const { got, replies } = await receive({ video: { file_id: 'v' }, caption: 'mira esto' });
+    const { got, replies } = await receive({
+      video: { file_id: 'v', file_size: BIG },
+      caption: 'mira esto',
+    });
     expect(got[0]?.text).toBe('mira esto');
     expect(replies).toEqual(['Aún no puedo ver vídeos ni GIF: te contesto solo al texto.']);
   });
