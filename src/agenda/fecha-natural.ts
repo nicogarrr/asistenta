@@ -71,6 +71,14 @@ const PALABRAS: Readonly<Record<string, number>> = {
   doce: 12,
 };
 
+/** Minutos dichos con palabras tras «y»/«menos» («a las 10 y diez»). */
+const MINUTOS: Readonly<Record<string, number>> = {
+  cinco: 5,
+  diez: 10,
+  veinte: 20,
+  veinticinco: 25,
+};
+
 /**
  * La hora como se dice: «a las ocho», «a la una», «a las 9 y media», «a las 10 y cuarto»,
  * «a las 6 menos cuarto», «a mediodía». Se reescribe como «a las 9:30» antes de leer.
@@ -108,6 +116,22 @@ function horaHablada(text: string): string {
           )
             ? 'a las 13'
             : `a las ${PALABRAS[word]}`,
+      )
+      // «a las 9 h 15», «a las 9h15»: antes los minutos quedaban en el título y se volvía a
+      // preguntar.
+      .replace(/\b(a\s+las?\s+\d{1,2})\s*h\s*([0-5]\d)\b/, '$1:$2')
+      // «a las 9 y 15 médico», «a las 10 y diez», «a las 6 menos 10»: antes quedaba a las 9:00
+      // en punto con el título «y 15 médico».
+      .replace(
+        /\ba\s+las?\s+(\d{1,2})\s+(y|menos)\s+(\d{1,2}|cinco|diez|veinte|veinticinco)\b(?![:.]\d)(?!\s+(?:personas?|euros?|horas?|dias?)\b)/,
+        (whole, h: string, how: string, n: string) => {
+          const hour = Number(h);
+          const min = MINUTOS[n] ?? Number(n);
+          if (!(min >= 1 && min <= 59) || hour > 23) return whole;
+          if (how === 'y') return `a las ${hour}:${String(min).padStart(2, '0')}`;
+          if (hour < 1 || min > 30) return whole;
+          return `a las ${hour - 1}:${String(60 - min).padStart(2, '0')}`;
+        },
       )
       .replace(
         /\ba\s+las?\s+(\d{1,2})\s+(y\s+media|y\s+cuarto|menos\s+cuarto)\b/,
@@ -208,10 +232,63 @@ function relativo(
   return dated;
 }
 
+const LEAD_RE = new RegExp(LEAD);
+const FECHA_INICIO = new RegExp(
+  `^(?:hoy|manana|pasado|el|este|esta|en|dentro|${DIAS.join('|')})(?![a-z])`,
+);
+const TITULO_COLGADO = /(?:^|\s)(?:a|al|las?|el|los|de|del|y|para|en|manana|hoy)$/;
+
+/**
+ * El título delante: «dentista mañana a las 9», «cena con Ana el viernes a las 21:30»,
+ * «comida mañana a mediodía», «llamar a Ana en 2 horas». Antes solo se entendía con la
+ * fecha delante y se volvía a preguntar. Se prueba a mover el título detrás de la fecha
+ * (del corte más a la izquierda al más a la derecha) y vale solo si lo que queda detrás
+ * de la fecha es exactamente ese título.
+ */
+function tituloDelante(
+  original: string,
+  now: Date,
+  timeZone: string | undefined,
+): { start: Date; title: string } | null {
+  const lead = (LEAD_RE.exec(fold(original))?.[1] ?? '').length;
+  const head = original.slice(0, lead);
+  const body = original.slice(lead);
+  const cuts = [...body.matchAll(/\s+(?=\S)/g)];
+  for (const c of cuts) {
+    const at = (c.index ?? 0) + c[0].length;
+    const title = body
+      .slice(0, c.index)
+      .replace(/[\s,;:-]+$/, '')
+      .trim();
+    const fecha = body.slice(at).replace(/[\s.!]+$/, '');
+    if (!title || !fecha) continue;
+    // La fecha empieza por un día («mañana», «el viernes», «el 12/11», «en 2 horas») y el
+    // título no acaba colgando («mañana a las» + «18:00» no es un título).
+    if (!FECHA_INICIO.test(fold(fecha)) || TITULO_COLGADO.test(fold(title))) continue;
+    const r = parseDirecto(`${head}${fecha} ${title}`, now, timeZone);
+    if (r && r.title === title) return r;
+  }
+  return null;
+}
+
 export function parseFechaCalendario(
   text: string,
   now: Date = new Date(),
   timeZone?: string,
+): { start: Date; title: string } | null {
+  const original = text.normalize('NFC').trim();
+  const rel = relativo(original, now, timeZone);
+  if (rel !== undefined) return rel;
+  const said = diaHablado(fold(original));
+  if (!RE.test(horaHablada(said.text))) return tituloDelante(original, now, timeZone);
+  return parseDirecto(original, now, timeZone);
+}
+
+/** La fecha delante y el título detrás («mañana a las 9 dentista»). */
+function parseDirecto(
+  text: string,
+  now: Date,
+  timeZone: string | undefined,
 ): { start: Date; title: string } | null {
   const original = text.normalize('NFC').trim();
   const rel = relativo(original, now, timeZone);

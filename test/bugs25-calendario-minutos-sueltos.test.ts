@@ -15,14 +15,20 @@ const when = (text: string): string | null => {
 };
 
 describe('/calendario: minutos sueltos tras la hora', () => {
-  it.each([
-    'mañana a las 21 30 cena',
-    'mañana a las 9 h 30 cena',
-    'mañana a las 9h 30 cena',
-    'el viernes a las 8 45 dentista',
-  ])('«%s» pregunta en vez de apuntarlo a la hora en punto', (text) => {
-    expect(when(text)).toBeNull();
-  });
+  it.each(['mañana a las 21 30 cena', 'el viernes a las 8 45 dentista'])(
+    '«%s» pregunta en vez de apuntarlo a la hora en punto',
+    (text) => {
+      expect(when(text)).toBeNull();
+    },
+  );
+
+  // bugs28: «a las 9 h 30» se lee ya bien (9:30), así que se apunta en vez de preguntar.
+  it.each(['mañana a las 9 h 30 cena', 'mañana a las 9h 30 cena'])(
+    '«%s» queda a las 9:30',
+    (text) => {
+      expect(when(text)).toMatch(/9:30 \| cena$/);
+    },
+  );
 
   it('lo que ya iba bien no cambia', () => {
     expect(when('mañana a las 21:30 cena')).toBe('3/11/26, 21:30 | cena');
