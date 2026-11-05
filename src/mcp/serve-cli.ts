@@ -14,7 +14,7 @@ import { SessionStore } from '../memory/sessions.js';
 import { MemoryStore } from '../memory.js';
 import { paths } from '../paths.js';
 import { nextScheduleRun } from '../routines.js';
-import { loadDatabaseSync } from '../sqlite.js';
+import { openSqlite } from '../sqlite.js';
 import { vaultGet } from '../vault.js';
 import { resolveOwnerUserId } from '../vigilante.js';
 import { serveMcpStdio } from './server.js';
@@ -48,9 +48,9 @@ export async function mcpCommand(args: string[]): Promise<number> {
   }
   const main = `${chat}#main`;
   const memory = new MemoryStore();
-  const DatabaseSync = loadDatabaseSync();
-  const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
-  const goalsDb = new DatabaseSync(join(paths.state, 'goals.db'));
+  // Mismo fichero que el daemon: espera si el daemon está escribiendo (antes «database is locked»).
+  const memoryDb = openSqlite(join(paths.state, 'memory.db'), { wal: true });
+  const goalsDb = openSqlite(join(paths.state, 'goals.db'), { wal: true });
   const sessions = new SessionStore({ db: memoryDb });
   const goals = new GoalStore({ db: goalsDb });
   const followups = new FollowupTracker({ db: memoryDb });
