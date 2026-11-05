@@ -1,7 +1,9 @@
+import { isOutageError } from '../core/friendly-error.js';
 import { log } from '../log.js';
 import type { RoutineRunContext } from '../routines.js';
 import { sliceSafe } from '../text.js';
 import { type ThreadTickDeps, type TickThread, threadLabel } from './goal-tick.js';
+import { RoutineOutageError } from './routine-fire.js';
 
 /**
  * Ejecuta la tarea de una rutina programada en el hilo que la creó
@@ -43,6 +45,10 @@ export function createRoutineTask<T extends TickThread>(
         if (result.error)
           log.warn('routine run error', { routine: ctx.routine.name, error: result.error });
         safeRemember(() => sessions.addTurn(sessionId, 'assistant', sliceSafe(text, 500)));
+        // Sin red o con el modelo caído: el disparo la reintenta más tarde (routine-fire).
+        if (!text.trim() && result.error && isOutageError(result.error)) {
+          throw new RoutineOutageError(result.error);
+        }
       } finally {
         thread.active = false;
         thread.gate.clearSession(thread.key);

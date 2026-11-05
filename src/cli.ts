@@ -3252,6 +3252,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     outputDir: join(paths.state, 'salidas'),
     sync: () => routineRunner.sync(),
     droppedRemindersPath: join(paths.state, 'dropped-reminders.jsonl'),
+    // Sin red o con el modelo caído, la rutina se reintenta y llega con retraso.
+    outageDelaysMs: envSwitchOn('PA_AUTO_RETRY') ? undefined : [],
   });
 
   // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
