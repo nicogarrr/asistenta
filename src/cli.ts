@@ -145,7 +145,12 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { programadaEs } from './cron/describe-es.js';
 import { parseNatural } from './cron/scheduler.js';
-import { AUTO_RETRY_GAVE_UP, AutoRetries, autoRetryNote } from './daemon/auto-retry.js';
+import {
+  AUTO_RETRY_DELAYS_MS,
+  AUTO_RETRY_GAVE_UP,
+  AutoRetries,
+  autoRetryNote,
+} from './daemon/auto-retry.js';
 import { briefingHourFor } from './daemon/briefing-quiet.js';
 import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
 import { CloseLoop, closedLine } from './daemon/close-loop.js';
@@ -2268,6 +2273,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** `delegate` en segundo plano: lo que corre por hilo; /stop y el desalojo lo cortan. */
   const backgroundDelegates = new BackgroundDelegates({
     onError: (err) => log.warn('background delegate delivery failed', { err: String(err) }),
+    // Sin red, la subtarea se repite sola (como un mensaje: PA_AUTO_RETRY).
+    retryDelays: autoRetryOn ? AUTO_RETRY_DELAYS_MS : [],
   });
   const evictIdleThreads = (): void => {
     evictThreads({
