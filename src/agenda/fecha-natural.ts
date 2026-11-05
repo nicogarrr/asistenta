@@ -370,5 +370,29 @@ function parseDirecto(
   if (m[17] === 'p' && h >= 1 && h < 12) h += 12;
   else if (m[17] === 'a' && h === 12) h = 0;
   if (h > 23 || mi > 59) return null;
-  return { start: new Date(zonedTime(y, mo, d, h, mi, timeZone)), title };
+  const start = new Date(zonedTime(y, mo, d, h, mi, timeZone));
+  // «hoy a las 5 dentista» dicho a las 10: las 17:00, no una hora que ya pasó (antes
+  // preguntaba «¿Lo apunto igualmente?» por las 5:00). Solo de 1 a 11, sin parte del día,
+  // sin «pm» ni «05:00», con «hoy» o sin día (una fecha dicha, «el 2 de noviembre», se
+  // pregunta como antes) y si la de la tarde aún no ha pasado; como los recordatorios (#2044).
+  const sameDay =
+    (word === 'hoy' || (!word && !m[2] && !m[3] && !m[6] && !m[9])) &&
+    y === today.year &&
+    mo === today.month &&
+    d === today.day;
+  const hourSaid = m[12] ?? m[14] ?? '';
+  if (
+    sameDay &&
+    !part &&
+    !m[17] &&
+    h >= 1 &&
+    h <= 11 &&
+    !hourSaid.startsWith('0') &&
+    !/\bhoras?\b|\d\s*h\b/i.test(original) &&
+    start.getTime() < now.getTime()
+  ) {
+    const pm = new Date(zonedTime(y, mo, d, h + 12, mi, timeZone));
+    if (pm.getTime() > now.getTime()) return { start: pm, title };
+  }
+  return { start, title };
 }
