@@ -2762,6 +2762,20 @@ const SHELL_NO_WINDOW = new RegExp(
     // servicio (Spooler) sigue en la ventana.
     String.raw`\b(Stop-Service|spsv|Suspend-Service)\b[^;&]*\b(${SHELL_DEFENSES})\b|\b(${SHELL_DEFENSES})\b[^;&]*\|\s*(Stop-Service|spsv|Suspend-Service)\b|\b(sc|net)(\.exe)?\s+(stop|pause)\s+"?(${SHELL_DEFENSES})\b`,
     String.raw`\bSet-Service\b[^;|&]*\b(${SHELL_DEFENSES})\b[^;|&]*-Status\s+(Stopped|Paused)\b|\bSet-Service\b[^;|&]*-Status\s+(Stopped|Paused)\b[^;|&]*\b(${SHELL_DEFENSES})\b`,
+    // Matar a la propia Asistenta (corre en node.exe) o lo que mantiene el escritorio, cerrar la
+    // sesión de Windows o soltar la red: antes `taskkill /f /im node.exe`, `Stop-Process -Name
+    // node`, `logoff` o `ipconfig /release` pasaban en la ventana y Nico se quedaba sin
+    // asistente (o sin su trabajo abierto). Cerrar otro programa (Chrome, el Bloc de notas) no
+    // cambia.
+    String.raw`\btaskkill(\.exe)?\b[^;&]*\s/im\s+"?(\*|node|pwsh|powershell|explorer|winlogon|csrss|lsass|svchost|wininit|services|dwm|conhost)(\.exe)?\b`,
+    String.raw`\b(Stop-Process|spps|kill)\b[^;&|]*\s-(Name|ProcessName|n)\s+"?(node|pwsh|powershell|explorer|winlogon|csrss|lsass|svchost|wininit|services|dwm)\b|\b(Get-Process|gps|ps)\s+"?(node|pwsh|powershell|explorer)\b[^;&]*\|\s*(Stop-Process|spps|kill)\b|\b(Stop-Process|spps|kill)\b[^;&|]*\$PID\b`,
+    String.raw`(^|[\s;&|(])(logoff|tsdiscon)(\.exe)?(\s|$)|\bipconfig(\.exe)?\s+/(release6?|renew6?)\b|\bRestart-NetAdapter\b|\bnetsh(\.exe)?\s+(interface|int)\b[^;|&]*\b(disable|disabled)\b`,
+    // Esconder archivos como de sistema, crear enlaces o uniones que apuntan a otra carpeta,
+    // cambiar el plan de energía o la hibernación, o un alias de git que ejecuta comandos:
+    // antes `attrib +h +s`, `mklink /j`, `powercfg /h off` o `git config alias.x "!…"` pasaban.
+    String.raw`\battrib(\.exe)?\b[^;|&]*\s\+[hs]\b|\bmklink\b|\bNew-Item\b[^;|&]*-ItemType\s+"?(Junction|SymbolicLink|HardLink)\b`,
+    String.raw`\bpowercfg(\.exe)?\b[^;|&]*\s[-/](h|hibernate|change|x|setactive|s|delete|d|setacvalueindex|setdcvalueindex|import|duplicatescheme|changename|restoredefaultschemes)(\s|$)`,
+    String.raw`\bgit\s+config\b[^;|&]*\salias\.\S+\s+["']?!`,
     // Lanzar procesos o borrar por WMI (`wmic process call create`, `wmic shadowcopy delete`,
     // Invoke-WmiMethod/Invoke-CimMethod): Start-Process ya preguntaba, esto no.
     String.raw`\bwmic(\.exe)?\b[^;|&]*\b(call\s+create|delete)\b|\b(Invoke-WmiMethod|Invoke-CimMethod)\b`,
