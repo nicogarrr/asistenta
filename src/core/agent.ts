@@ -589,6 +589,10 @@ export class PersonalAgent {
   readonly #sharedBudget: boolean;
   /** Quota fallback for one run (P2-17); undefined when no fallback is configured. */
   readonly #fallbackFor?: (sessionId?: string) => Model<string>;
+  /** Cadena de respaldo completa (PA_FALLBACK_MODEL + PA_FALLBACK_MODELS), en orden. */
+  readonly #fallbackChainFor?: (sessionId?: string) => Model<string>[];
+  /** PA_EXTRA_API_KEYS: pasa a la siguiente clave del proveedor (false = ninguna libre). */
+  readonly #rotateKey?: () => boolean;
   /** /modelo: modelos registrados por id; undefined si el proveedor no lo permite. */
   readonly #modelById?: (id: string, sessionId?: string) => Model<string> | undefined;
   /** Modelo elegido con /modelo para esta conversación; undefined = PA_MODEL. */
@@ -603,6 +607,10 @@ export class PersonalAgent {
     sharedBudget: boolean,
     fallbackFor?: (sessionId?: string) => Model<string>,
     modelById?: (id: string, sessionId?: string) => Model<string> | undefined,
+    resilience: {
+      fallbackChainFor?: (sessionId?: string) => Model<string>[];
+      rotateKey?: () => boolean;
+    } = {},
   ) {
     this.#agent = agent;
     this.#config = config;
@@ -613,6 +621,8 @@ export class PersonalAgent {
     this.#sharedBudget = sharedBudget;
     this.#fallbackFor = fallbackFor;
     this.#modelById = modelById;
+    this.#fallbackChainFor = resilience.fallbackChainFor;
+    this.#rotateKey = resilience.rotateKey;
   }
 
   /** /modelo: los modelos configurados (PA_MODEL, PA_FALLBACK_MODEL y PA_MODELS), sin repetir. */
@@ -716,8 +726,16 @@ export class PersonalAgent {
       deferTools?: boolean;
     } = {},
   ): Promise<PersonalAgent> {
-    const { models, model, streamFn, modelFor, fallbackFor, modelById } =
-      await createProviderHandle(config);
+    const {
+      models,
+      model,
+      streamFn,
+      modelFor,
+      fallbackFor,
+      modelById,
+      fallbackChainFor,
+      rotateKey,
+    } = await createProviderHandle(config);
     // pi-agent-core solo se carga al crear un agente: las órdenes `pa …` que no
     // hablan con el modelo (ayuda, vault, stop…) no lo pagan al arrancar.
     const { Agent } = await import('@earendil-works/pi-agent-core');
@@ -873,6 +891,7 @@ export class PersonalAgent {
       sharedBudget,
       fallbackFor,
       modelById,
+      { fallbackChainFor, rotateKey },
     );
     // Summaries come from the same model, with no tools and a short answer cap.
     personal.#summarize = async (prompt) => {
@@ -1215,6 +1234,13 @@ export class PersonalAgent {
     // back again (loudly) if the quota is still dead.
     let fellBack = false;
     const primaryModel = this.#agent.state.model;
+    // Cadena de respaldo (gap #6): con una sola reserva es exactamente lo de antes.
+    // Cada salto a otra clave o a un modelo más allá del primero da un intento más,
+    // así una cadena larga no se queda sin intentos a medio camino.
+    const chain = this.#fallbackChainFor?.(`pa-${this.#sessionId}`) ?? [];
+    let chainAt = -1;
+    let extraAttempts = 0;
+    let failsHere = 0;
     try {
       // Las capturas que ya no van en ninguna petición dejan de ocupar memoria y de
       // contar para el resumen (forgetUnsentImages).
@@ -1250,16 +1276,35 @@ export class PersonalAgent {
       let overflowRetried = false;
       for (;;) {
         while (
-          attempt < this.#config.retry.attempts &&
+          attempt < this.#config.retry.attempts + extraAttempts &&
           !this.#externalAbort &&
           Date.now() < shared.deadline &&
           isTransientProviderError(result.error)
         ) {
           attempt++;
-          // A la reserva (solo si ya está configurada): en cuanto el principal se
-          // queda sin cuota, o tras dos fallos seguidos del principal (caído).
+          failsHere++;
+          // Sin cuota (429): primero otra clave del mismo proveedor, mismo modelo.
+          // Si no queda ninguna (o no hay más), a la reserva: en cuanto el modelo en
+          // uso se queda sin cuota, o tras dos fallos seguidos (caído), al siguiente
+          // de la cadena (PA_FALLBACK_MODEL, luego PA_FALLBACK_MODELS).
           const quota = isQuotaError(result.error);
-          if (!fellBack && this.#fallbackFor && (quota || attempt >= 2)) {
+          if (quota && this.#rotateKey?.()) {
+            extraAttempts++;
+            failsHere = 0;
+          } else if (chain.length > chainAt + 1 && (quota || failsHere >= 2)) {
+            chainAt++;
+            if (chainAt > 0) extraAttempts++;
+            failsHere = 0;
+            fellBack = true;
+            const next = chain[chainAt] as Model<string>;
+            this.#agent.state.model = next;
+            log.warn(
+              quota
+                ? 'model out of quota: falling back for this run'
+                : 'model keeps failing: falling back for this run',
+              { to: next.id, step: chainAt + 1, of: chain.length },
+            );
+          } else if (!chain.length && !fellBack && this.#fallbackFor && (quota || attempt >= 2)) {
             fellBack = true;
             this.#agent.state.model = this.#fallbackFor(`pa-${this.#sessionId}`);
             log.warn(

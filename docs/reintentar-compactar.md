@@ -13,4 +13,6 @@ modelo que no esté configurado, y el cambio se guarda (`modelos.json` en el est
 
 Para tener más modelos entre los que elegir con `/modelo`, ponlos en `PA_MODELS` (separados por comas). Solo se usan si los eliges; el respaldo automático sigue siendo `PA_FALLBACK_MODEL`.
 
+Cadena de respaldo y claves de reserva: con `PA_FALLBACK_MODELS` (separados por comas) hay más respaldos detrás de `PA_FALLBACK_MODEL`; si uno se queda sin cuota, o falla dos veces seguidas, se pasa al siguiente. Con `PA_EXTRA_API_KEYS` (claves del mismo proveedor), un 429 o «cuota agotada» primero prueba con la siguiente clave y el mismo modelo, y solo cuando no queda ninguna libre salta al respaldo. Una clave agotada descansa una hora y luego se vuelve sola a la principal. Todo vale solo para esa respuesta: la siguiente empieza otra vez por el modelo principal.
+
 Al cambiar con `/modelo`, si el modelo nuevo tiene la mitad o menos de ventana de contexto que el anterior, o no ve imágenes y el anterior sí, la respuesta lo avisa («Ojo: …»). El cambio se hace igual.

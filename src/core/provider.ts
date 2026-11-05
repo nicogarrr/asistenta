@@ -3,6 +3,7 @@ import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
 import { createGeminiSignatureFetch } from './gemini-signature.js';
+import { KeyPool, parseExtraKeys } from './key-pool.js';
 import { resolveModelCaps } from './models.js';
 
 /**
@@ -36,6 +37,32 @@ export interface ProviderHandle {
    * si el id no está registrado: nunca se inventa un modelo.
    */
   modelById?: (id: string, sessionId?: string) => Model<string> | undefined;
+  /**
+   * La cadena de respaldo en orden (PA_FALLBACK_MODEL y luego PA_FALLBACK_MODELS),
+   * con las cabeceras por sesión. Ausente o vacía = sin respaldo.
+   */
+  fallbackChainFor?: (sessionId?: string) => Model<string>[];
+  /**
+   * PA_EXTRA_API_KEYS: aparca la clave en uso (429/cuota) y pasa a la siguiente.
+   * false = no queda ninguna libre. Ausente = una sola clave.
+   */
+  rotateKey?: () => boolean;
+}
+
+/**
+ * Modelos de respaldo en orden: PA_FALLBACK_MODEL y luego PA_FALLBACK_MODELS, sin
+ * repetir ni el principal.
+ */
+export function fallbackChainIds(
+  config: Pick<Config, 'model' | 'fallbackModel' | 'fallbackModels'>,
+): string[] {
+  const out: string[] = [];
+  for (const raw of [config.fallbackModel ?? '', ...(config.fallbackModels ?? [])]) {
+    const id = raw.trim();
+    if (id === '' || id === config.model || out.includes(id)) continue;
+    out.push(id);
+  }
+  return out;
 }
 
 /** Identifies this client to OpenCode Go (own user agent, never a generic SDK name). */
@@ -136,11 +163,16 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
     config.fallbackModel && config.fallbackModel !== config.model
       ? resolveModelCaps({ ...config, model: config.fallbackModel }, { envOverrides: false })
       : caps;
-  const key = await resolveApiKey(config.baseUrl);
+  // La clave de siempre primero; PA_EXTRA_API_KEYS son de reserva para el MISMO
+  // endpoint y se turnan con 429/cuota (KeyPool). Se lee en cada petición.
+  const keys = new KeyPool([
+    await resolveApiKey(config.baseUrl),
+    ...parseExtraKeys(process.env.PA_EXTRA_API_KEYS),
+  ]);
 
   const models = createModels({
     authContext: {
-      env: async (name: string) => (name === 'OPENCODE_API_KEY' ? key : undefined),
+      env: async (name: string) => (name === 'OPENCODE_API_KEY' ? keys.current() : undefined),
       fileExists: async () => false,
     },
   });
@@ -193,8 +225,14 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
             },
           ]
         : []),
-      // PA_MODELS: otros modelos para elegir con /modelo, cada uno con su ficha.
-      ...extraModelIds(config).map((id) => extraModelDef(config, id)),
+      // PA_FALLBACK_MODELS (el resto de la cadena de respaldo) y PA_MODELS (para
+      // elegir con /modelo), cada uno con su ficha y registrado una sola vez.
+      ...[
+        ...new Set([
+          ...fallbackChainIds(config).filter((id) => id !== config.fallbackModel),
+          ...extraModelIds(config),
+        ]),
+      ].map((id) => extraModelDef(config, id)),
     ],
     api: { 'openai-completions': openAICompletionsApi() },
   });
@@ -242,7 +280,35 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
     const m = models.getModel(config.provider, id);
     return m ? withGoHeaders(m, sessionId) : undefined;
   };
-  return { models, model, streamFn, modelFor, fallbackFor, modelById };
+  const chain = fallbackChainIds(config)
+    .map((id) => models.getModel(config.provider, id))
+    .filter((m): m is Model<string> => m !== undefined);
+  const fallbackChainFor = chain.length
+    ? (sessionId?: string): Model<string>[] => chain.map((m) => withGoHeaders(m, sessionId))
+    : undefined;
+  const rotateKey =
+    keys.size > 1
+      ? (): boolean => {
+          const moved = keys.rotate();
+          log.warn(
+            moved
+              ? 'API key out of quota: switching to the next one'
+              : 'every API key is out of quota',
+            { key: keys.position, of: keys.size },
+          );
+          return moved;
+        }
+      : undefined;
+  return {
+    models,
+    model,
+    streamFn,
+    modelFor,
+    fallbackFor,
+    modelById,
+    fallbackChainFor,
+    rotateKey,
+  };
 }
 
 /**
