@@ -35,7 +35,12 @@ describe('lista de la compra con botones', () => {
     const view = runCompraIntent(store, intent as NonNullable<typeof intent>);
     expect(view.text).toContain('Apuntado: leche, pan, 6 huevos.');
     expect(view.text).toContain('3 por comprar');
-    expect(view.buttons.map((b) => b.label)).toEqual(['⬜ leche', '⬜ pan', '⬜ 6 huevos']);
+    expect(view.buttons.map((b) => b.label)).toEqual([
+      '⬜ leche',
+      '⬜ pan',
+      '⬜ 6 huevos',
+      '📋 En texto',
+    ]);
     for (const b of view.buttons) {
       expect(b.action.startsWith(COMPRA_CALLBACK_PREFIX)).toBe(true);
       expect(Buffer.byteLength(b.action)).toBeLessThanOrEqual(64);

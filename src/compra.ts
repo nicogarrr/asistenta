@@ -220,11 +220,33 @@ export function compraView(items: readonly CompraItem[], note?: string): CompraV
   }));
   if (done.length)
     buttons.push({ label: '🧹 Quitar tachados', action: `${COMPRA_CALLBACK_PREFIX}limpiar` });
+  if (pending.length)
+    buttons.push({ label: '📋 En texto', action: `${COMPRA_CALLBACK_PREFIX}texto` });
   const more =
     pending.length + done.length > MAX_BUTTONS
       ? '\n(Toca para tachar; las primeras 40 llevan botón.)'
       : '\nToca una para tacharla.';
   return { text: `${head}${lines.join('\n')}${more}`, buttons };
+}
+
+/**
+ * Lo que falta, en texto llano para copiarlo o reenviarlo (a quien va a la compra, a un
+ * grupo): sin casillas ni botones, una cosa por línea.
+ */
+export function compraTexto(items: readonly CompraItem[]): string {
+  const pending = items.filter((i) => !i.done);
+  if (!pending.length) return '🛒 No falta nada en la lista de la compra.';
+  return ['Lista de la compra:', ...pending.map((i) => `- ${i.text}`)].join('\n');
+}
+
+/** La lista en texto (para copiar o reenviar), con un botón para volver a la de tachar. */
+export function compraTextoView(items: readonly CompraItem[]): CompraView {
+  return {
+    text: compraTexto(items),
+    buttons: items.length
+      ? [{ label: '↩️ Volver a la lista', action: `${COMPRA_CALLBACK_PREFIX}ver` }]
+      : [],
+  };
 }
 
 /** Pulsación de un botón de la lista: aplica y devuelve la vista nueva. */
@@ -233,12 +255,14 @@ export function compraPress(store: CompraStore, data: string): CompraView {
   const toggle = /^t:(\d{1,9})$/.exec(action);
   if (toggle) store.toggle(Number(toggle[1]));
   else if (action === 'limpiar') store.clearDone();
+  else if (action === 'texto') return compraTextoView(store.list());
   return compraView(store.list());
 }
 
 export type CompraIntent =
   | { kind: 'add'; items: string[] }
   | { kind: 'show' }
+  | { kind: 'text' }
   | { kind: 'clearDone' }
   | { kind: 'clearAll' };
 
@@ -261,8 +285,17 @@ export function compraIntent(text: string | undefined): CompraIntent | null {
     )
   )
     return { kind: 'show' };
+  // «pásame la lista para copiar», «comparte la lista de la compra», «la lista en texto»:
+  // en texto llano, sin casillas, para reenviarla a quien va a comprar.
   if (
-    /^(?:borra|quita|limpia|elimina) (?:lo tachado|los tachados|lo comprado|lo ya comprado)(?: de la lista)?$/.test(
+    /^(?:(?:pasame|mandame|dame|escribeme|ponme|comparte|compartir|reenvia)\s+)?(?:la\s+|mi\s+)?lista(?: de (?:la )?compra)?\s+(?:en texto|para (?:copiar|copiarla|reenviar|reenviarla|mandar|mandarla|compartir|compartirla|pegar|pegarla))$/.test(
+      f,
+    ) ||
+    /^(?:comparte|compartir|reenvia) (?:la |mi )?lista de (?:la )?compra$/.test(f)
+  )
+    return { kind: 'text' };
+  if (
+    /^(?:borra(?:me)?|quita(?:me)?|limpia|elimina|vacia|saca) (?:lo tachado|los tachados|las tachadas|lo comprado|lo ya comprado|lo que (?:ya )?he comprado)(?: de la lista(?: de (?:la )?compra)?)?$/.test(
       f,
     )
   )
@@ -302,6 +335,8 @@ export function runCompraIntent(store: CompraStore, intent: CompraIntent): Compr
       const n = store.clearAll();
       return compraView([], n ? `Lista vaciada (${n}).` : undefined);
     }
+    case 'text':
+      return compraTextoView(store.list());
     default:
       return compraView(store.list());
   }
@@ -318,8 +353,12 @@ const Params = lazySchema(() =>
         Type.Literal('quitar'),
         Type.Literal('limpiar_tachados'),
         Type.Literal('vaciar'),
+        Type.Literal('texto'),
       ],
-      { description: 'añadir | ver | tachar | destachar | quitar | limpiar_tachados | vaciar' },
+      {
+        description:
+          'añadir | ver | tachar | destachar | quitar | limpiar_tachados | vaciar | texto (lo que falta en texto llano, para copiar o reenviar)',
+      },
     ),
     cosas: Type.Optional(
       Type.String({
@@ -381,6 +420,8 @@ export function createCompraTool(store: CompraStore): AgentTool<ReturnType<typeo
         case 'vaciar':
           note = `Lista vaciada (${store.clearAll()}).`;
           break;
+        case 'texto':
+          return { content: [{ type: 'text', text: compraTexto(store.list()) }], details: {} };
         default:
           break;
       }
