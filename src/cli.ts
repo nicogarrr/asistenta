@@ -2652,7 +2652,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         sync: () => routineRunner.sync(),
         nextOf: liveNextOf(() => routineRunner.status()),
       }),
-      createLatidoTool({ latidos, scopeOf: scope, chatIdOf: () => chatIdOf(thread.chatKey) }),
+      createLatidoTool({
+        latidos,
+        scopeOf: scope,
+        chatIdOf: () => chatIdOf(thread.chatKey),
+        timeZone: localTimeZone(),
+      }),
       createGasolinerasTool({
         store,
         scopeOf: scope,
