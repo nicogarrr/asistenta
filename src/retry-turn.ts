@@ -17,6 +17,8 @@ export interface RetryableTurn<A = unknown, I = unknown> {
   mark: number;
   /** Resúmenes hechos hasta entonces: si cambian, el índice ya no vale. */
   compactions: number;
+  /** message_id del mensaje del dueño: el botón «🔄 Reintentar» solo repite ESE mensaje. */
+  messageId?: string;
 }
 
 export class LastTurns<A = unknown, I = unknown> {
@@ -47,6 +49,30 @@ export function rewindLastTurn<A>(
   if (current.compactions !== turn.compactions) return 0;
   if (turn.mark < 0 || turn.mark > current.messages.length) return 0;
   return current.messages.splice(turn.mark).length;
+}
+
+/** Etiqueta del botón que sale bajo una respuesta que falló. */
+export const RETRY_BUTTON_LABEL = '🔄 Reintentar';
+
+/** Aviso si el botón «🔄 Reintentar» es de un mensaje que ya no es el último. */
+export const RETRY_STALE_TEXT =
+  'Ese botón es de un mensaje anterior y ya me has escrito después. Si aún lo quieres, mándamelo otra vez.';
+
+/**
+ * El message_id que lleva «/reintentar <id>» (el botón), o undefined si se escribió a
+ * mano sin id (entonces repite el último, como siempre).
+ */
+export function retryTarget(text: string): string | undefined {
+  return /^\/reintentar(?:@\w+)?\s+(\d{1,20})\s*$/i.exec(text.trim())?.[1];
+}
+
+/**
+ * ¿Repite el botón el último mensaje? Un botón viejo (ya se escribió otra cosa después)
+ * no debe repetir un mensaje distinto del que falló.
+ */
+export function retryMatches(last: { messageId?: string } | undefined, target?: string): boolean {
+  if (target === undefined) return true;
+  return last?.messageId === target;
 }
 
 /** «~12,3 mil» para un número de tokens. */

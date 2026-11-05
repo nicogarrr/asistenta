@@ -89,7 +89,7 @@ describe('qué respuestas llevan «Sí» / «No»', () => {
 
   it('la respuesta del asistente los lleva cuando no se recortó', () => {
     const cli = readFileSync('src/cli.ts', 'utf8');
-    expect(cli).toMatch(/: quickReplyButtons\(short\.text\)/);
+    expect(cli).toMatch(/: \(retry \?\? quickReplyButtons\(short\.text\)\)/);
   });
 });
 
