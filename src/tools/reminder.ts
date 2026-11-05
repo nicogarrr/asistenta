@@ -191,6 +191,8 @@ export function whenFromWords(
     // «a las 9,30»: la coma de los minutos, como se escribe en el móvil.
     .replace(/\b(\d{1,2}),(\d{2})\b/g, '$1:$2');
   if (!text || text.length > 80) return null;
+  const spoken = horaHablada(text);
+  if (spoken !== text) return whenFromWords(spoken, now, timeZone, opts);
   // `exact`: las palabras son SOLO la hora («en 10 minutos llamo a Ana» no vale).
   const read = (t: string): Date | null => {
     const got = parseFechaCalendario(`${t} recordatorio`, now, timeZone);
@@ -218,6 +220,95 @@ export function whenFromWords(
   const todayPm = twin(today);
   if (soon(todayPm)) return todayPm;
   return read(`mañana ${text}`);
+}
+
+/**
+ * Formas habladas de decir una hora exacta, pasadas a las que entiende el lector de fechas:
+ * «en un cuarto de hora» → «en 15 minutos», «en hora y media» → «en 90 minutos»,
+ * «a mediodía» → «a las 12:00», «a medianoche» (sin día) → «mañana a las 0:00».
+ */
+export function horaHablada(text: string): string {
+  return text
+    .replace(/^(?:en|dentro de)\s+(?:un\s+)?cuarto de hora$/iu, 'en 15 minutos')
+    .replace(/^(?:en|dentro de)\s+tres cuartos de hora$/iu, 'en 45 minutos')
+    .replace(/^(?:en|dentro de)\s+(?:una\s+)?hora y media$/iu, 'en 90 minutos')
+    .replace(/^(?:en|dentro de)\s+(?:dos|2)\s+horas y media$/iu, 'en 150 minutos')
+    .replace(/^(?:en|dentro de)\s+(?:una\s+)?hora y (?:un\s+)?cuarto$/iu, 'en 75 minutos')
+    .replace(/\b(?:a|al)\s+mediod[ií]a$/iu, 'a las 12:00')
+    .replace(/^(?:a|esta)\s+medianoche$/iu, 'mañana a las 0:00');
+}
+
+/** Partes del día sin hora: la hora que se pone si no se dice otra, y la franja en la que cae. */
+const FRANJAS: Record<string, { def: number; from: number; to: number; label: string }> = {
+  primera: { def: 8, from: 6, to: 10, label: 'a primera hora' },
+  manana: { def: 9, from: 6, to: 13, label: 'por la mañana' },
+  tarde: { def: 17, from: 14, to: 21, label: 'por la tarde' },
+  noche: { def: 21, from: 20, to: 24, label: 'por la noche' },
+};
+
+const WEEKDAY = '(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)';
+const FRANJA_RE = new RegExp(
+  `^(?:(hoy|manana|pasado manana|(?:el|este) ${WEEKDAY})\\s+)?(?:por la (manana|tarde|noche)|a primera hora|temprano)$`,
+);
+
+/**
+ * «mañana por la mañana», «esta noche», «el sábado por la tarde», «a primera hora»: un día y
+ * una parte del día, sin hora. `at` es la hora que se pone si el modelo no eligió otra dentro
+ * de la franja [from, to). null si las palabras no son solo eso o la franja ya pasó.
+ */
+export function franjaFromWords(
+  said: string,
+  now: Date,
+  timeZone?: string,
+): { at: Date; from: Date; to: Date; label: string } | null {
+  const text = foldAccents(said.normalize('NFC'))
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?¡¿]+$/u, '');
+  if (!text || text.length > 60) return null;
+  let day = '';
+  let part = '';
+  const esta = /^esta (manana|tarde|noche)$/.exec(text);
+  if (esta?.[1]) {
+    day = 'hoy';
+    part = esta[1];
+  } else {
+    const m = FRANJA_RE.exec(text);
+    if (!m) return null;
+    day = m[1] ?? '';
+    part = m[2] ?? 'primera';
+    // «mañana temprano» / «mañana a primera hora»: la franja de primera hora.
+  }
+  const f = FRANJAS[part];
+  if (!f) return null;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const dayWords = day.replace(/^manana$/, 'mañana').replace(/^pasado manana$/, 'pasado mañana');
+  const readOn = (d: string, hour: number): Date | null =>
+    parseFechaCalendario(`${d ? `${d} ` : ''}a las ${pad(hour)}:00 recordatorio`, now, timeZone)
+      ?.start ?? null;
+  const span = (d: string): { at: Date; from: Date; to: Date; label: string } | null => {
+    const at = readOn(d, f.def);
+    if (!at) return null;
+    const from = new Date(at.getTime() - (f.def - f.from) * 3_600_000);
+    const to = new Date(at.getTime() + (f.to - f.def) * 3_600_000);
+    return { at, from, to, label: f.label };
+  };
+  const soonMs = now.getTime() + MIN_REMINDER_MS;
+  if (!dayWords || dayWords === 'hoy') {
+    const today = span('hoy');
+    if (today && localDay(today.at) === localDay(now)) {
+      if (today.at.getTime() >= soonMs) return today;
+      // Ya dentro de la franja: dentro de una hora, si cabe.
+      const inHour = new Date(now.getTime() + 3_600_000);
+      if (today.to.getTime() > inHour.getTime() && today.from.getTime() <= now.getTime()) {
+        return { ...today, at: inHour };
+      }
+    }
+    // «esta tarde» que ya pasó no se pasa a mañana; «por la tarde» sin día, sí.
+    return dayWords === 'hoy' ? null : span('mañana');
+  }
+  return span(dayWords);
 }
 
 /** Lo que dice de qué parte del día es: con esto la hora ya no tiene dos lecturas. */
@@ -760,7 +851,10 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       const saidWords =
         schedule === undefined && typeof args.said === 'string' ? args.said.trim() : '';
       const fromWords = saidWords ? whenFromWords(saidWords, new Date(now())) : null;
-      if (given.length === 0 && fromWords) given.push(saidWords);
+      // «mañana por la mañana», «esta noche»: una franja sin hora. Vale la hora del modelo si
+      // cae dentro; si no, o si no dio ninguna, la de siempre (9:00, 17:00, 21:00…).
+      const franja = saidWords && !fromWords ? franjaFromWords(saidWords, new Date(now())) : null;
+      if (given.length === 0 && (fromWords || franja)) given.push(saidWords);
       if (given.length !== 1) {
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
@@ -841,12 +935,18 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
           parsed = shifted;
           corrected = ` Esa noche el reloj salta de las 2:00 a las 3:00 (horario de verano), así que lo he puesto a las ${stamp(shifted).slice(11)}.`;
         }
-        if (!parsed && !fromWords) {
+        if (!parsed && !fromWords && !franja) {
           return reply('at debe ser YYYY-MM-DDTHH:MM (hora local, fecha real).', true);
         }
-        when = parsed ?? (fromWords as Date);
+        when = parsed ?? fromWords ?? (franja?.at as Date);
       } else {
-        when = fromWords as Date;
+        when = fromWords ?? (franja?.at as Date);
+      }
+      if (franja && (when < franja.from || when >= franja.to)) {
+        if (args.at !== undefined || args.in_minutes !== undefined) {
+          corrected = ` Lo he puesto ${franja.label} como dijiste («${saidWords}»), no a ${stamp(when)}.`;
+        }
+        when = franja.at;
       }
       // Las palabras del dueño mandan: el modelo a veces se equivocaba de día o de hora al
       // pasar «mañana a las 9,30» o «el viernes» a una fecha (un día de más, las 9:00).
