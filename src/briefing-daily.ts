@@ -61,6 +61,8 @@ export interface DailyBriefingDeps {
   deliveries?: () => BriefingInput['deliveries'] | Promise<BriefingInput['deliveries']>;
   /** Vigilancias de precio activas del dueño. */
   watches?: () => BriefingInput['watches'] | Promise<BriefingInput['watches']>;
+  /** Cumpleaños y aniversarios que contó el dueño y caen en los próximos días. */
+  dates?: () => BriefingInput['dates'] | Promise<BriefingInput['dates']>;
   sourceTimeoutMs?: number;
   warn?: (msg: string, meta?: Record<string, unknown>) => void;
 }
@@ -136,6 +138,7 @@ export async function composeDailyBriefing(
       within('tareas', deps.tasks, [], ms, deps.warn),
       within('repartos', deps.deliveries, [], ms, deps.warn),
     ]);
+  const dates = await within('fechas', deps.dates, [], ms, deps.warn);
   const festivoDep = deps.festivo;
   const festivo =
     deps.agenda && festivoDep
@@ -155,6 +158,7 @@ export async function composeDailyBriefing(
     watches: watches ?? [],
     tasks: tasks ?? [],
     deliveries: deliveries ?? [],
+    dates: dates ?? [],
   };
   const empty =
     !input.weather &&
@@ -165,6 +169,8 @@ export async function composeDailyBriefing(
     input.routines.length === 0 &&
     input.reminders.length === 0 &&
     input.followups.length === 0 &&
+    // Un cumpleaños hoy o mañana justifica el mensaje; uno dentro de 5 días, solo, no.
+    !(input.dates ?? []).some((d) => d.inDays <= 1) &&
     (input.mail?.length ?? 0) === 0 &&
     // Un objetivo en marcha o una vigilancia sin novedad no justifican un mensaje
     // por sí solos; un bloqueo (espera decisión) o un precio ya bajo el objetivo, sí.

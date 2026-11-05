@@ -9,10 +9,11 @@ import { buildNowNote } from '../datecontext.js';
 import type { Store } from '../db.js';
 import { log } from '../log.js';
 import { renderMemoryContext } from '../memory/context.js';
+import { upcomingDates, upcomingDatesNote } from '../memory/fechas.js';
 import type { OwnerProfile } from '../memory/profile.js';
 import { buildMemoryPromptSection } from '../memory/prompt.js';
 import type { SessionStore } from '../memory/sessions.js';
-import type { MemorySnapshot } from '../memory/snapshot.js';
+import { ENTRY_SEPARATOR, type MemorySnapshot } from '../memory/snapshot.js';
 import type { WorkstreamStore } from '../memory/workstreams.js';
 import { type MemoryStore, memoryScopesFor } from '../memory.js';
 import { clearInterrupted, describeBusy, interruptedTasks, openBusyItems } from '../ocupada.js';
@@ -75,7 +76,8 @@ export function buildContextNote(
   // 9b: memory as an index - the last 5 active entries in full, the rest as
   // one-line rows; superseded facts are never rendered and the section is
   // capped (see src/memory/context.ts, measured in scripts/memory-bench.ts).
-  const renderedMemory = renderMemoryContext(memory.allIn(memoryScopesFor(thread.key).read));
+  const memoryEntries = memory.allIn(memoryScopesFor(thread.key).read);
+  const renderedMemory = renderMemoryContext(memoryEntries);
   // Perfil v2 por propietario: una sola sección (perfil + memoria) sin duplicar
   // el PERFIL.md. Si v2 está vacío se usa el perfil legado tal cual.
   let profileSection = '';
@@ -177,6 +179,20 @@ export function buildContextNote(
   // The remote `buildNowNote()` replaces the raw `<now>` tag: it says which day
   // "mañana" actually is, so a reply asked at 00:05 does not read it as today.
   parts.push(buildNowNote());
+  // Cumpleaños y aniversarios que el dueño contó y caen en 7 días: el modelo se acuerda
+  // solo (antes estaban apuntados pero nada miraba el calendario). Nada si no toca.
+  if (ownerView) {
+    try {
+      const texts = [
+        ...(snapshot?.load().split(ENTRY_SEPARATOR) ?? []),
+        ...memoryEntries.filter((e) => !e.supersededBy).map((e) => e.text),
+      ];
+      const dates = upcomingDatesNote(upcomingDates(texts, new Date()));
+      if (dates) parts.push(dates);
+    } catch (err) {
+      log.warn('upcoming dates failed', { err: String(err) });
+    }
+  }
   // PERSONALIDAD.md (tono y estilo que eligió el dueño): solo en su chat privado.
   if (ownerView) {
     const personality = renderPersonality();
