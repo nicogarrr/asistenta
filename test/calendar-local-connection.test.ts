@@ -139,7 +139,7 @@ it('wires the same state file into the tool and vigilante, and guards the writer
     writer.indexOf('await appendEvent'),
   );
   // La frase «calendario local (no a Google)» vive en confirmacionCalendario (bugs7 test).
-  expect(writer).toContain('confirmacionCalendario(title, start, new Date())');
+  expect(writer).toMatch(/confirmacionCalendario\(title, start, new Date\(\)[,)]/);
 });
 it('keeps calendar degradation observable in the proactive reader', async () => {
   const { upcomingEvents } = await import('../src/agenda/ics.js');
