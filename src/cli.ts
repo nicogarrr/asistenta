@@ -305,7 +305,7 @@ import {
   searchSkillIndex,
   skillPickAnswer,
 } from './skills/search.js';
-import { loadDatabaseSync } from './sqlite.js';
+import { openSqlite } from './sqlite.js';
 import {
   checkTelegramToken,
   SERVE_TELEGRAM_RETRY_DELAYS_MS,
@@ -1718,11 +1718,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * other out mid-turn.
    */
   setUndoDir(join(paths.state, 'undo'));
-  const DatabaseSync = loadDatabaseSync();
-  const memoryDb = new DatabaseSync(join(paths.state, 'memory.db'));
-  const goalsDb = new DatabaseSync(join(paths.state, 'goals.db'));
-  memoryDb.exec('PRAGMA journal_mode = WAL');
-  memoryDb.exec('PRAGMA busy_timeout = 5000');
+  // Las tres bases con espera si otro proceso las tiene cogidas (backup, pa mcp…).
+  const memoryDb = openSqlite(join(paths.state, 'memory.db'), { wal: true });
+  const goalsDb = openSqlite(join(paths.state, 'goals.db'), { wal: true });
   const sessions = new SessionStore({ db: memoryDb });
   const instincts = new InstinctStore({ db: memoryDb });
   const workstreams = new WorkstreamStore({ db: memoryDb });
@@ -1732,7 +1730,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
   const lastTurns = new LastTurns<unknown, NonNullable<Inbound['images']>[number]>();
   const weeklyState = new WeeklyState(memoryDb);
-  const voiceDb = new DatabaseSync(join(paths.state, 'voice.db'));
+  const voiceDb = openSqlite(join(paths.state, 'voice.db'), { wal: true });
   const bargeStats = new BargeStats(voiceDb);
   // One sweep at boot: patterns the user stopped showing lose their weight and
   // the ones that hit zero go, so old accidents cannot steer the daemon forever.

@@ -18,7 +18,7 @@ import {
 import type { EffectClass } from './gestor/effects.js';
 import { log, redact } from './log.js';
 import { reaAskReason } from './mcp/rea.js';
-import { loadDatabaseSync } from './sqlite.js';
+import { openSqlite } from './sqlite.js';
 import { stableStringify } from './utils.js';
 
 /**
@@ -719,8 +719,7 @@ function blobOf(c: ToolCall): string {
 export function listAlwaysGrants(dbPath: string | undefined): string[] {
   if (!dbPath) return [];
   mkdirSync(dirname(dbPath), { recursive: true });
-  const DatabaseSync = loadDatabaseSync();
-  const db = new DatabaseSync(dbPath);
+  const db = openSqlite(dbPath);
   try {
     ensureScopeTable(db);
     return db
@@ -749,8 +748,7 @@ export interface AlwaysGrantWithChat {
 export function listAlwaysGrantsWithChat(dbPath: string | undefined): AlwaysGrantWithChat[] {
   if (!dbPath) return [];
   mkdirSync(dirname(dbPath), { recursive: true });
-  const DatabaseSync = loadDatabaseSync();
-  const db = new DatabaseSync(dbPath);
+  const db = openSqlite(dbPath);
   try {
     ensureScopeTable(db);
     return db
@@ -779,8 +777,7 @@ export function deleteAlwaysGrant(
 ): boolean {
   if (!dbPath) return false;
   mkdirSync(dirname(dbPath), { recursive: true });
-  const DatabaseSync = loadDatabaseSync();
-  const db = new DatabaseSync(dbPath);
+  const db = openSqlite(dbPath);
   try {
     ensureScopeTable(db);
     // También las claves por acción (`always:tool:action:hash`), o revocar una
@@ -2259,8 +2256,8 @@ export class Gate {
   #withScopeDb<T>(fn: (db: DatabaseSync) => T): T | undefined {
     if (!this.#dbPath) return undefined;
     mkdirSync(dirname(this.#dbPath), { recursive: true });
-    const DatabaseSync = loadDatabaseSync();
-    const db = new DatabaseSync(this.#dbPath);
+    // Con espera: otro proceso (pa permisos, el panel) puede tener la base cogida.
+    const db = openSqlite(this.#dbPath);
     try {
       ensureScopeTable(db);
       return fn(db);
@@ -3430,8 +3427,7 @@ export interface AlwaysGrantDated {
 export function listAlwaysGrantsDated(dbPath: string | undefined): AlwaysGrantDated[] {
   if (!dbPath) return [];
   mkdirSync(dirname(dbPath), { recursive: true });
-  const DatabaseSync = loadDatabaseSync();
-  const db = new DatabaseSync(dbPath);
+  const db = openSqlite(dbPath);
   try {
     ensureScopeTable(db);
     return db
