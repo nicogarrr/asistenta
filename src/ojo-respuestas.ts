@@ -3,12 +3,16 @@
  * (Nico, 1 nov: «como estamos hablando nosotros»). La respuesta normal lo enciende.
  */
 
+import { esSiRespuesta } from './daemon/pregunta-pendiente.js';
+import { foldAccents } from './text.js';
+
 /** «enciéndelo», «sí», «actívalo»: la respuesta que enciende lo que estaba apagado. */
 const ENCIENDE =
   /^(?:s[ií]|vale|venga|dale|enci[eé]nde(?:lo|la)?|act[ií]va(?:lo|la)?|pr[eé]nde(?:lo|la)?)[.!]*$/i;
 
 export function ojoOnAnswer(text: string): boolean {
-  return ENCIENDE.test(text.trim());
+  // «sí, enciéndelo», «vale, actívalo», «sí porfa»: antes solo valía una palabra suelta.
+  return ENCIENDE.test(text.trim()) || esSiRespuesta(text);
 }
 
 export const DOWNLOADS_OFF_TEXT =
@@ -25,8 +29,41 @@ export const OJO_OFF_HINT = 'Si quieres que lo apague, dime «apágalo».';
 
 const APAGA = /^(?:ap[aá]ga(?:lo|la)?|qu[ií]ta(?:lo|la)|desact[ií]va(?:lo|la)?)[.!]*$/i;
 
+const APAGA_PALABRAS = new Set([
+  'apaga',
+  'apagalo',
+  'apagala',
+  'quitalo',
+  'quitala',
+  'desactiva',
+  'desactivalo',
+  'desactivala',
+]);
+const APAGA_RELLENO = new Set([
+  'si',
+  'vale',
+  'venga',
+  'ok',
+  'porfa',
+  'por',
+  'favor',
+  'gracias',
+  'ya',
+]);
+
 export function ojoOffAnswer(text: string): boolean {
-  return APAGA.test(text.trim());
+  if (APAGA.test(text.trim())) return true;
+  // «sí, apágalo», «apágalo porfa», «vale, quítalo»: antes solo valía una palabra suelta.
+  const words = foldAccents(text.toLocaleLowerCase('es'))
+    .replace(/[¡!¿?.,;:«»"]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  return (
+    words.length > 0 &&
+    words.length <= 5 &&
+    words.some((w) => APAGA_PALABRAS.has(w)) &&
+    words.every((w) => APAGA_PALABRAS.has(w) || APAGA_RELLENO.has(w))
+  );
 }
 
 /** /memoria olvidar sin código: pregunta cuál, sin mandar a «/memoria olvidar …». */
