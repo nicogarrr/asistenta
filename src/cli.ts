@@ -7331,6 +7331,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         prompt,
         inbound.replyQuote,
         messageThread.get(`${chatKey(inbound)}:${inbound.replyToMessageId}`) === thread.key,
+        inbound.replyQuotePart,
       );
 
       // Memory and routines are injected as a system message, so they read as
@@ -9111,8 +9112,14 @@ export function voiceNotePrompt(
  * la conversación (`linked`). Va marcada como cita: los comandos y las respuestas «sí»
  * se siguen leyendo solo del texto del dueño, que no cambia.
  */
-export function withReplyQuote(prompt: string, quote: string | undefined, linked: boolean): string {
-  return quote && !linked ? `${quote}\n${prompt}` : prompt;
+export function withReplyQuote(
+  prompt: string,
+  quote: string | undefined,
+  linked: boolean,
+  part?: string,
+): string {
+  const head = [quote && !linked ? quote : '', part ?? ''].filter(Boolean).join('\n');
+  return head ? `${head}\n${prompt}` : prompt;
 }
 
 /** Un documento del mensaje, con la referencia con la que se indexa su transcripción. */

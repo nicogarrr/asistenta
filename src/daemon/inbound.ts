@@ -194,11 +194,13 @@ export function mergeBatchedInbounds(
   const pieces = items.map((item, i) => {
     const at = item.sentAt ?? item.receivedAt;
     const when = at ? ` · ${opts.time(at)}` : '';
-    const quote = item.replyQuote && !opts.linked(item) ? `${item.replyQuote}\n` : '';
+    const quote =
+      (item.replyQuote && !opts.linked(item) ? `${item.replyQuote}\n` : '') +
+      (item.replyQuotePart ? `${item.replyQuotePart}\n` : '');
     return `[Mensaje ${i + 1} de ${items.length}${when}]\n${quote}${item.text}`;
   });
   // Las citas ya van en su pieza; la marca de reenviado, en el texto de la suya.
-  const { replyQuote: _quote, forwardedFrom: _forwarded, ...rest } = last;
+  const { replyQuote: _quote, replyQuotePart: _part, forwardedFrom: _forwarded, ...rest } = last;
   return { ...rest, text: [BATCH_HEADER, ...pieces].join('\n\n') };
 }
 

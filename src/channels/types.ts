@@ -100,6 +100,12 @@ export interface Inbound {
    * Ana: «…»]»). Solo llega al modelo si ese mensaje no está ya en la conversación.
    */
   replyQuote?: string;
+  /**
+   * El trozo concreto que se citó al responder («[Responde en concreto a esta parte:
+   * «…»]»). Llega al modelo siempre, aunque el mensaje respondido ya esté en la
+   * conversación: es lo que dice a qué parte se refiere.
+   */
+  replyQuotePart?: string;
   /** Chat metadata the adapter can supply: is this a group? */
   isGroup?: boolean;
   messageId: string;
