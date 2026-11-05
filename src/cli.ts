@@ -256,7 +256,6 @@ import { detectMemoryWorthy } from './memory/nudges.js';
 import {
   aboutMeText,
   aboutTopicRequest,
-  aboutTopicText,
   alreadySaid,
   factSavedLine,
   forgetRequest,
@@ -269,6 +268,7 @@ import {
 } from './memory/owner-facts.js';
 import { answerOwnerQuestion } from './memory/owner-questions.js';
 import { ownerQuietHours } from './memory/owner-quiet.js';
+import { aboutTopicAnywhere } from './memory/recuerdas.js';
 import { contradictionsReply } from './memory/review.js';
 import { semanticFromEnv } from './memory/semantic.js';
 import { SessionStore } from './memory/sessions.js';
@@ -5717,11 +5717,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, aboutMeText(entries.filter((e) => e.trim())), { quote: true });
       return true;
     }
-    // «¿qué recuerdas del dentista?»: lo apuntado sobre eso, al momento. Si no hay nada en el
-    // perfil lo lleva el modelo, que también mira el resto de la memoria.
+    // «¿qué recuerdas del dentista?»: lo apuntado sobre eso, al momento; si en el perfil no
+    // hay nada, lo que haya en el resto de la memoria. Si tampoco, lo lleva el modelo.
     const topic = aboutTopicRequest(text);
     if (topic) {
-      const reply = aboutTopicText(snapshot.load().split(ENTRY_SEPARATOR), topic);
+      const reply = aboutTopicAnywhere(
+        snapshot.load().split(ENTRY_SEPARATOR),
+        memory.allIn(memoryScopesFor(chatKey(inbound)).read).filter((e) => e.supersededBy === null),
+        topic,
+      );
       if (reply) {
         await say(inbound, reply, { quote: true });
         return true;
