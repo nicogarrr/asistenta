@@ -580,11 +580,13 @@ import { createDivisasTool } from './tools/divisas.js';
 import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
+import { createEntregableTool } from './tools/entregable.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createGasolinerasTool } from './tools/gasolineras.js';
+import { createGastosTool } from './tools/gastos.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createLuzTool } from './tools/luz.js';
@@ -2547,6 +2549,45 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // «Hazme una página con mis gastos (y que se rehaga cada mañana)»: tarjeta Páginas del panel.
       createPaginaVivaTool({
         store: paginasVivas,
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
+      // «Hazme una gráfica de mis gastos», «pásamelo en Excel / en PDF»: el archivo se
+      // genera en el PC (sin red) y va a esta conversación (al panel en un turno del panel).
+      createEntregableTool({
+        sendPhoto: (png) =>
+          ctx
+            .sendPhoto(png, () =>
+              telegram
+                .sendPhotoBytes(chatNumberOf(thread.chatKey), png, inboundFor(thread).threadId)
+                .then(() => true),
+            )
+            .then(() => true)
+            .catch((err: unknown) => {
+              log.warn('entregable: no se pudo mandar la imagen', { err: String(err) });
+              return false;
+            }),
+        sendDocument: (bytes, filename, caption) =>
+          ctx
+            .sendFile({ bytes, name: filename }, () =>
+              telegram
+                .sendDocumentBytes(
+                  chatNumberOf(thread.chatKey),
+                  bytes,
+                  filename,
+                  caption,
+                  inboundFor(thread).threadId,
+                )
+                .then(() => true),
+            )
+            .then(() => true)
+            .catch((err: unknown) => {
+              log.warn('entregable: no se pudo mandar el archivo', { err: String(err) });
+              return false;
+            }),
+      }),
+      // «¿Cuánto he gastado este mes?»: los cobros que el Ojo ya apunta del correo; solo el dueño.
+      createGastosTool({
+        db: memoryDb,
         allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
       }),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
