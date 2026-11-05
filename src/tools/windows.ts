@@ -216,18 +216,33 @@ export async function listControls(
   controls: ControlInfo[];
   note: string;
 }> {
-  const filter = (match ?? '').replace(/'/g, "''");
+  // La ventana se busca primero aquí, con pickWindow (sin tildes ni mayúsculas, o por
+  // programa: «configuracion» → «Configuración», «spotify» → la canción que suena). El
+  // filtro de PowerShell (-like y el nombre exacto de UIA) distingue tildes, y antes
+  // «controles de configuracion» acababa en la ventana enfocada o en NOTFOUND.
+  const wanted = (match ?? '').trim();
+  const windows = wanted ? await listWindows() : null;
+  const target = windows ? pickWindow(windows, wanted) : undefined;
+  const filter = (target?.title ?? wanted).replace(/'/g, "''");
+  const targetHandle = target && Number.isSafeInteger(target.handle) ? target.handle : 0;
   // Resolved here so the script can prefer the window the user is actually looking
   // at, and so the foreground probe is a single PowerShell round trip rather than one
-  // per candidate window.
-  const fgPid = Number((await foregroundPid()).trim()) || 0;
+  // per candidate window (listWindows already asked it when there is a match).
+  const fgPid = windows
+    ? (windows.find((w) => w.focused)?.pid ?? 0)
+    : Number((await foregroundPid()).trim()) || 0;
   const script = `
 $ErrorActionPreference='Stop'
 $PA_FOREGROUND_PID = ${fgPid}
+$PaTargetHandle = ${targetHandle}
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 $win = $null
-if ('${filter}' -ne '') {
+if ($PaTargetHandle -ne 0) {
+  # The window already picked in node (title without accents, or by program name).
+  try { $win = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$PaTargetHandle) } catch { $win = $null }
+}
+if ($null -eq $win -and '${filter}' -ne '') {
   # Descendants, not Children: the desktop root's direct children are usually a single
   # unnamed shell pane, and the real windows sit below it. A Children-only lookup finds
   # nothing at all on a session whose shell is arranged that way, which is exactly the
