@@ -191,6 +191,8 @@ export function whenFromWords(
     // «a las 9,30»: la coma de los minutos, como se escribe en el móvil.
     .replace(/\b(\d{1,2}),(\d{2})\b/g, '$1:$2');
   if (!text || text.length > 80) return null;
+  const night = medianocheDe(text, now, timeZone);
+  if (night) return whenFromWords(night, now, timeZone, opts);
   const spoken = horaHablada(text);
   if (spoken !== text) return whenFromWords(spoken, now, timeZone, opts);
   // `exact`: las palabras son SOLO la hora («en 10 minutos llamo a Ana» no vale).
@@ -236,6 +238,37 @@ export function horaHablada(text: string): string {
     .replace(/^(?:en|dentro de)\s+(?:una\s+)?hora y (?:un\s+)?cuarto$/iu, 'en 75 minutos')
     .replace(/\b(?:a|al)\s+mediod[ií]a$/iu, 'a las 12:00')
     .replace(/^(?:a|esta)\s+medianoche$/iu, 'mañana a las 0:00');
+}
+
+const DIAS_NOCHE = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+
+/**
+ * «Medianoche» de un día es el 0:00 de la noche SIGUIENTE: «el sábado a medianoche» →
+ * «el domingo a las 0:00», «mañana a medianoche» → «pasado mañana a las 0:00», «hoy a
+ * medianoche» → «mañana a las 0:00». Antes solo se entendía «a medianoche» sin día y con
+ * día no se leía nada. null si no es eso.
+ */
+export function medianocheDe(text: string, now: Date, timeZone?: string): string | null {
+  const t = foldAccents(text.toLowerCase()).replace(/\s+/g, ' ').trim();
+  const m =
+    /^(hoy|esta noche|manana|pasado manana|(?:el\s+)?(?:proximo\s+)?(domingo|lunes|martes|miercoles|jueves|viernes|sabado)(?:\s+que viene)?)\s+(?:a\s+|por\s+la\s+|de\s+)?(?:la\s+)?medianoche$/.exec(
+      t,
+    );
+  if (!m?.[1]) return null;
+  if (m[1] === 'hoy' || m[1] === 'esta noche') return 'mañana a las 0:00';
+  if (m[1] === 'manana') return 'pasado mañana a las 0:00';
+  if (m[1] === 'pasado manana') return 'dentro de 3 días a las 0:00';
+  const day = DIAS_NOCHE.indexOf(m[2] ?? '');
+  if (day < 0) return null;
+  const today = DIAS_NOCHE.indexOf(
+    foldAccents(
+      new Intl.DateTimeFormat('es-ES', { weekday: 'long', timeZone }).format(now).toLowerCase(),
+    ),
+  );
+  // Días hasta ese día (dicho el mismo día: esta noche, salvo «el próximo…»), más la noche.
+  let ahead = (day - today + 7) % 7;
+  if (ahead === 0 && /proximo|que viene/.test(m[1])) ahead = 7;
+  return ahead === 0 ? 'mañana a las 0:00' : `dentro de ${ahead + 1} días a las 0:00`;
 }
 
 /** Partes del día sin hora: la hora que se pone si no se dice otra, y la franja en la que cae. */
