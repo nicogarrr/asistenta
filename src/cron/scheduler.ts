@@ -230,7 +230,11 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   let minute = 0;
   let hasTime = false;
 
-  const timeMatch = new RegExp(`\\ba las?\\s+${CLOCK}`).exec(normalised);
+  // «9:00 todos los días», «todos los días 9:00»: la hora con minutos escritos vale sin «a las»
+  // (antes sonaba a las 8 por defecto o, tras «días», se leía como día del mes).
+  const timeMatch = new RegExp(
+    `(?:\\ba las?\\s+|(?<![\\d:.])(?=\\d{1,2}:\\d{2}\\b))${CLOCK}`,
+  ).exec(normalised);
   /** «a las 9 y a las 21», «a las 8, 14 y 20»: más tomas del mismo día. */
   const extraHours: number[] = [];
   if (timeMatch) {
@@ -482,7 +486,7 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   // «los días 1 y 15 a las 9», «todos los días 15»: días del mes aunque no se diga «de cada
   // mes» (antes sonaba todos los días).
   const monthDays = new RegExp(
-    `\\b(?:los|todos los) dias (\\d{1,2}(?:(?:\\s*,\\s*|\\s+y\\s+)\\d{1,2})*)\\b(?! ?(?:h\\b|horas?|minutos?|min\\b|veces|de (?:${MONTH})\\b))`,
+    `\\b(?:los|todos los) dias (\\d{1,2}(?:(?:\\s*,\\s*|\\s+y\\s+)\\d{1,2})*)\\b(?![:.h]\\d{2})(?! ?(?:h\\b|horas?|minutos?|min\\b|veces|de (?:${MONTH})\\b))`,
   ).exec(normalised);
   if (monthDays) {
     const days = [...new Set((monthDays[1] ?? '').match(/\d{1,2}/g)?.map(Number) ?? [])];
@@ -502,7 +506,7 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   )
     return null;
   // «cada día 5 a las 9»: el día 5 de cada mes, no todos los días.
-  const dayEachMonth = /\bcada dia (\d{1,2})\b(?! (?:veces|minutos?|min|horas?))/.exec(normalised);
+  const dayEachMonth = /\bcada dia (\d{1,2})\b(?![:.h]\d{2})(?! (?:veces|minutos?|min|horas?))/.exec(normalised);
   if (dayEachMonth) {
     const day = Number(dayEachMonth[1]);
     if (day < 1 || day > 31) return null;
