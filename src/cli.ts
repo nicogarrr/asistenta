@@ -2454,6 +2454,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           approvals: () => approvals.list(),
           approve: async (id: string, decision: 'once' | 'session' | 'always' | 'deny') =>
             approvals.resolve(id, decision),
+          // /voz desde el móvil: la nota se transcribe aquí con el whisper local.
+          transcribe: async (audio: Buffer, mime: string) =>
+            (await transcribeVoiceNote(audio, { mimeType: mime })).text,
           // Mini App (/panel desde Telegram): entra sin token si Telegram firma que es el dueño.
           miniApp: async (initData: string) => {
             const { verifyInitData } = await import('./webui/miniapp.js');
@@ -6588,7 +6591,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** /altavoz [pc|tele|off]: notas de voz que suenan solas al llegar (solo el dueño, en privado). */
   /** /tailscale y /panel: estado de Tailscale y botón de la Mini App (docs/SETUP-INTEGRACIONES.md). */
-  const cmdTailscale = async (inbound: Inbound, kind: 'estado' | 'panel'): Promise<void> => {
+  const cmdTailscale = async (
+    inbound: Inbound,
+    kind: 'estado' | 'panel' | 'voz',
+  ): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
       await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
         quote: true,
@@ -9416,6 +9422,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['altavoz'], run: (inbound, args) => cmdAltavoz(inbound, args) },
     { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
+    { names: ['voz'], run: (inbound) => cmdTailscale(inbound, 'voz') },
     { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
     {
       names: ['recordatorios', 'reminders'],
