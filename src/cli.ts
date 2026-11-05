@@ -28,6 +28,7 @@ import {
   modelSwitchWarnings,
   parseModelo,
 } from './model-choice.js';
+import { createPaginaVivaTool, PaginasVivas, panelPagina, panelPaginas } from './paginas-vivas.js';
 import {
   cleanProjectPath,
   ProjectContextStore,
@@ -1766,6 +1767,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const decisionLedger = new DecisionLedger(memoryDb, workstreams);
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
+  // Páginas vivas del panel (tarjeta «Páginas»): las crea el agente y las rehace una rutina.
+  const paginasVivas = new PaginasVivas(memoryDb);
   const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
   // Lo que tarda en contestar en Telegram (/estado), acotado a las últimas 100.
   const latency = new LatencyStats(100);
@@ -2093,6 +2096,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             ),
           // Tarjeta Paquetes: envíos leídos de los correos, solo lectura.
           repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
+          // Tarjeta Páginas: páginas vivas y salidas de rutinas a fichero (solo texto, sin HTML).
+          paginas: () => panelPaginas(paginasVivas, join(paths.state, 'salidas'), localTimeZone()),
+          pagina: (id) =>
+            panelPagina(paginasVivas, join(paths.state, 'salidas'), id, localTimeZone()),
           // Tarjeta Contexto: qué ocupa cada conversación y cuánto falta para resumir
           // (solo números y nombres de herramientas, nunca el texto).
           contexto: () =>
@@ -2530,6 +2537,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createAireTool(() => weatherConfigFromEnv()),
       // «¿Cuánto son 120 dólares en euros?»: tipos del BCE, solo lectura.
       createDivisasTool(),
+      // «Hazme una página con mis gastos (y que se rehaga cada mañana)»: tarjeta Páginas del panel.
+      createPaginaVivaTool({
+        store: paginasVivas,
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
       // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
       createTraficoTool({

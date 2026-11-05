@@ -33,6 +33,10 @@ export interface WebUiDeps {
   tareas?(): unknown | Promise<unknown>;
   /** Paquetes en camino según los correos de envío (solo lectura). Si falta o devuelve null, 503. */
   repartos?(): unknown | Promise<unknown>;
+  /** Tarjeta «Páginas»: páginas vivas y salidas de rutinas (paginas-vivas.ts). Si falta, 503. */
+  paginas?(): unknown | Promise<unknown>;
+  /** Una página en bloques de texto; null/undefined = no existe (404). Si falta, 503. */
+  pagina?(id: string): unknown | Promise<unknown>;
   /**
    * Tarjeta «Contexto»: de qué está hecho el contexto de cada conversación abierta
    * (solo números y nombres, ver contexto.ts). Si falta o devuelve null, 503.
@@ -124,6 +128,8 @@ type ApiRoute =
   | { method: 'GET'; kind: 'routines' }
   | { method: 'GET'; kind: 'tareas' }
   | { method: 'GET'; kind: 'repartos' }
+  | { method: 'GET'; kind: 'paginas' }
+  | { method: 'GET'; kind: 'pagina'; id: string }
   | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'contexto' }
   | { method: 'GET'; kind: 'mapaMemoria' }
@@ -217,6 +223,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'tareas' };
     case '/api/repartos':
       return { method: 'GET', kind: 'repartos' };
+    case '/api/paginas':
+      return { method: 'GET', kind: 'paginas' };
     case '/api/funciones':
       return { method: 'GET', kind: 'funciones' };
     case '/api/contexto':
@@ -245,6 +253,11 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'clave' };
     default:
       break;
+  }
+  const pagina = /^\/api\/paginas\/([^/]+)$/.exec(pathname);
+  if (pagina?.[1]) {
+    const id = safeDecode(pagina[1]);
+    return id ? { method: 'GET', kind: 'pagina', id } : null;
   }
   const match = /^\/api\/approvals\/([^/]+)$/.exec(pathname);
   if (!match?.[1]) return null;
@@ -302,6 +315,17 @@ async function respondApi(
         payload = deps.repartos ? await deps.repartos() : null;
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Paquetes aún no disponibles');
+        break;
+      case 'paginas':
+        payload = deps.paginas ? await deps.paginas() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Páginas aún no disponibles');
+        break;
+      case 'pagina':
+        if (!deps.pagina) throw new HttpError(503, 'Páginas aún no disponibles');
+        payload = await deps.pagina(route.id);
+        if (payload === null || payload === undefined)
+          throw new HttpError(404, 'Esa página ya no existe');
         break;
       case 'funciones':
         payload = panelFunciones();

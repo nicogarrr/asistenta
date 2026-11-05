@@ -192,6 +192,8 @@ export function renderPage(): string {
       color: var(--suave);
     }
     button.mini:hover { color: var(--texto); }
+    table.tabla-pagina { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+    table.tabla-pagina th, table.tabla-pagina td { border: 1px solid var(--borde); padding: 2px 6px; text-align: left; }
     .modelo-selector { margin-top: 0.9rem; border-top: 1px solid var(--borde, #2a3340); padding-top: 0.7rem; }
     .modelo-selector h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
     .modelo-fila { display: flex; gap: 0.5rem; align-items: center; margin: 0 0 0.35rem; }
@@ -349,7 +351,7 @@ export function renderPage(): string {
     .funcion-titulo { color: var(--texto); font-size: 15px; }
     .funcion-titulo h3 { display: inline; font-size: inherit; margin: 0; }
     .capturas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-    .captura { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--borde, #ccc); }
+    .captura { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--borde); }
     .nulo { color: var(--suave); font-style: italic; }
     .muted { color: var(--suave); }
     [aria-busy='true'] { opacity: 0.6; transition: opacity 0.2s; }
@@ -581,6 +583,17 @@ export function renderPage(): string {
         <div id="panel-repartos" class="tarjeta-cuerpo">
           <p class="muted">Cargando…</p>
         </div>
+      </article>
+
+      <article class="tarjeta" aria-labelledby="titulo-paginas">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-paginas">Páginas</h2>
+          <button class="mini" type="button" data-refrescar="paginas" aria-label="Refrescar Páginas">Refrescar</button>
+        </header>
+        <div id="panel-paginas" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+        <div id="panel-pagina-vista" class="tarjeta-cuerpo" hidden></div>
       </article>
 
       <article class="tarjeta" aria-labelledby="titulo-funciones">
@@ -2227,6 +2240,92 @@ ${renderFormatScript()}
         return true;
       }
 
+      function pintarBloques(contenedor, bloques) {
+        (bloques || []).forEach(function (b) {
+          if (b.t === 'h') contenedor.appendChild(nodo(b.n === 1 ? 'h3' : 'h4', '', b.texto));
+          else if (b.t === 'p') contenedor.appendChild(nodo('p', 'texto', b.texto));
+          else if (b.t === 'ul') {
+            var lista = nodo('ul', 'lista');
+            b.items.forEach(function (it) { lista.appendChild(nodo('li', 'texto', it)); });
+            contenedor.appendChild(lista);
+          } else if (b.t === 'tabla') {
+            var tabla = nodo('table', 'tabla-pagina');
+            if (b.cabecera && b.cabecera.length) {
+              var cab = document.createElement('tr');
+              b.cabecera.forEach(function (c) { cab.appendChild(nodo('th', '', c)); });
+              tabla.appendChild(cab);
+            }
+            b.filas.forEach(function (f) {
+              var fila = document.createElement('tr');
+              f.forEach(function (c) { fila.appendChild(nodo('td', '', c)); });
+              tabla.appendChild(fila);
+            });
+            contenedor.appendChild(tabla);
+          }
+        });
+      }
+
+      async function verPagina(id) {
+        var vista = document.getElementById('panel-pagina-vista');
+        vista.hidden = false;
+        pintarCarga(vista);
+        try {
+          var p = await pedir('/api/paginas/' + encodeURIComponent(id));
+          if (!p || !Array.isArray(p.bloques)) throw new Error('Respuesta de página inválida');
+          vista.replaceChildren();
+          var cerrar = nodo('button', 'mini', 'Cerrar');
+          cerrar.type = 'button';
+          cerrar.addEventListener('click', function () { vista.hidden = true; vista.replaceChildren(); });
+          vista.appendChild(cerrar);
+          vista.appendChild(nodo('h3', '', p.titulo));
+          vista.appendChild(nodo('p', 'muted', 'Actualizada ' + p.actualizada + ' · ' + p.origen));
+          pintarBloques(vista, p.bloques);
+        } catch (error) {
+          pintarError(vista, error, function () { return verPagina(id); });
+        }
+      }
+
+      function filaPagina(p, detalle) {
+        var fila = nodo('li', 'texto');
+        var boton = nodo('button', 'mini', p.titulo);
+        boton.type = 'button';
+        boton.addEventListener('click', function () { verPagina(p.id); });
+        fila.appendChild(boton);
+        fila.appendChild(document.createTextNode(' ' + detalle));
+        return fila;
+      }
+
+      async function cargarPaginas(silencio) {
+        var contenedor = document.getElementById('panel-paginas');
+        if (silencio !== true) pintarCarga(contenedor);
+        try {
+          var datos = await pedir('/api/paginas');
+          if (!datos || !Array.isArray(datos.paginas) || !Array.isArray(datos.salidas)) throw new Error('Respuesta de páginas inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Lo que he creado para ti. Pídeme en el chat «hazme una página con…» (y si quieres, que una rutina la rehaga cada mañana).'));
+          if (!datos.paginas.length) contenedor.appendChild(nodo('p', 'muted', 'Aún no hay páginas.'));
+          else {
+            var lista = nodo('ul', 'tareas');
+            datos.paginas.forEach(function (p) {
+              lista.appendChild(filaPagina(p, '· ' + p.actualizada + ' · ' + p.origen));
+            });
+            contenedor.appendChild(lista);
+          }
+          if (datos.salidas.length) {
+            contenedor.appendChild(nodo('p', 'muted', 'Salidas de rutinas guardadas en fichero:'));
+            var lista2 = nodo('ul', 'tareas');
+            datos.salidas.forEach(function (s) {
+              lista2.appendChild(filaPagina(s, '· ' + Math.max(1, Math.round(s.bytes / 1024)) + ' KB'));
+            });
+            contenedor.appendChild(lista2);
+          }
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarPaginas); return false;
+        }
+        return true;
+      }
+
       async function cargarRutinas(silencio) {
         var contenedor = document.getElementById('panel-rutinas');
         if (silencio !== true) pintarCarga(contenedor);
@@ -2338,6 +2437,7 @@ ${renderFormatScript()}
         rutinas: cargarRutinas,
         tareas: cargarTareas,
         repartos: cargarRepartos,
+        paginas: cargarPaginas,
         funciones: cargarFunciones,
         estado: cargarEstado,
         contexto: cargarContexto,
@@ -2367,7 +2467,8 @@ ${renderFormatScript()}
           cargarAmbitos(),
           cargarAuditoria(),
           cargarAprobaciones(),
-          cargarRepartos()
+          cargarRepartos(),
+          cargarPaginas()
         ])
           .then(function (resultados) {
             var fallos = resultados.filter(function (ok) { return !ok; }).length;
