@@ -447,7 +447,7 @@ export function funcionesText(view: FuncionesView, areaQuery = ''): string {
     ...blocks,
     '',
     view.owner
-      ? 'Antes de algo importante (enviar, comprar, borrar) te pido permiso con botones.'
+      ? 'Antes de algo importante (enviar, comprar, borrar) te pido permiso con botones.\nLo que más usas y lo que no: /funciones uso'
       : 'Algunas funciones solo las usa el dueño en su chat privado.',
   ].join('\n');
 }

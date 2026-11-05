@@ -132,6 +132,8 @@ export interface SkillsToolDeps {
   checkEnv?: () => SelfCheckEnv | Promise<SelfCheckEnv>;
   /** Recetas repetidas: la oferta «¿la guardo como habilidad?» pendiente de un sí. */
   repeats?: RepeatTracker;
+  /** Se leyó una habilidad para seguirla: cuenta un uso (/funciones uso). */
+  onUse?: (id: string) => void;
 }
 
 export function createSkillsTool(deps: SkillsToolDeps): AgentTool<ReturnType<typeof SkillsParams>> {
@@ -204,6 +206,9 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<ReturnType<typ
               details: { id, found: false },
             };
           }
+          try {
+            deps.onUse?.(skill.id);
+          } catch {}
           return {
             content: [{ type: 'text', text: store.export(id) }],
             details: { id, found: true, name: skill.name, version: skill.version },
