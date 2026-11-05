@@ -40,6 +40,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { log } from '../log.js';
+import { createOnnxSession } from './onnx-load.js';
 
 export const VAD_SAMPLE_RATE = 16_000;
 /** Una ventana: 32ms a 16kHz (el único tamaño válido del modelo a 16k). */
@@ -85,7 +86,8 @@ export const vadOnnxSessionFactory: VadSessionFactory = async (modelPath) => {
   // grafo de módulos a un binario nativo incluso en tests que inyectan fakes.
   const require = createRequire(import.meta.url);
   const ort = require('onnxruntime-node') as typeof import('onnxruntime-node');
-  const inner = await ort.InferenceSession.create(modelPath);
+  // Ruta con tildes (C:\\Users\\José\\…): se lee en bytes; ver onnx-load.ts.
+  const inner = await createOnnxSession(ort, modelPath);
   return {
     inputNames: inner.inputNames,
     outputNames: inner.outputNames,

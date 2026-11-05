@@ -44,6 +44,7 @@ import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { log } from '../log.js';
+import { createOnnxSession } from './onnx-load.js';
 
 export const OWW_SAMPLE_RATE = 16_000;
 /** One push: 80ms at 16kHz. */
@@ -106,7 +107,8 @@ export const onnxSessionFactory: OwwSessionFactory = async (modelPath) => {
   // the module graph to a native binary even in tests that inject fakes.
   const require = createRequire(import.meta.url);
   const ort = require('onnxruntime-node') as typeof import('onnxruntime-node');
-  const inner = await ort.InferenceSession.create(modelPath);
+  // Ruta con tildes (C:\\Users\\José\\…): se lee en bytes; ver onnx-load.ts.
+  const inner = await createOnnxSession(ort, modelPath);
   // The runner speaks in plain {data,dims} tensors so tests can fake it; the
   // real runtime demands ort.Tensor instances, so the boundary converts.
   return {
