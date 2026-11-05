@@ -149,6 +149,27 @@ describe('esquemas de herramientas perezosos', () => {
         dias: T.Optional(
           T.Integer({ minimum: 1, maximum: 7, description: 'Días de previsión desde hoy (1-7).' }),
         ),
+        lugar: T.Optional(
+          T.String({
+            maxLength: 80,
+            description:
+              'Ciudad o pueblo si pregunta por otro sitio («Madrid», «Oviedo, Asturias», «París, Francia»). Vacío = el sitio configurado.',
+          }),
+        ),
+        lat: T.Optional(
+          T.Number({
+            minimum: -90,
+            maximum: 90,
+            description: 'Latitud de una ubicación que compartió (junto con lon).',
+          }),
+        ),
+        lon: T.Optional(
+          T.Number({
+            minimum: -180,
+            maximum: 180,
+            description: 'Longitud de una ubicación que compartió (junto con lat).',
+          }),
+        ),
       }),
     );
   });
