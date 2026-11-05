@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { log } from '../log.js';
 import { loadDatabaseSync } from '../sqlite.js';
+import { decodeTextFile } from '../text-decode.js';
 import { withTimeout } from '../utils.js';
 import { extractOfficeText, officeKind } from './office.js';
 
@@ -223,7 +224,9 @@ export async function extractText(
   const mime = mimeType.toLowerCase();
   if (mime === 'application/pdf')
     return extractPdfText(bytes, pdfjsLoader ?? defaultPdfjsLoader, timeoutMs);
-  if (canExtract(mimeType)) return bytes.toString('utf8');
+  // Un .txt o .csv de Windows (ANSI) o UTF-16: antes se guardaba con «Facturaci�n» y luego
+  // no se encontraba buscando «facturación».
+  if (canExtract(mimeType)) return decodeTextFile(bytes).text;
   return '';
 }
 
