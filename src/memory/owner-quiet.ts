@@ -8,8 +8,13 @@ import { DEFAULT_QUIET_HOURS, type QuietHours } from '../ojo.js';
 import { foldAccents } from '../text.js';
 import { SAID_PREFIX } from './owner-facts.js';
 
+/**
+ * «no me escribas», también dicho de otras formas: «nunca me escribas», «no quiero que me
+ * escribas», «no me notifiques (nada)», «no me mandes notificaciones / avisos». Antes esas
+ * se apuntaban (o se ignoraban) y las horas de silencio seguían las de serie.
+ */
 const DONT =
-  'no me (?:escribas|(?:mandes|envies)(?: nada| mensajes)?|hables|avises|despiertes|molestes)';
+  '(?:no|nunca) (?:quiero que )?me (?:escribas|notifiques(?: nada)?|(?:mandes|envies)(?: nada| mensajes| notificaciones| avisos)?|hables|avises|despiertes|molestes)';
 /** «las 9», «las nueve», «las 9:30», «las 9 y media». «La una» no: es la hora de comer. */
 const HOUR = String.raw`(?:la|las) (\d{1,2}|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:(?::|\.)(\d{2})| y (media|cuarto))?`;
 const PART = '(?: de la (manana|tarde|noche|madrugada))?';
