@@ -166,6 +166,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'páginas vivas del panel (paginas-vivas.ts): solo base local del dueño; verlas es lectura.',
   },
   {
+    name: 'github_avisos',
+    note: 'avisos de GitHub (github-avisos.ts): guarda repos en la base local; el sondeo es solo lectura.',
+  },
+  {
     name: 'trafico',
     note: 'incidencias de tráfico de la DGT (feed DATEX II, sin clave): lectura por red; el aviso es una rutina local.',
   },

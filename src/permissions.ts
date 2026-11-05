@@ -1755,6 +1755,9 @@ export class Gate {
         const a = argString(c.args, 'accion');
         return a === 'ver' || a === 'lista' ? 'lee' : 'escribe-local';
       }
+      // Avisos de GitHub: guarda qué repos vigilar en la base local; consultar GitHub es lectura.
+      case 'github_avisos':
+        return argString(c.args, 'accion') === 'lista' ? 'lee' : 'escribe-local';
       case 'fetch': {
         const method = argString(c.args, 'method').toUpperCase();
         // GET/HEAD are reads. Anything else transmits to a third party whose
@@ -2922,6 +2925,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'divisas',
   'pagina_viva',
   'entregable',
+  'github_avisos',
   'aire',
   'trafico',
   'luz',

@@ -273,6 +273,10 @@ export const TOOL_ABILITIES: Readonly<
     area: 'sistema',
     text: 'te hago páginas en el panel (gastos, seguimientos) que una rutina puede rehacer',
   },
+  github_avisos: {
+    area: 'sistema',
+    text: 'te aviso si falla el CI de tus repos de GitHub o hay PR, issues o comentarios',
+  },
   trafico: { area: 'agenda', text: 'te digo si hay obras, cortes o accidentes en la carretera' },
   luz: { area: 'agenda', text: 'te digo las horas más baratas de la luz, hoy y mañana' },
   cuentas: {

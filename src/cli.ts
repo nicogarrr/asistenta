@@ -23,9 +23,13 @@ import {
   eraseSummary,
 } from './erase-command.js';
 import {
+  chatRepos,
+  createGithubAvisosTool,
   GithubAvisos,
   githubAvisosConfig,
+  githubAvisosEveryMs,
   githubTokenSource,
+  githubTriggerNote,
   startGithubAvisos,
 } from './github-avisos.js';
 import {
@@ -1789,6 +1793,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const pageWatches = new PageWatchStore(memoryDb);
   // Páginas vivas del panel (tarjeta «Páginas»): las crea el agente y las rehace una rutina.
   const paginasVivas = new PaginasVivas(memoryDb);
+  // Config de avisos de GitHub del .env; la vigilancia arranca más abajo (o al pedirla en el chat).
+  const githubAvisosConf = githubAvisosConfig();
+  let ensureGithubAvisos: () => void = () => {};
   const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
   // Lo que tarda en contestar en Telegram (/estado), acotado a las últimas 100.
   const latency = new LatencyStats(100);
@@ -2622,6 +2629,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               log.warn('entregable: no se pudo mandar el archivo', { err: String(err) });
               return false;
             }),
+      }),
+      // «Avísame cuando falle el CI de nicogarrr/asistenta»: avisos de GitHub sin tocar el .env.
+      createGithubAvisosTool({
+        kv: { get: (k) => store.kvGet(k), set: (k, v) => store.kvSet(k, v) },
+        envRepos: () => githubAvisosConf?.repos ?? [],
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        onChange: () => ensureGithubAvisos(),
+        everyMs: () => githubAvisosConf?.everyMs ?? githubAvisosEveryMs(),
       }),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
       // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
@@ -5780,31 +5795,43 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   setInterval(() => void parcelCheckIn.tick().catch(() => null), 10 * 60 * 1000).unref();
   // Avisos de GitHub (CI en rojo en main, PR/issue/comentario nuevos): apagado salvo
-  // PA_GITHUB_AVISOS=dueño/repo. Sin modelo; sondeo con ETag y espera larga (github-avisos.ts).
-  const githubAvisosConf = githubAvisosConfig();
-  if (githubAvisosConf) {
-    startGithubAvisos(
-      new GithubAvisos({
-        config: githubAvisosConf,
-        fetch,
-        kv: { get: (k) => store.kvGet(k), set: (k, v) => store.kvSet(k, v) },
-        send: async (text) => {
-          const owner = briefingOwner();
-          if (!owner) return false;
-          await telegram.send({
-            channel: 'telegram',
-            account: telegram.account,
-            chatId: owner,
-            text,
-          });
-          return true;
-        },
-        now: Date.now,
-        quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
-        token: githubTokenSource(),
-      }),
-    );
-  }
+  // PA_GITHUB_AVISOS=dueño/repo o «avísame de dueño/repo» en el chat (herramienta github_avisos).
+  // Sin modelo; sondeo con ETag y espera larga (github-avisos.ts). Sin repos no arranca.
+  const githubKv = {
+    get: (k: string) => store.kvGet(k),
+    set: (k: string, v: string) => store.kvSet(k, v),
+  };
+  const githubAvisos = new GithubAvisos({
+    config: githubAvisosConf ?? { repos: [], everyMs: githubAvisosEveryMs() },
+    fetch,
+    kv: githubKv,
+    send: async (text) => {
+      const owner = briefingOwner();
+      if (!owner) return false;
+      await telegram.send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId: owner,
+        text,
+      });
+      return true;
+    },
+    now: Date.now,
+    quiet: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+    token: githubTokenSource(),
+    // «/disparador github rojo | revisa-ci»: el aviso también dispara rutinas.
+    emit: (notice) =>
+      void triggerEngine
+        .emit({ type: 'github', scope: '', text: notice, note: githubTriggerNote(notice) })
+        .catch((err) => log.warn('trigger github falló', { err: String(err) })),
+    extraRepos: () => chatRepos(githubKv),
+  });
+  let githubLoop: { stop(): void } | null = null;
+  ensureGithubAvisos = () => {
+    if (!githubLoop && githubAvisos.repos().length > 0)
+      githubLoop = startGithubAvisos(githubAvisos);
+  };
+  ensureGithubAvisos();
 
   // Vigilante semántico de turnos (idea «Watchdog» del diseño super-agente), apagado
   // por defecto (PA_WATCHDOG=1). Dos fases: sospecha determinista (sin paso nuevo en
