@@ -2432,6 +2432,34 @@ ${renderFormatScript()}
         } catch (error) { /* almacén bloqueado: no se recuerda, sin romper */ }
       }
 
+      // «Lo que más usas» al pie de Funciones (lo mismo que /funciones uso). Si el
+      // asistente aún no lo tiene (503) o falla, la tarjeta sigue sin ese bloque.
+      async function pintarUso(contenedor) {
+        var uso;
+        try { uso = await pedir('/api/uso'); } catch (error) { return; }
+        if (!uso || !Array.isArray(uso.masUsadas)) return;
+        var bloque = nodo('section', 'sesion funcion uso');
+        bloque.appendChild(nodo('h3', null, 'Lo que más usas (últimos ' + uso.dias + ' días)'));
+        if (uso.masUsadas.length === 0) bloque.appendChild(nodo('p', 'muted', 'Todavía nada apuntado en este mes.'));
+        else {
+          var lista = nodo('ul', 'comandos');
+          uso.masUsadas.forEach(function (u) { lista.appendChild(nodo('li', null, u.veces + '× ' + u.texto)); });
+          bloque.appendChild(lista);
+        }
+        var hab = uso.habilidades || {};
+        if (hab.total > 0) {
+          bloque.appendChild(nodo('p', 'texto', 'Habilidades aprendidas: ' + hab.total));
+          if (Array.isArray(hab.masUsadas) && hab.masUsadas.length > 0) {
+            bloque.appendChild(nodo('p', 'muted', 'Más usadas: ' + hab.masUsadas.map(function (h) { return h.nombre + ' (' + h.veces + ')'; }).join(', ')));
+          }
+          if (Array.isArray(hab.sinUsar) && hab.sinUsar.length > 0) {
+            bloque.appendChild(nodo('p', 'muted', 'Sin usar en ' + uso.dias + ' días: ' + hab.sinUsar.join(', ')));
+            if (uso.archivar) bloque.appendChild(nodo('p', 'muted', 'Para archivarlas (se desactivan, no se borran), escríbeme ' + uso.archivar));
+          }
+        }
+        contenedor.appendChild(bloque);
+      }
+
       async function cargarFunciones() {
         var contenedor = document.getElementById('panel-funciones');
         pintarCarga(contenedor);
@@ -2475,6 +2503,7 @@ ${renderFormatScript()}
             bloque.appendChild(lista);
             contenedor.appendChild(bloque);
           });
+          await pintarUso(contenedor);
           finCarga(contenedor, true);
         } catch (error) { pintarError(contenedor, error, cargarFunciones); return false; }
         return true;

@@ -132,6 +132,38 @@ export function usoText(v: UsoView): string {
   return lines.join('\n');
 }
 
+/** Lo que enseña el panel (tarjeta Funciones → «Lo que más usas»): solo textos y números. */
+export interface UsoPanel {
+  dias: number;
+  masUsadas: { texto: string; veces: number }[];
+  habilidades: { total: number; masUsadas: { nombre: string; veces: number }[]; sinUsar: string[] };
+  /** Comando para archivar las que no se usan; null si no hay ninguna. */
+  archivar: string | null;
+}
+
+/** Los mismos datos que «/funciones uso», para el panel. */
+export function usoPanel(v: UsoView): UsoPanel {
+  const masUsadas = [...v.tools.entries()]
+    .map(([tool, c]) => ({ tool, c, text: v.toolText(tool) }))
+    .filter((x) => x.text !== null)
+    .sort((a, b) => b.c.n - a.c.n || a.tool.localeCompare(b.tool))
+    .slice(0, 8)
+    .map((x) => ({ texto: shorten(x.text ?? x.tool), veces: x.c.n }));
+  const learned = v.skills.filter((s) => s.trust !== 'official' && !s.disabled);
+  const usadas = learned
+    .filter((s) => (v.skillUse[s.id]?.last ?? 0) >= v.now - USO_VENTANA_MS)
+    .sort((a, b) => (v.skillUse[b.id]?.n ?? 0) - (v.skillUse[a.id]?.n ?? 0))
+    .slice(0, 5)
+    .map((s) => ({ nombre: s.name, veces: v.skillUse[s.id]?.n ?? 0 }));
+  const sinUsar = archiveCandidates(v.skills, v.skillUse, v.now).map((s) => s.name);
+  return {
+    dias: Math.round(USO_VENTANA_MS / (24 * 3_600_000)),
+    masUsadas,
+    habilidades: { total: learned.length, masUsadas: usadas, sinUsar },
+    archivar: sinUsar.length ? '/funciones archivar' : null,
+  };
+}
+
 /**
  * «/funciones archivar»: primero enseña la lista; con «sí» las desactiva. Devuelve el
  * texto y, si se confirmó, los ids desactivados.
