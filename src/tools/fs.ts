@@ -13,6 +13,44 @@ export const DEFAULT_READ_LINES = 2000;
 /** Chars returned in one read, whatever the line count (one-line minified files). Kept under MAX_TOOL_RESULT_CHARS (24k) so the generic backstop never cuts a read result. */
 export const MAX_READ_CHARS = 22_000;
 
+/**
+ * El texto de un fichero tal como lo deja Windows. Antes se leía siempre como UTF-8: un CSV
+ * exportado de Excel o un .txt del Bloc de notas antiguo (ANSI, Windows-1252) llegaba con
+ * «Facturaci�n», y lo que deja `comando > fichero.txt` en PowerShell 5 (UTF-16 con BOM)
+ * llegaba como letras sueltas separadas por NUL. Devuelve el texto y la codificación leída.
+ */
+export function decodeTextFile(buf: Buffer): { text: string; encoding: string } {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return { text: new TextDecoder('utf-16le').decode(buf.subarray(2)), encoding: 'UTF-16' };
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    return { text: new TextDecoder('utf-16be').decode(buf.subarray(2)), encoding: 'UTF-16' };
+  }
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    return { text: buf.subarray(3).toString('utf8'), encoding: 'UTF-8' };
+  }
+  // UTF-16 sin BOM: texto latino con un NUL detrás de casi cada letra.
+  if (buf.length >= 4 && buf.length % 2 === 0) {
+    const n = Math.min(buf.length, 4096);
+    let oddNul = 0;
+    let evenNul = 0;
+    for (let i = 0; i < n; i++) if (buf[i] === 0) i % 2 ? oddNul++ : evenNul++;
+    if (oddNul > (n / 2) * 0.6 && evenNul < (n / 2) * 0.05) {
+      return { text: new TextDecoder('utf-16le').decode(buf), encoding: 'UTF-16' };
+    }
+  }
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(buf), encoding: 'UTF-8' };
+  } catch {
+    // No es UTF-8 válido: en un Windows en español es casi siempre ANSI (Windows-1252).
+    try {
+      return { text: new TextDecoder('windows-1252').decode(buf), encoding: 'Windows-1252' };
+    } catch {
+      return { text: buf.toString('latin1'), encoding: 'Windows-1252' };
+    }
+  }
+}
+
 const ReadParams = lazySchema(() =>
   Type.Object({
     path: Type.String({ description: 'File path, absolute or relative to the working directory.' }),
@@ -79,7 +117,8 @@ export const readTool: AgentTool<ReturnType<typeof ReadParams>> = {
   name: 'read',
   label: 'Read',
   description: [
-    'Read a UTF-8 text file from disk. offset and limit work in lines, so a 50k-line',
+    'Read a text file from disk (UTF-8, UTF-16 or Windows-1252/ANSI, detected; a non-UTF-8',
+    'file says its encoding in the header). offset and limit work in lines, so a 50k-line',
     'log costs the same as a short one: read the slice you need instead of paying for',
     'the whole file and re-reading it. The result always reports the total line count',
     'and the range returned, so you can page without guessing.',
@@ -92,8 +131,9 @@ export const readTool: AgentTool<ReturnType<typeof ReadParams>> = {
     const path = guardPath(args.path);
     if (!existsSync(path)) throw new Error(`no such file: ${args.path}`);
     const size = statSync(path).size;
-    const content = readFileSync(path, 'utf8');
-    const allLines = content.split('\n');
+    const { text: content, encoding } = decodeTextFile(readFileSync(path));
+    // Fin de línea de Windows: el \r quedaba pegado al final de cada línea.
+    const allLines = content.split(/\r?\n/);
     const total = allLines.length;
 
     const start = Math.max(1, Math.trunc(args.offset ?? 1));
@@ -130,7 +170,8 @@ export const readTool: AgentTool<ReturnType<typeof ReadParams>> = {
     log.debug('read', { path, bytes: size, from: start, to: end, total });
 
     const more = end < total;
-    const header = `<file path="${args.path}" lines ${start}-${Math.min(end, total)} of ${total} (${size} bytes)${
+    const enc = encoding === 'UTF-8' ? '' : `, ${encoding}`;
+    const header = `<file path="${args.path}" lines ${start}-${Math.min(end, total)} of ${total} (${size} bytes${enc})${
       more ? ` — ${total - end} lines left, call read again with offset ${end + 1}` : ''
     }>`;
     return {
