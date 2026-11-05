@@ -57,7 +57,7 @@ describe('confirmaciones que nombran lo hecho', () => {
     const cli = readFileSync('src/cli.ts', 'utf8');
     expect(cli).toContain('closedLine(closed.subject)');
     expect(cli).toContain('forgotLine(');
-    expect(cli).toContain('factSavedLine(saidNow)');
+    expect(cli).toContain('factSavedLine(saidNow, replaced)');
     expect(cli).not.toContain("'Hecho, lo he olvidado.'");
     expect(cli).not.toContain("'Perfecto, lo quito de pendientes.'");
   });
