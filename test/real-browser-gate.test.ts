@@ -14,6 +14,7 @@ const noLaunch = new Set([
   'browser-session-launch.test.ts',
   'browser-perfil-dueno.test.ts',
   'browser-chrome-cdp.test.ts',
+  'consumo1-navegador-reposo.test.ts',
   'real-browser-gate.test.ts',
 ]);
 const opensBrowser = /\b(?:chromium|firefox|webkit)\.launch|new BrowserService\(/;

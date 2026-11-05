@@ -180,7 +180,18 @@ export interface BrowserServiceOptions {
   cdpDeps?: CdpDeps;
   /** Viewport for the headless page; defaults to a common laptop size. */
   viewport?: { width: number; height: number };
+  /**
+   * Un navegador SIN ventana que nadie usa en este tiempo se cierra solo (el perfil, con
+   * sus sesiones iniciadas y los dominios aprobados, se queda en disco). Un Chromium
+   * abierto «por si acaso» son varios procesos y cientos de MB todo el día, más el sondeo
+   * de anuncios cada segundo. Las ventanas visibles (vídeo, Chrome del dueño por CDP) no
+   * se tocan nunca. Por defecto 10 min; 0 lo desactiva.
+   */
+  idleCloseMs?: number;
 }
+
+/** Minutos sin uso tras los que se cierra un navegador sin ventana (ver `idleCloseMs`). */
+export const BROWSER_IDLE_CLOSE_MS = 10 * 60_000;
 
 /** Result of one `exec_js`: text always, plus where the page ended up. */
 export interface ExecJsResult {
@@ -770,6 +781,13 @@ export class BrowserService {
     cdpPort?: number;
     cdpDeps?: CdpDeps;
   };
+  /** Último uso de cada ámbito (cualquier llamada que pide su sesión). */
+  readonly #lastUse = new Map<string, number>();
+  /** Esperas de aprobación en curso: mientras Nico decide, el navegador no se cierra. */
+  readonly #busy = new Map<string, number>();
+  /** Página que tenía un ámbito cuando se cerró por reposo, para avisar al reabrir. */
+  readonly #idleClosed = new Map<string, string>();
+  #reaper: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: BrowserServiceOptions) {
     this.#options = {
@@ -782,7 +800,39 @@ export class BrowserService {
       cdpPort: options.cdpPort,
       cdpDeps: options.cdpDeps,
       viewport: options.viewport ?? { width: 1440, height: 900 },
+      idleCloseMs: options.idleCloseMs ?? BROWSER_IDLE_CLOSE_MS,
     };
+  }
+
+  /** Arranca el barrido de reposo si hace falta: uno por servicio, solo con sesiones. */
+  #armReaper(): void {
+    const idle = this.#options.idleCloseMs;
+    if (this.#reaper || idle <= 0 || this.#sessions.size === 0) return;
+    const every = Math.min(60_000, Math.max(20, Math.floor(idle / 2)));
+    this.#reaper = setInterval(() => this.#reapIdle(), every);
+    this.#reaper.unref?.();
+  }
+
+  /** Cierra los navegadores sin ventana que llevan `idleCloseMs` sin usarse. */
+  #reapIdle(now = Date.now()): void {
+    const idle = this.#options.idleCloseMs;
+    for (const [scope, session] of this.#sessions) {
+      if (session.visible || this.#opening.has(scope) || (this.#busy.get(scope) ?? 0) > 0) continue;
+      if (now - (this.#lastUse.get(scope) ?? now) < idle) continue;
+      let url = '';
+      try {
+        url = session.page.url();
+      } catch {
+        // página ya cerrada: no hay nada que recordar
+      }
+      if (url && url !== 'about:blank') this.#idleClosed.set(scope, url);
+      log.info('browser closed after idle', { scope, idleMin: Math.round(idle / 60_000) });
+      void this.close(scope);
+    }
+    if (this.#sessions.size === 0 && this.#reaper) {
+      clearInterval(this.#reaper);
+      this.#reaper = null;
+    }
   }
 
   /** Whether this chat has a live browser. Cheap: no filesystem, no launch. */
@@ -811,6 +861,7 @@ export class BrowserService {
    * the sound with it.
    */
   async #session(scope: string, opts?: { visible?: boolean }): Promise<Session> {
+    this.#lastUse.set(scope, Date.now());
     // Two tool calls for the same chat arriving together would both miss the map and
     // both launch on the same profile directory: the second launch dies on the profile
     // lock, or worse, wins and leaves the first Chromium running with nobody to close it.
@@ -826,6 +877,9 @@ export class BrowserService {
       return await opening;
     } finally {
       if (this.#opening.get(scope) === opening) this.#opening.delete(scope);
+      // Un arranque lento no cuenta como reposo.
+      this.#lastUse.set(scope, Date.now());
+      this.#armReaper();
     }
   }
 
@@ -916,13 +970,18 @@ export class BrowserService {
       await context.close().catch(() => undefined);
       throw err;
     }
+    const idleUrl = this.#idleClosed.get(scope);
+    this.#idleClosed.delete(scope);
+    const idleNote = idleUrl
+      ? `El navegador se había cerrado solo tras ${Math.round(this.#options.idleCloseMs / 60_000)} min sin uso (para ahorrar recursos; la sesión iniciada sigue). La última página era ${idleUrl}.`
+      : undefined;
     const session: Session = {
       context,
       page,
       visible: wantVisible || release !== undefined,
       channel,
       release,
-      notice,
+      notice: [notice, idleNote].filter(Boolean).join(' ') || undefined,
       // Code generation disabled: the sandbox may call the functions it is given, but
       // it cannot build new code from strings or wasm, which removes the eval/Function
       // side of the escape surface.
@@ -1327,7 +1386,14 @@ export class BrowserService {
       log.info('browser domain auto-approved', { scope, host, reason: 'full control' });
       return true;
     }
-    const ok = await this.#options.policy.approve(scope, host, reason);
+    this.#busy.set(scope, (this.#busy.get(scope) ?? 0) + 1);
+    let ok: boolean;
+    try {
+      ok = await this.#options.policy.approve(scope, host, reason);
+    } finally {
+      this.#busy.set(scope, (this.#busy.get(scope) ?? 1) - 1);
+      this.#lastUse.set(scope, Date.now());
+    }
     if (!ok) return false;
     this.#grant(scope, session, host);
     log.info('browser domain approved', { scope, host });
@@ -2187,6 +2253,7 @@ export class BrowserService {
     const session = this.#sessions.get(scope);
     if (!session) return;
     this.#sessions.delete(scope);
+    this.#lastUse.delete(scope);
     // The poll holds a reference to the session and would keep evaluating against a
     // closed context, throwing on every tick for as long as the daemon runs.
     if (session.adSkip.timer) {
@@ -2207,6 +2274,8 @@ export class BrowserService {
   /** Close everything, so no Chromium outlives the daemon and holds its profile lock. */
   async closeAll(strict = false): Promise<void> {
     await Promise.all([...this.#sessions.keys()].map((scope) => this.close(scope, strict)));
+    if (this.#reaper) clearInterval(this.#reaper);
+    this.#reaper = null;
   }
 
   /** Domains approved for a chat, for the turn summary and for tests. */
