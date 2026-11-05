@@ -121,9 +121,9 @@ function horaHablada(text: string): string {
       // preguntar.
       .replace(/\b(a\s+las?\s+\d{1,2})\s*h\s*([0-5]\d)\b/, '$1:$2')
       // «a las 9 y 15 médico», «a las 10 y diez», «a las 6 menos 10»: antes quedaba a las 9:00
-      // en punto con el título «y 15 médico».
+      // en punto con el título «y 15 médico». «y 10 minutos» también (sin dejar «minutos»).
       .replace(
-        /\ba\s+las?\s+(\d{1,2})\s+(y|menos)\s+(\d{1,2}|cinco|diez|veinte|veinticinco)\b(?![:.]\d)(?!\s+(?:personas?|euros?|horas?|dias?)\b)/,
+        /\ba\s+las?\s+(\d{1,2})\s+(y|menos)\s+(\d{1,2}|cinco|diez|veinte|veinticinco)(?:\s+min(?:utos?)?)?\b(?![:.]\d)(?!\s+(?:personas?|euros?|horas?|dias?)\b)/,
         (whole, h: string, how: string, n: string) => {
           const hour = Number(h);
           const min = MINUTOS[n] ?? Number(n);
