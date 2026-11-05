@@ -217,6 +217,15 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       ),
       '$1 $3 $2',
     )
+    // «sobre las 9», «hacia las 9», «a eso de las 9», «alrededor de las 9»: la hora aproximada
+    // no se leía y la rutina quedaba a las 8:00 por defecto. Es «a las 9».
+    .replace(
+      new RegExp(
+        `\\b(?:sobre|hacia|a eso de|alrededor de|como a|mas o menos a) (las?) (?=\\d|(?:${SPOKEN_HOURS})\\b)`,
+        'g',
+      ),
+      'a $1 ',
+    )
     // «a las 9'30» o «a las 9,30»: los minutos tras apóstrofo o coma se perdían y sonaba a las
     // 9:00. Con coma solo si no puede ser otra hora (24–59 o 00): «a las 9,15» puede ser una
     // lista y se pregunta más abajo.
@@ -224,6 +233,9 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
     .replace(/\b(a las? \d{1,2}),([0-5]\d)(?!\d)/g, (w: string, at: string, mm: string) =>
       Number(mm) >= 24 || mm === '00' ? `${at}:${mm}` : w,
     );
+
+  // «cada viernes a última hora»: sin hora dicha sonaba a las 8:00 de la mañana. Se pregunta.
+  if (/\b(?:a )?ultima hora\b/.test(normalised) && !/\ba las? /.test(normalised)) return null;
 
   // A time of day is the strongest signal. `a las 8`, `a las 8:30`, `a las 20h`.
   let hour = 0;
