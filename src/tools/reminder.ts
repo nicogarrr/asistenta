@@ -5,6 +5,7 @@ import { Cron } from 'croner';
 import { parseFechaCalendario } from '../agenda/fecha-natural.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { scheduleEs } from '../cron/describe-es.js';
+import { parseNatural } from '../cron/scheduler.js';
 import { localDay, localTimeZone, wallClock, zonedTime } from '../datecontext.js';
 import type { Routine, Store } from '../db.js';
 import { festivosQueCuentan } from '../festivos-rutinas.js';
@@ -76,7 +77,7 @@ const Params = lazySchema(() =>
     said: Type.Optional(
       Type.String({
         description:
-          'create, one time: the user\'s own words for WHEN, verbatim ("mañana a las 9,30", "el viernes a las 8 de la tarde", "dentro de 2 horas"). Always pass it with at or in_minutes: the tool reads it itself and, if it disagrees with at, the user\'s words win.',
+          'create: the user\'s own words for WHEN, verbatim ("mañana a las 9,30", "el viernes a las 8 de la tarde", "dentro de 2 horas", "cada lunes a las 9"). Always pass it with at, in_minutes or schedule: the tool reads it itself and, if it disagrees, the user\'s words win.',
       }),
     ),
     in_minutes: Type.Optional(
@@ -173,6 +174,27 @@ export function whenFromWords(said: string, now: Date, timeZone?: string): Date 
   const today = read(`hoy ${text}`);
   if (today && today.getTime() - now.getTime() >= MIN_REMINDER_MS) return today;
   return read(`mañana ${text}`);
+}
+
+/** Palabras que dicen que se repite: sin ellas «mañana a las 9» no es una rutina diaria. */
+const REPEATS =
+  /\b(?:cada|todos los|todas las|diario|diariamente|a diario|semanal(?:mente)?|mensual(?:mente)?|entre semana|laborables?|los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos|fines de semana|findes))\b/;
+
+/**
+ * El horario repetido tal como lo dijo el dueño («cada lunes a las 9,30», «los laborables a
+ * las 8», «todos los días a las 22»), leído con el mismo lector que /rutina. null si no
+ * dice que se repite o no se entiende: entonces vale el cron del modelo.
+ */
+export function scheduleFromWords(said: string): string | null {
+  const text = foldAccents(said.normalize('NFC'))
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?¡¿]+$/u, '')
+    .replace(/\b(\d{1,2}),(\d{2})\b/g, '$1:$2');
+  if (!text || text.length > 80 || !REPEATS.test(text)) return null;
+  const parsed = parseNatural(text);
+  if (!parsed || !validateSchedule(parsed.schedule).ok) return null;
+  return parsed.schedule.trim();
 }
 
 /** Cron pinned to one minute, day and month: fires once a year, and we delete it after. */
@@ -586,22 +608,38 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       const text = String(args.text ?? '').trim();
       if (!text) return reply('create necesita text.', true);
       if (text.length > MAX_TEXT) return reply(`El texto pasa de ${MAX_TEXT} caracteres.`, true);
-      const given = [args.at, args.in_minutes, args.schedule].filter((v) => v !== undefined);
+      // Repetidos: «cada lunes a las 9,30» dicho por el dueño manda sobre el cron del modelo
+      // (a veces ponía «30 9 * * 2» por el martes o se dejaba los minutos).
+      const saidRepeat = typeof args.said === 'string' ? scheduleFromWords(args.said) : null;
+      let schedule = args.schedule === undefined ? undefined : String(args.schedule).trim();
+      let cronCorrected = '';
+      if (saidRepeat && schedule !== undefined && saidRepeat !== schedule) {
+        cronCorrected = ` Lo he puesto como dijiste («${String(args.said).trim()}»), no ${scheduleEs(schedule) ?? schedule}.`;
+        schedule = saidRepeat;
+      } else if (
+        saidRepeat &&
+        schedule === undefined &&
+        args.at === undefined &&
+        args.in_minutes === undefined
+      ) {
+        schedule = saidRepeat;
+      }
+      const given = [args.at, args.in_minutes, schedule].filter((v) => v !== undefined);
       // Solo `said` («mañana a las 9,30») también vale: la hora la saca la herramienta.
       const saidWords =
-        args.schedule === undefined && typeof args.said === 'string' ? args.said.trim() : '';
+        schedule === undefined && typeof args.said === 'string' ? args.said.trim() : '';
       const fromWords = saidWords ? whenFromWords(saidWords, new Date(now())) : null;
       if (given.length === 0 && fromWords) given.push(saidWords);
       if (given.length !== 1) {
         return reply('create necesita exactamente uno de: at, in_minutes o schedule.', true);
       }
 
-      if (args.skip_holidays === true && args.schedule === undefined) {
+      if (args.skip_holidays === true && schedule === undefined) {
         return reply('skip_holidays solo vale con schedule (recordatorios que se repiten).', true);
       }
       const until = args.until === undefined ? undefined : String(args.until).trim();
       if (until !== undefined) {
-        if (args.schedule === undefined) {
+        if (schedule === undefined) {
           return reply('until solo vale con schedule (recordatorios que se repiten).', true);
         }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || !parseLocalStamp(`${until}T12:00`)) {
@@ -619,12 +657,12 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         );
       }
 
-      if (args.schedule !== undefined) {
-        const check = validateSchedule(args.schedule);
+      if (schedule !== undefined) {
+        const check = validateSchedule(schedule);
         if (!check.ok) return reply(`Horario no válido: ${check.error}`, true);
-        const tooOften = checkRepeating(args.schedule);
+        const tooOften = checkRepeating(schedule);
         if (tooOften) return reply(tooOften, true);
-        const first = nextRunOf(args.schedule.trim(), new Date(now()));
+        const first = nextRunOf(schedule, new Date(now()));
         if (until !== undefined) {
           if (!first || localDay(first) > until) {
             return reply(`No sonaría ninguna vez antes de que acabe el ${until}.`, true);
@@ -636,21 +674,21 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         const holidays = args.skip_holidays === true ? ' excepto festivos' : '';
         deps.store.saveRoutine({
           scope,
-          name: nameFor(REMINDER_PREFIX, text, ` [${args.schedule.trim()}]${holidays}${end}`),
+          name: nameFor(REMINDER_PREFIX, text, ` [${schedule}]${holidays}${end}`),
           kind: 'schedule',
           prompt: text,
-          schedule: args.schedule.trim(),
+          schedule: schedule,
         });
         deps.sync();
         // Las mismas palabras que action=list y /recordatorios («cada lunes a las 08:30»,
         // «lun 02/11 08:30»): con el cron crudo el modelo le leía «30 8 * * 1» al dueño.
-        const said = scheduleEs(args.schedule.trim()) ?? `repite ${args.schedule.trim()}`;
+        const said = scheduleEs(schedule) ?? `repite ${schedule}`;
         const next = first
           ? `${fechaCortaEs(first)} (${dentroDeEs(first.getTime() - now(), now())})`
           : check.next;
         const sinFestivos = holidays ? `, excepto ${festivosQueCuentan()}` : '';
         return reply(
-          `Recordatorio programado (${said}${sinFestivos}${end}): ${text}. Próximo: ${next}.`,
+          `Recordatorio programado (${said}${sinFestivos}${end}): ${text}. Próximo: ${next}.${cronCorrected}`,
         );
       }
 
