@@ -152,6 +152,21 @@ export function parseLocalStamp(raw: string): Date | null {
 }
 
 /**
+ * «2027-03-28T02:30» en Madrid no existe: esa noche el reloj salta de las 2:00 a las 3:00.
+ * La hora de después del salto (como hace la alarma del móvil), o null si el texto no es
+ * eso (formato roto, un 31 de febrero, una hora que sí existe).
+ */
+export function springForwardShift(raw: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?$/.exec(raw.trim());
+  if (!m || parseLocalStamp(raw)) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number) as [number, number, number, number, number];
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  if (day.getUTCMonth() !== mo - 1 || day.getUTCDate() !== d || h > 23 || mi > 59) return null;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return h < 23 ? parseLocalStamp(`${y}-${pad(mo)}-${pad(d)}T${pad(h + 1)}:${pad(mi)}`) : null;
+}
+
+/**
  * La hora tal como la dijo el dueño («mañana a las 9,30», «el viernes a las 8 de la tarde»,
  * «dentro de 2 horas», «a las 7»), leída con el mismo lector que /calendario. null si no se
  * entiende: entonces vale la fecha que calculó el modelo.
@@ -787,7 +802,14 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
         if (!Number.isFinite(args.in_minutes)) return reply('in_minutes no es un número.', true);
         when = new Date(now() + Math.round(args.in_minutes) * 60_000);
       } else if (args.at !== undefined) {
-        const parsed = parseLocalStamp(String(args.at));
+        let parsed = parseLocalStamp(String(args.at));
+        // La noche del cambio a horario de verano las 2:xx no existen: antes salía «at debe
+        // ser … fecha real», que no decía qué pasaba. Va a la hora de después del salto.
+        const shifted = parsed || fromWords ? null : springForwardShift(String(args.at));
+        if (shifted) {
+          parsed = shifted;
+          corrected = ` Esa noche el reloj salta de las 2:00 a las 3:00 (horario de verano), así que lo he puesto a las ${stamp(shifted).slice(11)}.`;
+        }
         if (!parsed && !fromWords) {
           return reply('at debe ser YYYY-MM-DDTHH:MM (hora local, fecha real).', true);
         }
