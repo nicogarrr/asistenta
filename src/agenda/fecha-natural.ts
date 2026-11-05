@@ -193,12 +193,32 @@ const NUM_REL: Readonly<Record<string, number>> = {
   ocho: 8,
   nueve: 9,
   diez: 10,
+  once: 11,
+  doce: 12,
+  trece: 13,
+  catorce: 14,
   quince: 15,
+  dieciseis: 16,
+  diecisiete: 17,
+  dieciocho: 18,
+  diecinueve: 19,
   veinte: 20,
+  veinticinco: 25,
   treinta: 30,
+  // Dictado por voz: «en cuarenta y cinco minutos», «en un par de horas».
+  'treinta y cinco': 35,
+  cuarenta: 40,
+  'cuarenta y cinco': 45,
+  cincuenta: 50,
+  noventa: 90,
+  'un par de': 2,
 };
 const RELATIVO = new RegExp(
-  String.raw`^\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?(?:en|dentro\s+de)\s+(?:(media\s+hora)|(\d{1,3}|${Object.keys(NUM_REL).join('|')})\s+(minutos?|mins?|horas?|dias?|semanas?)(\s+y\s+media)?)(?![a-z])[\s,:|.-]*`,
+  String.raw`^\s*(?:(?:add|anadir|apunta(?:me)?)\s+)?(?:en|dentro\s+de)\s+(?:(media\s+hora)|(\d{1,3}|${Object.keys(
+    NUM_REL,
+  )
+    .sort((a, b) => b.length - a.length)
+    .join('|')})\s+(minutos?|mins?|horas?|dias?|semanas?)(\s+y\s+media)?)(?![a-z])[\s,:|.-]*`,
 );
 
 /**
