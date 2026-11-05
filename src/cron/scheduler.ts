@@ -155,7 +155,7 @@ const MONTH_NAMES = [
 ];
 
 /** Una hora dicha: «9», «8:30», «ocho y media», «9 menos cuarto», «7 de la tarde». */
-const CLOCK = `(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2}))?(?:\\s+y\\s+(${MINUTES_AFTER})|\\s+menos\\s+(${MINUTES_BEFORE}))?(?:\\s+en punto)?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`;
+const CLOCK = `(\\d{1,2}|${SPOKEN_HOURS})(?:[:.h](\\d{2})|\\s+y\\s+(${MINUTES_AFTER})|\\s+menos\\s+(${MINUTES_BEFORE}))?(?:\\s+en punto)?\\s*(h|hs|horas?)?\\b(?:\\s*(?:de|por) la (manana|madrugada|tarde|noche))?`;
 
 /**
  * «a las 7:5», «a las 21 30», «a las 9 h 30»: tras una hora sin minutos ni parte del día
@@ -262,7 +262,8 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
       // «a las 8 de la mañana y 10 de la noche»: la segunda hora va sin «las», pero con su
       // parte del día no puede ser minutos de la primera. Antes se perdía y solo sonaba a las 8.
       const own = named || bare ? null : new RegExp(`^\\s*\\by\\s+${CLOCK}`).exec(rest);
-      const m = named ?? bare ?? (own?.[6] ? own : null);
+      // «a las 8:00 y 20:00»: con minutos escritos la segunda hora tampoco puede ser minutos.
+      const m = named ?? bare ?? (own?.[6] || own?.[2] ? own : null);
       if (!m) break;
       if (!take(m)) return null;
       if (bare) list = true;
