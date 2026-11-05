@@ -344,6 +344,10 @@ export function franjaFromWords(
   return span(dayWords);
 }
 
+/** «en 1 minuto», «dentro de 10 segundos»: tiempo desde ahora, no una hora. */
+const RELATIVE_FROM_NOW =
+  /\b(?:en|dentro de)\s+(?:un|una|\d+|[a-zñ]+)\s+(?:minutos?|mins?|segundos?)\b/iu;
+
 /** Lo que dice de qué parte del día es: con esto la hora ya no tiene dos lecturas. */
 const DAY_PART =
   /\b(?:de la (?:mañana|manana|madrugada|tarde|noche)|de madrugada|del mediod[ií]a|por la (?:mañana|manana|tarde|noche)|esta (?:mañana|manana|tarde|noche)|a\.?m\.?|p\.?m\.?|horas?)\b|\d\s*h\b/iu;
@@ -356,6 +360,9 @@ export function hourIsAmbiguous(text: string, read: Date, timeZone?: string): bo
   const hour = wallClock(read, timeZone).hour;
   if (hour < 1 || hour > 11) return false;
   if (DAY_PART.test(text)) return false;
+  // «en 1 minuto», «dentro de un minuto»: cuenta desde ahora, no es una hora del reloj. Antes,
+  // a las 10:15 «recuérdamelo en 1 minuto» (por debajo del mínimo) acababa a las 22:16.
+  if (RELATIVE_FROM_NOW.test(text)) return false;
   if (/\b0\d(?::\d{2})?\b/.test(text)) return false;
   return true;
 }
