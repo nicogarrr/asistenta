@@ -173,6 +173,20 @@ const FRAME_SAMPLES = 1_600;
 /** Final de ventana (300 ms) que tiene que estar en silencio para dar la palabra por vista entera. */
 const TAIL_SAMPLES = 4_800;
 
+/**
+ * Probabilidad de voz mínima (Silero VAD, máximo de la ventana) para pasar a whisper.
+ * Medido (Linux, ventanas de 3 s a RMS 0,1): música instrumental 26 → 2 de 26 ventanas,
+ * ventilador/aire 13 → 0 de 13, palabra de activación sobre música o ventilador 68 de 68
+ * (prob. mediana 1,00); tele y canciones con voz pasan todas (son voz). En el spike A5
+ * (vad-silero.ts), 105 de 105 «chochi» reales de Nico ≥ 0,996.
+ */
+export const WAKE_VAD_THRESHOLD = 0.5;
+
+/** `PA_WAKE_VAD=0` (u off/no) quita el filtro de voz: whisper en cada ventana con energía. */
+export function wakeVadEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !['0', 'off', 'no', 'false'].includes((env.PA_WAKE_VAD ?? '').trim().toLowerCase());
+}
+
 /** A transcriber that keeps failing is stopped, not retried every interval forever. */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -455,6 +469,12 @@ export interface WakeWordOptions {
    * stream without opening a second capture on a device that only allows one.
    */
   onAudio?: (pcm: Float32Array) => void;
+  /**
+   * Consumo: filtro de voz entre la puerta de energía y whisper (Silero VAD, ver
+   * `wakeVadEnabled`). Devuelve la probabilidad de voz de la ventana (0–1); por debajo de
+   * `WAKE_VAD_THRESHOLD` no se transcribe. Si falla, se transcribe como siempre.
+   */
+  speechScore?: (samples: Float32Array) => Promise<number>;
   /**
    * Motor de deteccion. Defecto 'whisper' (transcribir y comparar texto).
    * 'oww' usa el runner openWakeWord dedicado y requiere `oww`; detras de
@@ -832,6 +852,9 @@ export class WakeWordListener {
   #holdsSharedWhisper = false;
   #initialPrompt: string | undefined;
   #onAudio: ((pcm: Float32Array) => void) | undefined;
+  #speechScore: ((samples: Float32Array) => Promise<number>) | undefined;
+  /** El fallo del filtro de voz se avisa una vez, no en cada comprobación. */
+  #speechScoreFailed = false;
   #held = false;
   #engine: WakeEngine;
   #owwOpts: OwwWakeOptions | undefined;
@@ -886,6 +909,7 @@ export class WakeWordListener {
     this.#sharedWhisper = opts.transcriber === undefined;
     this.#initialPrompt = opts.initialPrompt;
     this.#onAudio = opts.onAudio;
+    this.#speechScore = opts.speechScore;
     this.#engine = opts.engine ?? 'whisper';
     if (this.#engine === 'oww' && !opts.oww) {
       throw new Error('el motor oww necesita opts.oww (modelDir y wordModelFile)');
@@ -1147,6 +1171,10 @@ export class WakeWordListener {
       if (this.#ring.alreadySeen(ENERGY_GATE_RMS)) return;
       const window = this.#ring.snapshot();
       this.#ring.markSeen(ENERGY_GATE_RMS);
+      // Consumo: música sin voz o un ventilador pasan la puerta de energía y costaban una
+      // pasada de whisper cada vez. El VAD (~50 ms por ventana) los descarta por forma.
+      if (this.#speechScore && !(await this.#hasSpeech(window))) return;
+      if (!this.#running || generation !== this.#generation) return;
 
       let text: string;
       try {
@@ -1195,6 +1223,21 @@ export class WakeWordListener {
     } finally {
       // Solo el bucle de la sesión vigente se reprograma; start() ya lanzó el suyo.
       if (generation === this.#generation) this.#scheduleCheck();
+    }
+  }
+
+  async #hasSpeech(window: Float32Array): Promise<boolean> {
+    try {
+      return ((await this.#speechScore?.(window)) ?? 1) >= WAKE_VAD_THRESHOLD;
+    } catch (err) {
+      // Sin filtro (modelo sin descargar, ONNX roto…) se transcribe como siempre.
+      if (!this.#speechScoreFailed) {
+        this.#speechScoreFailed = true;
+        log.warn('wake vad no disponible; whisper en cada ventana', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return true;
     }
   }
 
