@@ -19,6 +19,7 @@ import { localDay, wallClock, zonedTime } from './datecontext.js';
 import { skipsHolidays } from './festivos-rutinas.js';
 import { looksLikePhishing, phishingSignals } from './mail/triage.js';
 import type { MailMessage } from './mail/types.js';
+import { temasBotones } from './noticias-temas.js';
 import { isReminder, reminderText } from './tools/reminder.js';
 
 export const DEFAULT_BRIEFING_HOUR = 8;
@@ -37,7 +38,12 @@ export interface DailyBriefingDeps {
   markSent: (at: number) => void;
   /** Chat del DM del dueño verificado, o null (fail-closed: sin dueño no sale nada). */
   owner: () => string | null;
-  send: (chatId: string, text: string) => Promise<boolean>;
+  /** `buttons`: botones-enlace de «Tus temas» (acción «url:…»), si hay. */
+  send: (
+    chatId: string,
+    text: string,
+    buttons?: Array<{ label: string; action: string }>,
+  ) => Promise<boolean>;
   agenda?: () => Promise<BriefingInput['agenda']>;
   /**
    * Festivo o puente de los próximos 7 días («Festivo el martes 8…»). Solo se mira si hay
@@ -125,7 +131,7 @@ async function within<T>(
 /** Junta las fuentes (cada una con su tope) y compone el texto. Sin efectos. */
 export async function composeDailyBriefing(
   deps: DailyBriefingDeps,
-): Promise<{ text: string; empty: boolean }> {
+): Promise<{ text: string; empty: boolean; buttons?: Array<{ label: string; action: string }> }> {
   const now = deps.now();
   const ms = deps.sourceTimeoutMs ?? DEFAULT_SOURCE_TIMEOUT_MS;
   const [agenda, routines, reminders, followups, weather, mail, goals, watches, tasks, deliveries] =
@@ -183,7 +189,8 @@ export async function composeDailyBriefing(
     // por sí solos; un bloqueo (espera decisión) o un precio ya bajo el objetivo, sí.
     !(input.goals ?? []).some((g) => g.status === 'blocked') &&
     !(input.watches ?? []).some(watchHit);
-  return { text: buildBriefing(input), empty };
+  const buttons = temasBotones(input.temas ?? []);
+  return { text: buildBriefing(input), empty, ...(buttons.length ? { buttons } : {}) };
 }
 
 let inFlight = false;
@@ -283,12 +290,13 @@ export async function runDailyBriefingIfDue(deps: DailyBriefingDeps): Promise<Da
     }
     const chatId = deps.owner();
     if (!chatId) return { status: 'no-owner' };
-    const { text, empty } = await composeDailyBriefing(deps);
+    const composed = await composeDailyBriefing(deps);
+    const { text, empty } = composed;
     if (empty) {
       deps.markSent(now.getTime());
       return { status: 'skipped-empty', text };
     }
-    const ok = await deps.send(chatId, text).catch((err: unknown) => {
+    const ok = await deps.send(chatId, text, composed.buttons).catch((err: unknown) => {
       deps.warn?.('briefing: envío falló', { err: String(err) });
       return false;
     });

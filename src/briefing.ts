@@ -1,6 +1,6 @@
 import { localDay, wallClock, zonedTime } from './datecontext.js';
 import { type UpcomingDate, upcomingDateLine } from './memory/fechas.js';
-import { type Tarjeta, tarjetaLine } from './noticias-temas.js';
+import { type Tarjeta, temasLineas } from './noticias-temas.js';
 import { sliceSafe } from './text.js';
 /**
  * El resumen proactivo del día, en texto plano y en español.
@@ -217,7 +217,7 @@ export function buildBriefing(input: BriefingInput): string {
     },
     {
       title: 'Tus temas',
-      items: section((input.temas ?? []).map((t) => oneLine(tarjetaLine(t), 200) || null)),
+      items: section(temasLineas(input.temas ?? []).map((l) => oneLine(l, 240) || null)),
     },
     {
       title: 'Objetivos',
