@@ -398,6 +398,9 @@ function parseNaturalCore(text: string): { schedule: string; prompt: string } | 
   )
     return null;
   if (/\bultimo dia\b/.test(normalised) && /\bmes(?:es)?\b/.test(normalised)) return null;
+  // «a final de mes a las 9», «a fin de cada mes»: antes sonaba todos los días. Se pregunta.
+  // shortcut: no hay cron simple para el fin de mes; mejorar si se pide mucho.
+  if (/\b(?:fin|final|finales) de (?:cada |todos los )?mes(?:es)?\b/.test(normalised)) return null;
   // «a partir de marzo», «hasta marzo», «hasta el 15 de marzo», «desde el 1 de diciembre»:
   // un cron no tiene inicio ni fin y la rutina sonaba ya y para siempre. Se pregunta. Un
   // rango («de marzo a mayo») ya se ha leído antes; una fecha dentro de la tarea («cuenta
@@ -663,7 +666,7 @@ const DAY_VALUE: Record<string, number> = {
 const DAY = 'lunes|martes|miercoles|jueves|viernes|sabados?|domingos?';
 /** «entre semana», «los días laborables», «cada día laborable», «los laborables». */
 const LABORABLES =
-  /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|habil(?:es)?|de diario)|los laborables|de lunes a viernes)\b/;
+  /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|laboral(?:es)?|habil(?:es)?|de diario)|los laborables|de lunes a viernes)\b/;
 
 /** «cada semana», «semanalmente», «todas las semanas», «una vez a la semana». */
 const WEEKLY =
@@ -693,7 +696,7 @@ function daysOfWeek(normalised: string): string | null {
   // 9»; antes sonaba todos los días).
   const lead = WEEKLY.test(normalised) ? '(?:los|cada|el)' : '(?:los|cada)';
   const list = new RegExp(
-    `(?:^|\\b${lead} )(${DAY})((?:\\s*,\\s*(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
+    `(?:^|\\b${lead} )(${DAY})((?:(?:\\s*,\\s*|\\s+)(?:los |cada |el )?(?:${DAY}))*(?:\\s+y\\s+(?:los |cada |el )?(?:${DAY}))?)\\b`,
   ).exec(normalised);
   if (!list) return null;
   const said = `${list[1]} ${list[2] ?? ''}`.match(new RegExp(`\\b(?:${DAY})\\b`, 'g')) ?? [];
