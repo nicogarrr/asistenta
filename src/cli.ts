@@ -505,6 +505,7 @@ import {
   formatUsageReport,
   parseUsageDays,
 } from './core/usage-format.js';
+import { busyNoteFor } from './daemon/busy-note.js';
 import { envHashDoctorLine } from './doctor-env-hash.js';
 import { envUnknownKeysDoctorLine } from './doctor-env-keys.js';
 import { envLinesDoctorLine } from './doctor-env-lines.js';
@@ -1574,6 +1575,10 @@ interface Thread {
   generation: number;
   /** True while a turn is executing, not merely queued. */
   active: boolean;
+  /** Cuándo empezó el turno en marcha (para el aviso de cola, daemon/busy-note.ts). */
+  activeSince?: number;
+  /** `activeSince` del turno por el que ya se avisó de que un mensaje queda en cola. */
+  busyNoted?: number;
   /** Short label shown by /topics. */
   label: string;
   createdAt: number;
@@ -7440,6 +7445,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return null;
     };
     thread.active = true;
+    thread.activeSince = Date.now();
     turnWatchdog.begin(thread.key, Date.now());
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
@@ -9322,6 +9328,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               onSent: threadForSentIds(messageThread, chatKey(inbound), thread.key),
             });
             return;
+          }
+          // Con una tarea larga en marcha en este hilo, el mensaje queda en cola: se dice
+          // una vez por tarea, con la pista de /btw para lo rápido (daemon/busy-note.ts).
+          {
+            const note = busyNoteFor(thread, Date.now());
+            if (note) void say(inbound, note, { quote: true }).catch(() => {});
           }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.
