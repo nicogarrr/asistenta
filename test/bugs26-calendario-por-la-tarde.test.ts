@@ -27,8 +27,8 @@ describe('/calendario: «por la tarde a las 5»', () => {
     );
   });
 
-  it('sin hora sigue preguntando, y «a la una» no se toca', () => {
-    expect(at('el sábado por la mañana mercado')).toBeNull();
+  it('sin hora, la de esa parte del día (bugs31), y «a la una» no se toca', () => {
+    expect(at('el sábado por la mañana mercado')).toMatch(/ 9:00:00 \| mercado$/);
     expect(at('mañana por la noche a la una fiesta')).toBeNull();
     expect(at('mañana a las 5 de la tarde café')).toBe('4/11/2026, 17:00:00 | café');
   });

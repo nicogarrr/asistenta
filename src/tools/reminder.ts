@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { Cron } from 'croner';
-import { parseFechaCalendario } from '../agenda/fecha-natural.js';
+import { franjaSinHoraDicha, parseFechaCalendario } from '../agenda/fecha-natural.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { type Cadencia, cadenciaDe, cadenciaEs, horarioRutinaEs } from '../cron/cadencia.js';
 import { scheduleEs } from '../cron/describe-es.js';
@@ -202,6 +202,8 @@ export function whenFromWords(
   if (spoken !== text) return whenFromWords(spoken, now, timeZone, opts);
   // `exact`: las palabras son SOLO la hora («en 10 minutos llamo a Ana» no vale).
   const read = (t: string): Date | null => {
+    // «mañana por la mañana» sin hora: la franja la lee franjaFromWords, no las 9:00 fijas.
+    if (franjaSinHoraDicha(`${t} recordatorio`)) return null;
     const got = parseFechaCalendario(`${t} recordatorio`, now, timeZone);
     if (!got || (opts.exact && got.title !== 'recordatorio')) return null;
     return got.start;
@@ -403,7 +405,7 @@ export function sameHourOtherHalf(
  * «de lunes a viernes a las 7:30» también (antes se ignoraba y valía el cron del modelo).
  */
 const REPEATS =
-  /\b(?:cada|todos los|todas las|diario|diariamente|a diario|semanal(?:mente)?|mensual(?:mente)?|entre semana|laborables?|de (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo) a (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)|los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos|fines de semana|findes))\b/;
+  /\b(?:cada|todos los|todas las|diario|diariamente|a diario|semanal(?:mente)?|mensual(?:mente)?|entre semana|laborables?|de (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo) a (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)|los (?:lunes|martes|miercoles|jueves|viernes|sabados|domingos|fines de semana|findes)|alternos|si,? (?:y )?otr[oa] no)\b/;
 
 /**
  * El horario repetido tal como lo dijo el dueño («cada lunes a las 9,30», «los laborables a
