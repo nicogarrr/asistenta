@@ -37,6 +37,16 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: '<instrucción>',
         description: 'corrige lo que estoy haciendo sin pararlo',
       },
+      {
+        command: 'btw',
+        args: '<pregunta>',
+        description: 'pregunta rápida sin parar lo que hago',
+      },
+      {
+        command: 'compra',
+        args: '[cosas]',
+        description: 'lista de la compra con botones para tachar',
+      },
       { command: 'estado', description: 'cómo estoy: herramientas y errores de hoy' },
       {
         command: 'funciones',
@@ -51,16 +61,16 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'modelo',
         args: '[número|nombre|normal]',
-        description: 've o cambia el modelo de esta conversación',
+        description: 've o cambia el modelo',
       },
       {
         command: 'borrar_chat',
-        description: 'borra memoria, historial y perfil de este chat (pide escribir BORRAR)',
+        description: 'borra memoria, historial y perfil (pide escribir BORRAR)',
       },
       {
         command: 'proyecto',
         args: '<carpeta>|quitar',
-        description: 'liga una carpeta: su ASISTENTA.md entra en el contexto',
+        description: 'liga una carpeta (su ASISTENTA.md)',
       },
     ],
   },
@@ -96,8 +106,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'cron',
         args: '[add|del|entrega]',
-        description:
-          'programa, pausa, prueba o borra rutinas; «entrega» decide si su salida va al chat, a un fichero o a ninguno',
+        description: 'programa, pausa, prueba o borra rutinas; «entrega»: chat, fichero o nada',
       },
       {
         command: 'disparador',
@@ -113,7 +122,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'tv',
         args: '[orden]',
-        description: 'orden directa a la tele, sin gastar tokens; sin orden, mando con botones',
+        description: 'orden a la tele; sin orden, mando con botones',
       },
       {
         command: 'ordenador',
@@ -167,7 +176,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'investiga',
         args: '[amplio] <pregunta> [| a, b, c]',
-        description: 'informe a fondo con fuentes citadas; «amplio» = tabla por elemento',
+        description: 'informe a fondo con fuentes; «amplio» = tabla',
       },
       { command: 'vigila', args: '<enlace> [nombre]', description: 'te aviso si cambia el precio' },
       { command: 'vigilando', description: 'lo que estoy vigilando' },
@@ -196,7 +205,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         command: 'correo',
         args: '[estado|lista|responder]',
-        description: 'estado del correo, últimos mensajes y responder',
+        description: 'últimos correos y responder',
       },
     ],
   },
@@ -235,7 +244,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         command: 'actualizacion',
-        description: 'si me actualizo sola desde main y cómo fue la última vez',
+        description: 'si me actualizo sola y cómo fue la última vez',
       },
     ],
   },
