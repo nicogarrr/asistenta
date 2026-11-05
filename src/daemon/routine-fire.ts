@@ -1,4 +1,5 @@
 import { isCommandRoutine } from '../command-routine.js';
+import { isOutageError } from '../core/friendly-error.js';
 import type { Store } from '../db.js';
 import { isGoalRoutine } from '../goals/runner.js';
 import { log } from '../log.js';
@@ -20,6 +21,21 @@ import {
   reminderText,
   settleOneShot,
 } from '../tools/reminder.js';
+import { AUTO_RETRY_DELAYS_MS, retryDelayText } from './auto-retry.js';
+
+/**
+ * La tarea de una rutina no pudo hablar con el modelo (sin red o servicio caído).
+ * createRoutineTask la lanza para que el disparo la reintente más tarde en vez de
+ * mandar «No devolvió respuesta» y perder el informe de esa mañana.
+ */
+export class RoutineOutageError extends Error {
+  readonly raw: string;
+  constructor(raw: string) {
+    super(raw);
+    this.raw = raw;
+    this.name = 'RoutineOutageError';
+  }
+}
 
 /**
  * Chat de Telegram de un scope `telegram:dm:<chatId>#<hilo>` ('' si no tiene).
@@ -63,7 +79,20 @@ export interface RoutineFireDeps {
    * la rutina avisa y no hace nada; jamás cae a runTask.
    */
   fireCommand?: (ctx: RoutineRunContext) => Promise<{ body: string; failed: boolean }>;
+  /**
+   * Sin red o con el modelo caído, la rutina se reintenta tras estas esperas
+   * (por defecto 1, 2, 5, 10 y 15 min). Lista vacía = no reintentar (PA_AUTO_RETRY=0).
+   */
+  outageDelaysMs?: readonly number[];
+  /** Programa un reintento (por defecto setTimeout sin retener el proceso). Para pruebas. */
+  later?: (fn: () => void, ms: number) => { cancel: () => void };
 }
+
+const defaultLater = (fn: () => void, ms: number): { cancel: () => void } => {
+  const t = setTimeout(fn, ms);
+  t.unref?.();
+  return { cancel: () => clearTimeout(t) };
+};
 
 /**
  * Lo que hace el daemon cuando se dispara una rutina (cron, catch-up o
@@ -74,7 +103,21 @@ export function createRoutineFire(
   deps: RoutineFireDeps,
 ): (prompt: string, ctx: RoutineRunContext) => Promise<void> {
   const { store } = deps;
-  return async (_prompt: string, ctx: RoutineRunContext) => {
+  const delays = deps.outageDelaysMs ?? AUTO_RETRY_DELAYS_MS;
+  const later = deps.later ?? defaultLater;
+  /** Reintento pendiente por rutina: un disparo nuevo a su hora lo sustituye. */
+  const pendingRetry = new Map<string, { cancel: () => void }>();
+  const fire = async (
+    _prompt: string,
+    ctx: RoutineRunContext,
+    attempt = 0,
+    firstAt = Date.now(),
+  ): Promise<void> => {
+    const retryKey = `${ctx.scope}\u0000${ctx.routine.name}`;
+    if (attempt === 0) {
+      pendingRetry.get(retryKey)?.cancel();
+      pendingRetry.delete(retryKey);
+    }
     // A goal tick EXECUTES; it never delivers its prompt as a message.
     if (isGoalRoutine(ctx.routine)) {
       await deps.tickGoal(ctx.routine.name);
@@ -131,6 +174,29 @@ export function createRoutineFire(
         } catch (err) {
           failed = true;
           log.warn('routine execution failed', { routine: ctx.routine.name, err });
+          // Sin red o con el modelo caído: se reintenta más tarde y llega con retraso,
+          // en vez de un «No devolvió respuesta» que hace perder el informe.
+          const raw = err instanceof RoutineOutageError ? err.raw : '';
+          if (raw && isOutageError(raw)) {
+            const delay = delays[attempt];
+            if (delay !== undefined) {
+              log.info('routine retry after outage', {
+                routine: ctx.routine.name,
+                attempt,
+                delayMs: delay,
+              });
+              const handle = later(() => {
+                pendingRetry.delete(retryKey);
+                void fire(_prompt, ctx, attempt + 1, firstAt).catch((e: unknown) =>
+                  log.warn('routine retry failed', { routine: ctx.routine.name, err: e }),
+                );
+              }, delay);
+              pendingRetry.set(retryKey, handle);
+              return;
+            }
+            const tried = delays.reduce((a, b) => a + b, 0);
+            body = `No la he podido hacer: lo he reintentado durante ${retryDelayText(tried)} y no había conexión con el modelo (sin internet, o el servicio caído o saturado). Pídemela otra vez cuando quieras.`;
+          }
         }
       }
       if (!body.trim()) {
@@ -158,7 +224,7 @@ export function createRoutineFire(
     }
     const text = reminder
       ? `⏰ Recordatorio: ${reminderText(ctx.routine)}`
-      : `⏰ ${ctx.routine.name}\n\n${body}`;
+      : `⏰ ${ctx.routine.name}${attempt > 0 && body.trim() ? lateNote(Date.now() - firstAt) : ''}\n\n${body}`;
     const buttons = reminder
       ? deps.reminderButtons?.(ctx.scope, reminderText(ctx.routine))
       : undefined;
@@ -196,6 +262,12 @@ export function createRoutineFire(
       deps.sync();
     }
   };
+  return (prompt: string, ctx: RoutineRunContext) => fire(prompt, ctx);
+}
+
+/** « (con 7 min de retraso: a su hora no había conexión con el modelo)». */
+export function lateNote(ms: number): string {
+  return ` (con ${retryDelayText(Math.max(60_000, ms))} de retraso: a su hora no había conexión con el modelo)`;
 }
 
 export interface BootReminderDeps {
