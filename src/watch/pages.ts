@@ -195,6 +195,12 @@ export function extractPrice(text: string): string | null {
   return `${parsed[0]},${parsed[1]} €`;
 }
 
+/** «999,00 €» (la forma que guarda extractPrice) → céntimos; lo demás (texto, ambiguo) → null. */
+function canonicalCents(value: string): number | null {
+  const m = /^(\d+),(\d{2}) €$/.exec(value);
+  return m ? Number(m[1]) * 100 + Number(m[2]) : null;
+}
+
 /**
  * Whether two stored readings are the same value. Prices are compared in their
  * canonical shape, so a literal saved by an older version («1,459€», «1,459 EUR»)
@@ -652,6 +658,34 @@ export class PageWatchStore {
         'UPDATE page_watches SET last_value = ?, failures = 0, last_checked_at = ? WHERE id = ?',
       )
       .run(value, this.now(), w.id);
+    // Webs que no son de las 7 tiendas: el objetivo («objetivo=300€») y la bajada («baja=15%»)
+    // solo se miraban en las fichas de tienda; aquí se aceptaban al crear la vigilancia pero
+    // avisaba de cualquier cambio (subidas incluidas) y nunca de «objetivo conseguido».
+    const cents = w.keyword ? null : canonicalCents(value);
+    if (cents !== null) {
+      const prevCents = w.lastValue ? canonicalCents(extractPrice(w.lastValue) ?? '') : null;
+      if (w.targetCents !== null && cents <= w.targetCents) {
+        // Al cruzar el umbral a la baja (o si la primera lectura ya está por debajo).
+        if (prevCents === null || prevCents > w.targetCents) {
+          this.markAlert(w.id, cents);
+          return { kind: 'target', cents, targetCents: w.targetCents, inStock: null };
+        }
+      }
+      if (w.dropPct !== null && prevCents !== null && prevCents > 0) {
+        const drop = ((prevCents - cents) / prevCents) * 100;
+        if (drop + 1e-9 >= w.dropPct && this.canAlert(w, cents)) {
+          this.markAlert(w.id, cents);
+          return {
+            kind: 'drop',
+            cents,
+            referenceCents: prevCents,
+            referenceKind: 'ultima',
+            dropPct: Math.round(drop * 10) / 10,
+            inStock: null,
+          };
+        }
+      }
+    }
     if (!w.lastValue) return { kind: 'baseline', value };
     if (value.startsWith('feed:')) {
       // Feed: solo cuentan las entradas nuevas; una que sale del final no es un cambio.
