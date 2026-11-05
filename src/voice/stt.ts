@@ -9,6 +9,7 @@
 import { existsSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { join } from 'node:path';
+import { modoAhorro } from '../ahorro.js';
 import { log } from '../log.js';
 import { ORT_SIN_ESPERA_ACTIVA } from '../onnx-ahorro.js';
 import { paths } from '../paths.js';
@@ -554,6 +555,12 @@ export interface SttDeps {
  * nunca: lo usa la palabra de activación, que tiene que contestar al momento.
  */
 export const BIG_MODEL_IDLE_MS = 10 * 60_000;
+/** Con `PA_AHORRO=1` (ver ahorro.ts): 2 min. */
+export const BIG_MODEL_IDLE_AHORRO_MS = 2 * 60_000;
+/** El reposo del modelo grande según el modo ahorro. */
+export function bigModelIdleMs(env: NodeJS.ProcessEnv = process.env): number {
+  return modoAhorro(env) ? BIG_MODEL_IDLE_AHORRO_MS : BIG_MODEL_IDLE_MS;
+}
 let notesBusy = 0;
 let lastNoteAt = 0;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -561,7 +568,7 @@ let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 /** Descarga de la RAM los modelos de notas (no small) si no hay notas en curso ni recientes. */
 export async function releaseIdleWhisper(
   now: number = Date.now(),
-  idleMs: number = BIG_MODEL_IDLE_MS,
+  idleMs: number = bigModelIdleMs(),
 ): Promise<string[]> {
   if (notesBusy > 0 || now - lastNoteAt < idleMs) return [];
   const released: string[] = [];
@@ -588,7 +595,7 @@ function scheduleRelease(): void {
   releaseTimer = setTimeout(() => {
     releaseTimer = null;
     void releaseIdleWhisper().catch(() => undefined);
-  }, BIG_MODEL_IDLE_MS + 1_000);
+  }, bigModelIdleMs() + 1_000);
   releaseTimer.unref?.();
 }
 

@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import type { BrowserContext, Locator, Page } from 'playwright';
+import { modoAhorro } from '../ahorro.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
@@ -192,6 +193,12 @@ export interface BrowserServiceOptions {
 
 /** Minutos sin uso tras los que se cierra un navegador sin ventana (ver `idleCloseMs`). */
 export const BROWSER_IDLE_CLOSE_MS = 10 * 60_000;
+/** Con `PA_AHORRO=1` (ver ahorro.ts): 3 min. */
+export const BROWSER_IDLE_CLOSE_AHORRO_MS = 3 * 60_000;
+/** El reposo por defecto según el modo ahorro. */
+export function browserIdleCloseDefaultMs(env: NodeJS.ProcessEnv = process.env): number {
+  return modoAhorro(env) ? BROWSER_IDLE_CLOSE_AHORRO_MS : BROWSER_IDLE_CLOSE_MS;
+}
 
 /** Result of one `exec_js`: text always, plus where the page ended up. */
 export interface ExecJsResult {
@@ -800,7 +807,7 @@ export class BrowserService {
       cdpPort: options.cdpPort,
       cdpDeps: options.cdpDeps,
       viewport: options.viewport ?? { width: 1440, height: 900 },
-      idleCloseMs: options.idleCloseMs ?? BROWSER_IDLE_CLOSE_MS,
+      idleCloseMs: options.idleCloseMs ?? browserIdleCloseDefaultMs(),
     };
   }
 
