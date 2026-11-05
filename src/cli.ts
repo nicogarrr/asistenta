@@ -127,7 +127,12 @@ import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
 import type { AgentRunResult } from './core/agent.js';
 import { PersonalAgent } from './core/agent.js';
 import { attentionFreeConfig, createAttentionJudge } from './core/attention-model.js';
-import { chatReplyText, MODEL_ERROR_QUESTION, modelErrorFollowUp } from './core/friendly-error.js';
+import {
+  chatReplyText,
+  isOutageError,
+  MODEL_ERROR_QUESTION,
+  modelErrorFollowUp,
+} from './core/friendly-error.js';
 import { dedupeNewFacts } from './core/history.js';
 import {
   checkProviderKey,
@@ -139,6 +144,7 @@ import { createDelegateWiring } from './core/subagent-wiring.js';
 import { baseTools, MACHINE_TOOLS } from './core/tool-registry.js';
 import { programadaEs } from './cron/describe-es.js';
 import { parseNatural } from './cron/scheduler.js';
+import { AUTO_RETRY_GAVE_UP, AutoRetries, autoRetryNote } from './daemon/auto-retry.js';
 import { briefingHourFor } from './daemon/briefing-quiet.js';
 import { capturaDeLaPagina, sigueLaTareaEnCurso } from './daemon/captura-tarea.js';
 import { CloseLoop, closedLine } from './daemon/close-loop.js';
@@ -1729,6 +1735,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const pageWatches = new PageWatchStore(memoryDb);
   const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
   const lastTurns = new LastTurns<unknown, NonNullable<Inbound['images']>[number]>();
+  // Sin red o con el modelo caído: el mensaje se reintenta solo (PA_AUTO_RETRY=0 lo apaga).
+  const autoRetries = new AutoRetries();
+  const autoRetryOn = envSwitchOn('PA_AUTO_RETRY');
   const weeklyState = new WeeklyState(memoryDb);
   const voiceDb = openSqlite(join(paths.state, 'voice.db'), { wal: true });
   const bargeStats = new BargeStats(voiceDb);
@@ -5705,6 +5714,36 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, projectLinkedReply(ctx), { quote: true });
   };
 
+  // Reintento automático (auto-retry.ts): como /reintentar, pero sin decir «Repito»;
+  // la respuesta llega citando el mensaje original cuando vuelve la conexión.
+  const autoRetryTurn = (
+    thread: Thread,
+    inbound: Inbound,
+    generation: number,
+    attempt: number,
+  ): Promise<void> =>
+    queueThreadTurn(thread, async () => {
+      // /nuevo o un reinicio de la conversación entre medias: ese mensaje ya no toca.
+      if (thread.generation !== generation) return;
+      const last = lastTurns.get(thread.key);
+      if (!last) return;
+      rewindLastTurn(last, {
+        agent: thread.agent,
+        messages: thread.agent.messages,
+        compactions: thread.agent.compactions,
+      });
+      lastTurns.remember(thread.key, {
+        ...last,
+        agent: thread.agent,
+        mark: thread.agent.messages.length,
+        compactions: thread.agent.compactions,
+      });
+      await runTurn(thread, { ...inbound, text: last.text, images: last.images }, last.text, {
+        images: last.images,
+        autoRetry: attempt,
+      });
+    });
+
   // F7: /reintentar repite el último mensaje sin la respuesta anterior en el historial.
   const cmdReintentar = async (inbound: Inbound): Promise<void> => {
     const thread = await resolveThread(inbound);
@@ -6896,10 +6935,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
        * el turno va marcado como contenido de fuera y no enseña reglas.
        */
       external?: string;
+      /** Reintento automático número N (0 = el primero) del último mensaje que falló por la red. */
+      autoRetry?: number;
     },
   ): Promise<void> => {
     const generation = thread.generation;
     const out = opts.out;
+    // Un mensaje nuevo del dueño (o /reintentar) manda: el reintento pendiente sobra.
+    if (opts.autoRetry === undefined && !opts.external) autoRetries.cancel(thread.key);
     /** Lo que el turno diría aparte: por Telegram, o al panel si el turno es suyo. */
     const tell: typeof say = async (to, text, o) => {
       if (!out) return say(to, text, o);
@@ -7503,9 +7546,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
 
       // El error crudo («fetch failed») se queda en el log; el chat lo oye en claro.
-      const text2 = chatReplyText(result) + modelErrorAsk(inbound, result, !out);
+      let text2 = chatReplyText(result) + modelErrorAsk(inbound, result, !out);
+      // Sin red o con el servicio del modelo caído: se reintenta solo, sin que el dueño
+      // vuelva a escribirlo. Los reintentos que fallan otra vez no escriben nada.
+      const retrying = opts.autoRetry !== undefined;
+      if (
+        autoRetryOn &&
+        !out &&
+        !opts.external &&
+        inbound.channel === 'telegram' &&
+        !result.text.trim() &&
+        isOutageError(result.error) &&
+        lastTurns.get(thread.key)
+      ) {
+        const attempt = retrying ? (opts.autoRetry ?? 0) + 1 : 0;
+        const delay = autoRetries.schedule(thread.key, attempt, () =>
+          autoRetryTurn(thread, inbound, generation, attempt),
+        );
+        log.info('auto retry', { thread: thread.name, attempt, delayMs: delay });
+        if (retrying) text2 = delay === null ? AUTO_RETRY_GAVE_UP : '';
+        else if (delay !== null) text2 = `${text2} ${autoRetryNote(delay)}`;
+      }
       if (out) out.answer(text2);
-      else await answer(thread, inbound, text2);
+      else if (text2) await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
       // the chat copy, so a TTS failure never costs the text.
       if (opts.spoken && text2.trim()) {

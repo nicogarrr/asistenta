@@ -101,7 +101,10 @@ describe('chat del panel → turno normal del daemon (paso 2)', () => {
 
     it('runTurn con `out` no envía nada por Telegram: respuesta, avisos, progreso y captura', () => {
       expect(start).toBeGreaterThan(0);
-      expect(runTurnSrc).toMatch(/if \(out\) out\.answer\(text2\);\s*else await answer\(/);
+      // Un reintento automático que vuelve a fallar no escribe nada (texto vacío).
+      expect(runTurnSrc).toMatch(
+        /if \(out\) out\.answer\(text2\);\s*else if \(text2\) await answer\(/,
+      );
       expect(runTurnSrc).toMatch(/if \(!out\) return say\(to, text, o\);/);
       // Ningún aviso sale directo por say(): todos pasan por tell().
       expect(runTurnSrc.match(/\bsay\(/g)).toHaveLength(1);

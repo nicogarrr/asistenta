@@ -71,6 +71,24 @@ export function friendlyModelError(raw: string): string {
 }
 
 /**
+ * ¿Falló por la red o porque el servicio del modelo está caído o saturado? Son
+ * los fallos que se arreglan solos esperando (no una clave mala, sin saldo, una
+ * conversación demasiado larga o un fallo interno): los que merece la pena
+ * reintentar sin que el dueño vuelva a escribir.
+ */
+export function isOutageError(raw: string | null | undefined): boolean {
+  const error = (raw ?? '').trim();
+  if (!error || /^Te detuve\b/.test(error)) return false;
+  if (any(BAD_KEY, error) || any(NO_FUNDS, error) || any(TOO_LONG, error)) return false;
+  return (
+    any(NO_INTERNET, error) ||
+    any(RATE_LIMIT, error) ||
+    any(PROVIDER_DOWN, error) ||
+    any(UNREACHABLE, error)
+  );
+}
+
+/**
  * Qué arregla un «sí» después del fallo: resumir la conversación si se ha hecho
  * demasiado larga, o repetir el mensaje si falló por dentro. Null si esperar o
  * revisar algo es lo único que sirve.
