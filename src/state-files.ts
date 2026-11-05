@@ -122,6 +122,7 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   { name: 'proyectos.json', what: 'proyectos conocidos', backup: 'file' },
+  { name: 'temas.json', what: 'temas que sigues y titulares ya vistos', backup: 'file' },
   { name: 'alerts-seen.json', what: 'alertas ya entregadas (evita repetidas)', backup: 'file' },
   {
     name: 'altavoz.json',

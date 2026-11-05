@@ -26,6 +26,7 @@ const BEFORE = {
     'memory',
     'reminder',
     'tareas',
+    'temas',
     'agenda',
     'cuentas',
     'opengym',

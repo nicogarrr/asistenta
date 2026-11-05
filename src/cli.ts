@@ -277,6 +277,7 @@ import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
 import { aplicarModeloPanel, MODELOS_PANEL } from './modelos-panel.js';
+import { createTemasTool, TemasStore, tarjetasDeTemas, temasDelPerfil } from './noticias-temas.js';
 import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
@@ -1789,6 +1790,29 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * rebuilding the same context from scattered rows each time.
    */
   const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  // «Tus temas» (noticias-temas.ts): lo que sigue y los titulares que ya vio.
+  const temasStore = new TemasStore(join(paths.state, 'temas.json'));
+  const temasDeNico = (): string[] => {
+    const all = [...temasStore.list()];
+    for (const t of temasDelPerfil(snapshot.load().split(ENTRY_SEPARATOR))) {
+      if (!all.some((x) => x.toLowerCase() === t.toLowerCase())) all.push(t);
+    }
+    return all;
+  };
+  const noticiasDeTemas = () =>
+    tarjetasDeTemas(
+      temasDeNico(),
+      async (url) => {
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(10_000),
+          headers: { 'user-agent': 'Mozilla/5.0 (Asistenta)' },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.text()).slice(0, 1_000_000);
+      },
+      temasStore,
+      Date.now(),
+    );
   // Las horas en que el dueño dijo que no le escriban («no me escribas antes de las 9»).
   const ownerQuiet = (): QuietHours => ownerQuietHours(snapshot.load().split(ENTRY_SEPARATOR));
   // S5 (opt-in PA_SEMANTIC_RECALL=1): embeddings locales para recall híbrido.
@@ -2395,6 +2419,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
+      createTemasTool({ store: temasStore, temas: temasDeNico, news: noticiasDeTemas }),
       createWebTool(config),
       createDoneTool(),
       createAskTool(),
@@ -5280,6 +5305,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return key ? briefingTasks(new TaskBoard(join(paths.state, 'tareas.json')), key) : [];
     },
     deliveries: () => briefingDeliveries(activeDeliveries(memoryDb, Date.now())),
+    // Titulares de la noche sobre sus temas: se marcan vistos para no repetirlos mañana.
+    temas: async () => {
+      if (!briefingOwner()) return [];
+      const cards = await noticiasDeTemas();
+      temasStore.markSeen(cards.map((t) => t.url));
+      return cards;
+    },
     dates: () => {
       const owner = briefingOwner();
       const key = owner ? ownerChatKey(owner) : undefined;
