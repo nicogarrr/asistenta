@@ -699,9 +699,13 @@ const NTH_WEEK: Record<string, string> = {
   cuarto: '4',
   ultimo: 'L',
 };
-/** «entre semana», «los días laborables», «cada día laborable», «los laborables». */
+/**
+ * «entre semana», «los días laborables», «cada día laborable», «los laborables», «cada
+ * laborable», «los días de semana». «Cada laborable» y «días de semana» sonaban todos los
+ * días (fines de semana incluidos); «cada día de la semana» sí es todos los días.
+ */
 const LABORABLES =
-  /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|laboral(?:es)?|habil(?:es)?|de diario)|los laborables|de lunes a viernes)\b/;
+  /\b(?:entre semana|(?:los |cada |todos los )?dias? (?:laborables?|laboral(?:es)?|habil(?:es)?|de diario|de semana)|(?:los|cada|todos los) (?:laborables?|habiles?)|de lunes a viernes)\b/;
 
 /** «cada semana», «semanalmente», «todas las semanas», «una vez a la semana». */
 const WEEKLY =
