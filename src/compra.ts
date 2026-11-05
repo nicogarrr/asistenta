@@ -50,7 +50,7 @@ export const fold = (s: string): string =>
 export function itemsFromText(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const raw of text.split(/\s*(?:,|;|\n|\s+y\s+|\s+e\s+(?=[ií]))\s*/i)) {
+  for (const raw of text.split(/\s*(?:,|;|\n|\s+y\s+|\s+e\s+(?=h?[ií](?![ae])))\s*/i)) {
     const t = raw
       .replace(/^[\s\-•*·]+|[\s.!¡¿?]+$/g, '')
       .replace(/^(?:también|tambien|además|ademas)\s+/i, '')
