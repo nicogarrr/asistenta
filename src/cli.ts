@@ -454,7 +454,6 @@ import {
   answerBriefingOnDemand,
   briefingSpeaker,
   type DailyBriefingDeps,
-  fetchWeatherLine,
   followupsDue,
   pickImportantMail,
   scheduledForToday,
@@ -632,7 +631,7 @@ import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/sy
 import { createTasksTool } from './tools/tasks.js';
 import { createTraficoTool, TraficoVistosStore } from './tools/trafico.js';
 import { createTvTool, explainTvError, tvLastOrderAt } from './tools/tv.js';
-import { createWeatherTool } from './tools/weather.js';
+import { briefingWeatherLine, createWeatherTool } from './tools/weather.js';
 import { buildWebBackends, createWebTool } from './tools/web.js';
 import { createWindowsTool, listWindows } from './tools/windows.js';
 import { startTvButtonListener, type TvButtonListener } from './tv/button-listener.js';
@@ -5449,7 +5448,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           targetCents: w.targetCents,
         }));
     },
-    weather: briefingWeather ? () => fetchWeatherLine(briefingWeather) : undefined,
+    // La línea del día más «lluvia probable de 15:00 a 18:00» si hoy se espera lluvia.
+    weather: briefingWeather ? () => briefingWeatherLine(briefingWeather) : undefined,
     ...(() => {
       // «excepto festivos»: un festivo no suenan, así que el resumen no las anuncia.
       const isHoliday = createHolidayCheck();
