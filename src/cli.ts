@@ -699,7 +699,12 @@ import {
 import { REPLY_TTS_BUDGET_MS, speakWithin } from './voice/tts.js';
 import { speakerProfilesFile } from './voice/voice-cli.js';
 import { createTtsConVozLocal } from './voice/voz-local.js';
-import { defaultTranscriber, stripWakeWord, WakeWordListener } from './voice/wake.js';
+import {
+  defaultTranscriber,
+  stripWakeWord,
+  WakeWordListener,
+  wakeVadEnabled,
+} from './voice/wake.js';
 import {
   COMPARE_WATCH_STALE,
   type CompareReport,
@@ -8472,6 +8477,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // "Choci", "Chuchis", "Chocchi" or dropped entirely. The initial prompt
       // gives it a spelling to copy instead of one to invent.
       initialPrompt: wakeWord,
+      // Consumo: la música sin voz y los ventiladores ya no llegan a whisper (PA_WAKE_VAD=0 lo quita).
+      ...(wakeVadEnabled() ? { speechScore: bargeVadScorer } : {}),
       onAudio: (pcm) => session?.feed(pcm),
       onWake: (heard) => {
         // Deliberately not awaited: a wake starts a whole turn, and the listener's
