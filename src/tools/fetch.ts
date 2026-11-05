@@ -10,7 +10,7 @@ import {
 } from '../media/transcript.js';
 import { normalizeHostname } from '../text.js';
 import { decodeWin1252, WIN1252_LABELS, win1252NativeOk } from '../win1252.js';
-import { githubReviewText, parseGithubUrl } from './github-review.js';
+import { GITHUB_KIND_LABEL, githubReviewText, parseGithubUrl } from './github-review.js';
 
 /**
  * Read a web page, or fetch a URL the user pasted in chat.
@@ -507,7 +507,7 @@ export async function fetchPage(
 export interface FetchToolDeps {
   /** Subtítulos de un vídeo de YouTube; por defecto yt-dlp (inyectable en tests). */
   transcript?: (url: string) => Promise<TranscriptResult>;
-  /** Resumen de una PR o commit de GitHub; por defecto la API pública (inyectable en tests). */
+  /** Resumen de una PR, commit, comparación o issue de GitHub; por defecto la API pública (inyectable en tests). */
   github?: typeof githubReviewText;
 }
 
@@ -521,7 +521,7 @@ export function createFetchTool(
     description:
       'Download a web page and return its text content. Use this when the user shares a link or asks about a page. Returns text only: no images, no scripts, no interaction. ' +
       'For a YouTube video link it returns the video transcript (subtitles) instead of the page: use it for "resúmeme este vídeo" / "de qué va este vídeo". ' +
-      'For a GitHub pull request or commit link it returns the summary, changed files, automatic risk warnings and the diff: use it for "revisa este PR".',
+      'For a GitHub pull request, commit or compare link it returns the summary, changed files, automatic risk warnings and the diff; for a GitHub issue, its description and latest comments: use it for "revisa este PR" or "mira esta issue".',
     parameters: FetchParams(),
     executionMode: 'parallel',
     execute: async (_id, args) => {
@@ -556,8 +556,8 @@ export function createFetchTool(
         }
         log.info('youtube transcript unavailable, reading the page', { reason: subs.reason });
       }
-      // «Revisa este PR»: una PR o un commit de GitHub se lee por su API (resumen, avisos
-      // de riesgo y diff) en vez de la página, que es casi todo menú.
+      // «Revisa este PR»: una PR, un commit, una comparación o una issue de GitHub se lee por
+      // su API (resumen, avisos de riesgo y diff) en vez de la página, que es casi todo menú.
       const gh = parseGithubUrl(url);
       if (
         gh &&
@@ -572,7 +572,7 @@ export function createFetchTool(
             content: [
               {
                 type: 'text',
-                text: `GitHub ${gh.kind === 'pull' ? 'pull request' : 'commit'} ${url} (read through the GitHub API). When the user asks to review it, answer in Spanish with a short summary of what it does and the concrete risks (use the automatic warnings, but check them against the diff).\n\n<fetched_content source="${url}">\n${text}\n</fetched_content>`,
+                text: `GitHub ${GITHUB_KIND_LABEL[gh.kind]} ${url} (read through the GitHub API). ${gh.kind === 'issue' ? 'When the user asks about it, answer in Spanish with a short summary of the problem, what the discussion concluded and what is still pending.' : 'When the user asks to review it, answer in Spanish with a short summary of what it does and the concrete risks (use the automatic warnings, but check them against the diff; say so when a warning says GitHub left a file out of the diff).'}\n\n<fetched_content source="${url}">\n${text}\n</fetched_content>`,
               },
             ],
             details: { url, github: gh.kind, chars: text.length },

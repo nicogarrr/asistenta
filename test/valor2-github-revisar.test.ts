@@ -68,7 +68,7 @@ describe('revisar un enlace de GitHub', () => {
       repo: 'r',
       ref: '0621ce84a1',
     });
-    expect(parseGithubUrl('https://github.com/o/r/issues/3')).toBeNull();
+    expect(parseGithubUrl('https://github.com/o/r/issues/3')?.kind).toBe('issue');
     expect(parseGithubUrl('https://github.com/o/r')).toBeNull();
     expect(parseGithubUrl('https://gitlab.com/o/r/pull/1')).toBeNull();
   });
@@ -115,7 +115,7 @@ describe('revisar un enlace de GitHub', () => {
             stats: { additions: 5, deletions: 1 },
             files: [
               { filename: 'src/cron/a.ts', additions: 4, deletions: 1, patch: 'x'.repeat(2000) },
-              { filename: 'test/a.test.ts', additions: 1, deletions: 0 },
+              { filename: 'test/a.test.ts', additions: 1, deletions: 0, patch: '+t' },
             ],
           },
         }) as never,
