@@ -165,7 +165,7 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     name: 'gastos',
-    note: 'gastos por mes o comercio leídos de los cobros que el Ojo apunta del correo: solo lectura local y solo en el chat privado del dueño; la Gate decide.',
+    note: 'gastos por mes o comercio leídos de los cobros que el Ojo apunta del correo: lectura local (pagina=true guarda la página «Mis gastos» del panel, base local) y solo en el chat privado del dueño; la Gate decide.',
   },
   {
     name: 'divisas',

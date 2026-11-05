@@ -639,7 +639,7 @@ import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createGasolinerasTool } from './tools/gasolineras.js';
-import { createGastosTool } from './tools/gastos.js';
+import { createGastosTool, refrescarPaginaGastos } from './tools/gastos.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createLuzTool } from './tools/luz.js';
@@ -2212,11 +2212,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Tarjeta Paquetes: envíos leídos de los correos, solo lectura.
           repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
           // Tarjeta Páginas: páginas vivas y salidas de rutinas a fichero (solo texto, sin HTML).
-          paginas: () =>
-            panelPaginas(paginasVivas, join(paths.state, 'salidas'), localTimeZone(), creados),
+          // «Mis gastos» automática: se rehace al mirarla si el Ojo apuntó cobros nuevos.
+          paginas: () => {
+            refrescarPaginaGastos(memoryDb, paginasVivas, Date.now(), localTimeZone());
+            return panelPaginas(
+              paginasVivas,
+              join(paths.state, 'salidas'),
+              localTimeZone(),
+              creados,
+            );
+          },
           creado: (id) => creados.leer(id),
-          pagina: (id) =>
-            panelPagina(paginasVivas, join(paths.state, 'salidas'), id, localTimeZone()),
+          pagina: (id) => {
+            refrescarPaginaGastos(memoryDb, paginasVivas, Date.now(), localTimeZone());
+            return panelPagina(paginasVivas, join(paths.state, 'salidas'), id, localTimeZone());
+          },
           // Funciones → «Lo que más usas»: lo mismo que /funciones uso (auditoría + usos de habilidades).
           uso: async () => {
             let lines: Parameters<typeof toolUseCounts>[0] = [];
@@ -2737,6 +2747,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createGastosTool({
         db: memoryDb,
         allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        paginas: paginasVivas,
       }),
       // «¿Hay algo en la A-8?»: incidencias de la DGT en vivo, solo lectura.
       // «Avísame si cortan la AS-II»: rutina que solo escribe si aparece algo nuevo.
