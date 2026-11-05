@@ -1,5 +1,6 @@
 import { isCommandRoutine } from '../command-routine.js';
 import { isGoalRoutine } from '../goals/runner.js';
+import type { RoutineRun } from '../routine-history.js';
 import { dentroDeEs, fechaCortaEs, isReminder, reminderText } from '../tools/reminder.js';
 
 /** Lo mínimo que el panel necesita de cada rutina programada (RoutineRunner.status()). */
@@ -90,7 +91,31 @@ export interface PanelRoutine {
   comando: string | null;
   /** «vie 30/10 18:00», o null si nunca se ha ejecutado (o la fecha guardada no se entiende). */
   ultima: string | null;
+  /** Últimas ejecuciones (la más reciente primero): cuándo, si fue bien y qué salió. */
+  ejecuciones?: PanelRoutineRun[];
 }
+
+/** Una ejecución en la tarjeta Rutinas. */
+export interface PanelRoutineRun {
+  cuando: string;
+  ok: boolean;
+  /** «enviada», «guardada en fichero», «sin conexión con el modelo, se reintenta»… */
+  entrega: string;
+  salida: string;
+}
+
+/** Ejecuciones por rutina que enseña el panel. */
+export const PANEL_RUNS = 5;
+
+const ENTREGA_PANEL: Record<string, string> = {
+  chat: 'enviada',
+  pendiente: 'pendiente de reenvío',
+  reenviada: 'enviada con retraso',
+  fichero: 'guardada en fichero',
+  'sin-cambios': 'sin cambios, no enviada',
+  ninguno: 'no enviada',
+  reintento: 'sin conexión, se reintenta',
+};
 
 const MAX_RUTINAS = 50;
 
@@ -111,6 +136,7 @@ export function panelRoutines(
   tag: (r: PanelRoutineSource) => string,
   ownerId?: string | number,
   now: Date = new Date(),
+  historial?: (scope: string, name: string) => readonly RoutineRun[],
 ): PanelRoutine[] {
   const vivas = new Map(scheduled.map((s) => [`${s.scope}\u0000${s.name}`, s.next]));
   const filas: { orden: number; fila: PanelRoutine }[] = [];
@@ -138,6 +164,18 @@ export function panelRoutines(
         proxima: !r.enabled ? 'Pausada' : valida && at ? cuando(at, now) : 'Sin próxima ejecución',
         comando: isCommandRoutine(r) ? marca || 'comando' : null,
         ultima: ultimaEjecucion(r.lastRunAt),
+        ...(historial
+          ? {
+              ejecuciones: historial(r.scope, r.name)
+                .slice(0, PANEL_RUNS)
+                .map((e) => ({
+                  cuando: fechaCortaEs(new Date(e.at)),
+                  ok: e.ok,
+                  entrega: ENTREGA_PANEL[e.entrega] ?? e.entrega,
+                  salida: e.salida,
+                })),
+            }
+          : {}),
       },
     });
   }
