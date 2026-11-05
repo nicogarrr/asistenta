@@ -507,7 +507,15 @@ import {
   formatUsageReport,
   parseUsageDays,
 } from './core/usage-format.js';
-import { busyNoteFor } from './daemon/busy-note.js';
+import {
+  BUSY_STOP_GONE,
+  BUSY_STOP_LABEL,
+  BUSY_STOPPED,
+  busyNoteFor,
+  busyStopToken,
+  busyThreadForToken,
+  isBusyStopToken,
+} from './daemon/busy-note.js';
 import { envHashDoctorLine } from './doctor-env-hash.js';
 import { envUnknownKeysDoctorLine } from './doctor-env-keys.js';
 import { envLinesDoctorLine } from './doctor-env-lines.js';
@@ -1602,6 +1610,8 @@ interface Thread {
   activeSince?: number;
   /** `activeSince` del turno por el que ya se avisó de que un mensaje queda en cola. */
   busyNoted?: number;
+  /** `activeSince` del turno cortado con «⏹ Pararlo»: su respuesta ya no sale. */
+  busyStopped?: number;
   /** Short label shown by /topics. */
   label: string;
   createdAt: number;
@@ -7150,6 +7160,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, view.text, { quote: true, buttons: view.buttons });
   };
 
+  /** El botón «⏹ Pararlo» del aviso de cola para la tarea en marcha de este hilo. */
+  const busyStopButtons = (thread: Thread) => {
+    const token = busyStopToken(thread);
+    const button = token ? commandButton(BUSY_STOP_LABEL, 'stop', token) : undefined;
+    return button ? [button] : undefined;
+  };
+
+  /** «⏹ Pararlo» del aviso de cola: corta solo esa tarea; lo que esperaba va después. */
+  const cmdStopBusy = async (inbound: Inbound, token: string): Promise<void> => {
+    const thread = busyThreadForToken(threads.values(), chatKey(inbound), token);
+    if (!thread) {
+      await say(inbound, BUSY_STOP_GONE, { quote: true });
+      return;
+    }
+    thread.busyStopped = thread.activeSince;
+    thread.agent.abort('external');
+    backgroundDelegates.abortThread(thread.key);
+    log.info('busy stop requested', { chatId: inbound.chatId });
+    await say(inbound, BUSY_STOPPED, { quote: true });
+  };
+
   const cmdStop = async (inbound: Inbound): Promise<void> => {
     const chatKey_ = chatKey(inbound);
     const mine = [...threads.values()].filter((t) => t.chatKey === chatKey_);
@@ -7579,6 +7610,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     };
     thread.active = true;
     thread.activeSince = Date.now();
+    const turnSince = thread.activeSince;
     turnWatchdog.begin(thread.key, Date.now());
     // Which message this turn is answering, so a tool that sends something back can
     // quote it. Replaced per turn, because one thread serves many messages.
@@ -8094,6 +8126,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
 
       if (thread.generation !== generation) return;
+      // Cortado con «⏹ Pararlo» del aviso de cola: no sale su respuesta a medias; lo que
+      // esperaba en la cola va ahora (daemon/busy-note.ts).
+      if (thread.busyStopped === turnSince) return;
 
       // Lo que contó de sí mismo ya está en su perfil (se apuntó al llegar): que lo sepa.
       const saidNow = recentFacts.peek(chatKey(inbound));
@@ -9011,7 +9046,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // Un comando nuevo se añade aquí con una línea; un nombre repetido hace fallar
   // test/daemon-commands.test.ts (y el arranque), en vez de quedar tapado.
   const commandTable = buildCommandTable<Inbound>([
-    { names: ['stop'], run: (inbound) => cmdStop(inbound) },
+    {
+      names: ['stop'],
+      run: (inbound, args) =>
+        isBusyStopToken(args.trim()) ? cmdStopBusy(inbound, args.trim()) : cmdStop(inbound),
+    },
     { names: ['screen'], run: (inbound, args) => cmdScreen(inbound, args) },
     {
       names: ['camera', 'play', 'suena', 'toca', 'escucha', 'mic', 'micro', 'watch'],
@@ -9511,7 +9550,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // una vez por tarea, con la pista de /btw para lo rápido (daemon/busy-note.ts).
           {
             const note = busyNoteFor(thread, Date.now());
-            if (note) void say(inbound, note, { quote: true }).catch(() => {});
+            const buttons = note ? busyStopButtons(thread) : undefined;
+            if (note) void say(inbound, note, { quote: true, buttons }).catch(() => {});
           }
           // Serialise inside the thread only. Different threads run concurrently; the
           // machine mutex inside the tools is what keeps them from colliding.

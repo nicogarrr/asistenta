@@ -7,6 +7,11 @@
  * después y que una pregunta rápida tiene /btw (src/btw.ts), que contesta al momento.
  *
  * Una vez por tarea en marcha: la segunda y la tercera línea seguidas no repiten el aviso.
+ *
+ * El aviso lleva un botón «⏹ Pararlo» (/stop <ficha>): corta SOLO la tarea por la que se
+ * avisó y el mensaje en cola va a continuación. /stop a secas lo para todo y vacía la
+ * cola; el botón no, porque quien lo pulsa acaba de pedir otra cosa. Si esa tarea ya
+ * terminó (botón viejo), no para nada.
  */
 
 /** Lo que tiene que llevar en marcha la tarea para que avisar tenga sentido. */
@@ -31,3 +36,30 @@ export function busyNoteFor(thread: BusyThread, now: number): string | null {
   thread.busyNoted = thread.activeSince;
   return BUSY_NOTE;
 }
+
+export const BUSY_STOP_LABEL = '⏹ Pararlo';
+
+/** Ficha de la tarea en marcha para el botón «Pararlo»: «tk» + activeSince en base 36. */
+export function busyStopToken(thread: BusyThread): string | undefined {
+  return thread.activeSince === undefined ? undefined : `tk${thread.activeSince.toString(36)}`;
+}
+
+/** ¿Es `/stop <arg>` el del botón «Pararlo»? */
+export function isBusyStopToken(arg: string): boolean {
+  return /^tk[0-9a-z]{1,12}$/.test(arg);
+}
+
+/** El hilo (de este chat) cuya tarea en marcha es la de la ficha, o undefined. */
+export function busyThreadForToken<T extends BusyThread & { chatKey: string }>(
+  threads: Iterable<T>,
+  chatKey: string,
+  token: string,
+): T | undefined {
+  for (const t of threads) {
+    if (t.chatKey === chatKey && t.active && busyStopToken(t) === token) return t;
+  }
+  return undefined;
+}
+
+export const BUSY_STOPPED = '⏹ Parado. Voy con tu mensaje.';
+export const BUSY_STOP_GONE = 'Eso ya había terminado; no he parado nada.';
