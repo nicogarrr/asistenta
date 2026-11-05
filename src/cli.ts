@@ -1825,6 +1825,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   control?.beginResources();
   const store = new Store();
   store.sweepExpired();
+  /** Cuándo se creó la rutina que hoy lleva ese nombre (el historial no enseña lo de antes). */
+  const routineBornAt = (scope: string, name: string): string | undefined =>
+    store.getRoutine(scope, name)?.createdAt;
   const memory = new MemoryStore();
   const docMemory = new DocMemory({
     dbPath: join(paths.docs, 'docs.sqlite'),
@@ -2235,7 +2238,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 (r) => commandRoutineTag(r, commandRoutines, commandRoutinesEnabled()),
                 vigilanteOwnerId ?? undefined,
                 new Date(),
-                (scope, name) => routineHistoryAt(paths.state).list(scope, name),
+                (scope, name) => routineHistoryAt(paths.state, routineBornAt).list(scope, name),
               );
             } catch {
               return null;
@@ -3627,7 +3630,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // Informes que Telegram no aceptó: en disco, para reenviarlos tras un reinicio.
     resendQueue: new RoutineResendQueue(join(paths.state, 'rutinas-reenvio.json')),
     // Últimas ejecuciones de cada rutina (/cron historial y la tarjeta Rutinas).
-    history: routineHistoryAt(paths.state),
+    history: routineHistoryAt(paths.state, routineBornAt),
     // Scripts del usuario: rutina.ps1 al terminar una rutina, recordatorio-*.ps1 al sonar.
     onDone: (d) =>
       d.reminder
@@ -5039,7 +5042,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           commandCwd: homedir(),
           goals: goalStore,
           ask: (opts) => preguntas.ask(chatKey(inbound), 'cron', opts),
-          history: routineHistoryAt(paths.state),
+          history: routineHistoryAt(paths.state, routineBornAt),
         },
         args,
       ),
