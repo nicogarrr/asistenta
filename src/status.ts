@@ -1,3 +1,4 @@
+import { REACTION_LOG_MSG, REACTION_NEGATIVE_LOG_MSG } from './channels/telegram-reacciones.js';
 import { type ProjectContext, projectFolderName } from './project-context.js';
 /**
  * Datos para /estado: que Nico vea desde Telegram si algo falla, sin abrir el PC.
@@ -12,12 +13,16 @@ export interface LogSummary {
   errors: number;
   /** Últimos mensajes de error distintos, del más reciente al más antiguo. */
   recentErrors: string[];
+  /** Reacciones del dueño a respuestas del bot hoy: 👍/❤️… y 👎/🤔… (el 👎 pide revisarla). */
+  reactions?: { positive: number; negative: number };
 }
 
 /** Resume un fichero JSONL de log. Las líneas rotas se ignoran: un log a medias no es un fallo. */
 export function summarizeLog(jsonl: string, maxRecent = 3): LogSummary {
   let warns = 0;
   let errors = 0;
+  let positive = 0;
+  let negative = 0;
   const seen: string[] = [];
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
@@ -26,6 +31,10 @@ export function summarizeLog(jsonl: string, maxRecent = 3): LogSummary {
       rec = JSON.parse(line) as typeof rec;
     } catch {
       continue;
+    }
+    if (typeof rec.msg === 'string' && rec.level === 'info') {
+      if (rec.msg.endsWith(REACTION_NEGATIVE_LOG_MSG)) negative++;
+      else if (rec.msg.endsWith(REACTION_LOG_MSG)) positive++;
     }
     if (rec.level === 'warn') warns++;
     else if (rec.level === 'error') {
@@ -38,7 +47,9 @@ export function summarizeLog(jsonl: string, maxRecent = 3): LogSummary {
       }
     }
   }
-  return { warns, errors, recentErrors: seen.slice(-maxRecent).reverse() };
+  const summary: LogSummary = { warns, errors, recentErrors: seen.slice(-maxRecent).reverse() };
+  if (positive || negative) summary.reactions = { positive, negative };
+  return summary;
 }
 
 export function formatDuration(ms: number): string {
@@ -105,6 +116,12 @@ export function formatStatus(s: StatusInfo): string {
       `Log de hoy: ${s.log.errors} ${s.log.errors === 1 ? 'error' : 'errores'}, ${s.log.warns} ${s.log.warns === 1 ? 'aviso' : 'avisos'}.`,
     );
     for (const e of s.log.recentErrors) lines.push(`- ${e}`);
+  }
+  if (s.log?.reactions) {
+    const r = s.log.reactions;
+    lines.push(
+      `Tus reacciones de hoy: 👍 ${r.positive} · 👎 ${r.negative}${r.negative ? ' (las revisé)' : ''}.`,
+    );
   }
   if (s.latency) lines.push(s.latency);
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);

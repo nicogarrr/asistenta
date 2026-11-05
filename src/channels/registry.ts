@@ -32,6 +32,7 @@ export class ChannelRegistry {
     const onTvButton = handlers.onTvButton?.bind(handlers);
     const onFuncionesButton = handlers.onFuncionesButton?.bind(handlers);
     const onUpdateButton = handlers.onUpdateButton?.bind(handlers);
+    const onCompraButton = handlers.onCompraButton?.bind(handlers);
     for (const adapter of this.#adapters.values()) {
       await adapter.start({
         onMessage: (inbound) => handlers.onMessage(inbound),
@@ -44,6 +45,7 @@ export class ChannelRegistry {
         onTvButton,
         onFuncionesButton,
         onUpdateButton,
+        onCompraButton,
         log: (level, msg, fields) => log[level](`[${adapter.name}] ${msg}`, fields ?? {}),
       });
       log.info('channel started', { channel: adapter.name });
