@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { log } from '../log.js';
 import { createServer } from '../node-http.js';
 import { panelFunciones } from './funciones-view.js';
@@ -155,6 +156,46 @@ function send(res: ServerResponse, status: number, body: string, contentType: st
   res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Length', Buffer.byteLength(body));
   res.end(body);
+}
+
+/**
+ * ¿El navegador acepta gzip? («gzip», «gzip;q=0.8», «*»; «gzip;q=0» no.)
+ */
+export function acceptsGzip(header: string | string[] | undefined): boolean {
+  const raw = (Array.isArray(header) ? header.join(',') : (header ?? '')).toLowerCase();
+  return raw.split(',').some((part) => {
+    const [enc = '', ...params] = part.split(';').map((p) => p.trim());
+    if (enc !== 'gzip' && enc !== '*') return false;
+    const q = params.find((p) => p.startsWith('q='));
+    return q === undefined || Number(q.slice(2)) > 0;
+  });
+}
+
+/** La página es la misma en cada petición: se comprime una sola vez y se guarda. */
+let pageGzip: { src: string; gz: Buffer } | null = null;
+
+/**
+ * La página del panel (~120 KB) va comprimida si el navegador lo acepta (~30 KB):
+ * carga antes desde el móvil por la red de casa o Tailscale, y la CPU solo comprime
+ * la primera vez (después sale de la caché).
+ */
+function sendPage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  body: string,
+  contentType: string,
+): void {
+  res.setHeader('Vary', 'Accept-Encoding');
+  if (!acceptsGzip(req.headers['accept-encoding'])) {
+    send(res, 200, body, contentType);
+    return;
+  }
+  if (pageGzip?.src !== body) pageGzip = { src: body, gz: gzipSync(body) };
+  res.statusCode = 200;
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Encoding', 'gzip');
+  res.setHeader('Content-Length', pageGzip.gz.length);
+  res.end(pageGzip.gz);
 }
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
@@ -487,7 +528,7 @@ async function handleRequest(
     case '/':
       res.setHeader('Content-Security-Policy', PAGE_CSP);
       res.setHeader('Cache-Control', 'no-store');
-      send(res, 200, renderPage(), 'text/html; charset=utf-8');
+      sendPage(req, res, renderPage(), 'text/html; charset=utf-8');
       return;
     case '/manifest.webmanifest':
       res.setHeader('Cache-Control', 'no-cache');
