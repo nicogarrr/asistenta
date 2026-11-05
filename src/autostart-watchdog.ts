@@ -32,13 +32,25 @@ export function watchdogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 const xmlEscape = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** Comando que lanza la tarea: PowerShell oculto que ejecuta `node <cli> autostart vigilar`. */
+/**
+ * Comando que lanza la tarea: PowerShell oculto que ejecuta `node <entrada> autostart vigilar`.
+ *
+ * La entrada es `dist\\pa.js` (la mínima: lee el `.env` y llama a la misma función sin
+ * cargar los ~900 módulos de cli.js; ~257 → ~58 ms de CPU y ~95 → ~67 MB por pasada, 12+
+ * veces por hora). Si no existe —una vuelta atrás de la autoactualización a una versión
+ * sin pa.js— usa `cli.js` como siempre, así el vigilante nunca se queda sin arrancar.
+ */
 export function watchdogCommand(nodeExe: string, cliJs: string, systemRoot = 'C:\\Windows') {
   const ps = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
   const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const full = `& ${q(nodeExe)} ${q(cliJs)} autostart vigilar`;
+  const paJs = /cli\.js$/i.test(cliJs) ? cliJs.replace(/cli\.js$/i, 'pa.js') : null;
+  const script = paJs
+    ? `if (Test-Path -LiteralPath ${q(paJs)}) { & ${q(nodeExe)} ${q(paJs)} autostart vigilar } else { ${full} }`
+    : full;
   return {
     command: ps,
-    arguments: `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& ${q(nodeExe)} ${q(cliJs)} autostart vigilar"`,
+    arguments: `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "${script}"`,
   };
 }
 
