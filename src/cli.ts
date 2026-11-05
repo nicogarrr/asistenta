@@ -689,6 +689,7 @@ import { createServiceTool } from './tools/service.js';
 import { createShellTool } from './tools/shell.js';
 import { sandboxDoctorLines } from './tools/shell-sandbox.js';
 import { createSkillsTool } from './tools/skills.js';
+import { createSpotifyTool } from './tools/spotify.js';
 import { createSystemTool, playAudioFile, playbackRestoreText } from './tools/system.js';
 import { createTasksTool } from './tools/tasks.js';
 import { createTraficoTool, TraficoVistosStore } from './tools/trafico.js';
@@ -2834,6 +2835,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         everyMs: () => githubAvisosConf?.everyMs ?? githubAvisosEveryMs(),
       }),
       // «¿Cuánto he gastado este mes?»: los cobros que el Ojo ya apunta del correo; solo el dueño.
+      // Spotify por API (PA_SPOTIFY_CLIENT_ID): «pon X», pausa, siguiente… solo el dueño.
+      createSpotifyTool({
+        spotify: () => ({
+          env: process.env,
+          vault: { get: vaultGet, set: vaultSet, delete: vaultDelete },
+        }),
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+      }),
       createGastosTool({
         db: memoryDb,
         allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
@@ -6590,6 +6599,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** /altavoz [pc|tele|off]: notas de voz que suenan solas al llegar (solo el dueño, en privado). */
+  /** /spotify: estado, conectar (permiso en el navegador del PC), desconectar, pausa… */
+  const cmdSpotify = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const { spotifyCommand } = await import('./tools/spotify.js');
+    const { openInBrowser } = await import('./panel-abrir.js');
+    const r = await spotifyCommand(args, {
+      env: process.env,
+      vault: { get: vaultGet, set: vaultSet, delete: vaultDelete },
+      openBrowser: (url) => openInBrowser(url),
+      notify: (text) => void say(inbound, text, { quote: false }),
+    });
+    await say(inbound, r.text, { quote: true, buttons: r.buttons });
+  };
   /** /tailscale y /panel: estado de Tailscale y botón de la Mini App (docs/SETUP-INTEGRACIONES.md). */
   const cmdTailscale = async (
     inbound: Inbound,
@@ -9423,6 +9450,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
     { names: ['voz'], run: (inbound) => cmdTailscale(inbound, 'voz') },
+    { names: ['spotify'], run: (inbound, args) => cmdSpotify(inbound, args) },
     { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
     {
       names: ['recordatorios', 'reminders'],

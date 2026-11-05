@@ -22,3 +22,23 @@ Notas:
 - Nunca uses `tailscale funnel`: eso publica el panel en Internet. `/tailscale` avisa si está encendido.
 - El panel solo se abre desde tus dispositivos con Tailscale conectado. En el móvil, si no carga, abre la app Tailscale y comprueba que está «Connected».
 - Dentro de Telegram entra sin pedir token: Telegram firma que eres tú (solo el dueño del bot).
+
+## 2. Spotify (necesita Spotify Premium)
+
+Con esto le dices «pon Bad Bunny», «pausa», «siguiente», «¿qué suena?», «pon la música en la tele» o `/spotify`. Gratis; el control de la música lo exige Spotify Premium.
+
+1. Entra en https://developer.spotify.com/dashboard con tu cuenta de Spotify (la Premium) y acepta las condiciones.
+2. «Create app»:
+   - App name: `Asistenta`; App description: `Asistente personal`.
+   - Redirect URIs: escribe exactamente `http://127.0.0.1:8888/callback` y pulsa «Add».
+   - En «Which API/SDKs are you planning to use?» marca «Web API».
+   - Acepta y pulsa «Save».
+3. Dentro de la app, «Settings»: copia el **Client ID** (no hace falta el secret).
+4. En el PC, abre el `.env` de Asistenta y añade una línea: `PA_SPOTIFY_CLIENT_ID=<el Client ID>`. Guarda y reinicia Asistenta (`pa restart`).
+5. Escribe `/spotify conectar` en Telegram **estando en el PC**: se abre el navegador del PC con el permiso de Spotify; pulsa «Aceptar». Te llegará «✅ Spotify conectado».
+6. Abre Spotify en el PC o el móvil y dale a play una vez (Spotify necesita un dispositivo encendido). Prueba «pon Coldplay».
+
+Si algo falla:
+- «hace falta una cuenta Premium»: la cuenta conectada no es Premium, o tu correo no está en la app → en el dashboard, tu app → «User Management» → añade tu nombre y correo de Spotify.
+- «el puerto 8888 está ocupado»: pon `PA_SPOTIFY_REDIRECT_PORT=8889` en `.env` y cambia la Redirect URI de la app a `http://127.0.0.1:8889/callback`.
+- `/spotify desconectar` olvida el permiso.

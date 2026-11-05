@@ -10,6 +10,7 @@ import {
   BROWSER_FREE_ACTIONS,
   Gate,
   protectedRepoPaths,
+  SPOTIFY_FREE_ACTIONS,
 } from '../permissions.js';
 import { checkoutStageOf } from '../tools/checkout.js';
 import { portableSecretsFile } from '../vault.js';
@@ -137,6 +138,9 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
       // camera, the microphone and screen recording still ask, every time.
       'media:play',
       'media:list_audio',
+      // Spotify del dueño: poner, pausar, pasar o cambiar de altavoz es música, no dinero
+      // ni ficheros; preguntar cada «siguiente» lo haría inútil.
+      ...SPOTIFY_FREE_ACTIONS,
     ],
     // Autonomous up to the last click. A purchase is a chain of ordinary browsing
     // actions, and asking about each of them is what stopped the Renfe flow before it

@@ -46,6 +46,4 @@ describe('ayuda y tabla de comandos sin deriva', () => {
 const NOT_IN_HELP: Record<string, string> = {
   help: 'es la propia ayuda',
   start: 'saludo de bienvenida de Telegram; /help ya lo cubre',
-  voz: '/tailscale lo anuncia cuando la voz del móvil ya se puede usar; la ayuda no cabría',
-  panel: '/tailscale lo anuncia cuando el panel ya se puede abrir; la ayuda no cabría',
 };

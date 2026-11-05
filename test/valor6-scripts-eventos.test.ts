@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { helpText } from '../src/channels/telegram-help.js';
+import { helpPages, helpText } from '../src/channels/telegram-help.js';
 import { createRoutineFire, type RoutineDone } from '../src/daemon/routine-fire.js';
 import type { Routine, Store } from '../src/db.js';
 import {
@@ -228,8 +228,8 @@ describe('scripts del usuario: rutinas y recordatorios avisan al terminar', () =
 
 describe('/ayuda', () => {
   it('menciona /scripts y sigue cabiendo en un mensaje', () => {
-    const text = helpText();
-    expect(text).toContain('/scripts [aprobar]');
-    expect(Array.from(text).length).toBeLessThan(4000);
+    // /help va por páginas (helpPages): cada página cabe en un mensaje, no el texto entero.
+    expect(helpText()).toContain('/scripts [aprobar]');
+    for (const page of helpPages()) expect(Array.from(page).length).toBeLessThan(4000);
   });
 });

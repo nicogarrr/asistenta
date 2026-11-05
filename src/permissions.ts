@@ -1748,6 +1748,10 @@ export class Gate {
       // Casa (Home Assistant): mirar el estado es lectura; lo demás es opaco y pregunta.
       case 'casa':
         return argString(c.args, 'action') === 'estado' ? 'lee' : null;
+      // Spotify (src/spotify.ts): qué suena y los dispositivos son lectura; poner música es
+      // remoto en la cuenta del dueño, sin dinero ni ficheros: opaco para el gestor.
+      case 'spotify':
+        return ['estado', 'dispositivos'].includes(argString(c.args, 'action')) ? 'lee' : null;
       // «¿Dónde está mi pedido?»: lee los correos de envío ya leídos; sin webs de transportistas.
       // «Ya lo he recogido» marca el envío como entregado en la base local.
       // «¿Cómo está el tráfico?»: solo el feed fijo de la DGT. Encender o quitar el aviso
@@ -2888,6 +2892,19 @@ export const TV_GRANT_WINDOW_MS = 15 * 60_000;
 /** Pasos de mando/teclado de la tele que cubre la ventana (ni `url` ni `launch`). */
 export const TV_WINDOW_ACTIONS: ReadonlySet<string> = new Set(['key', 'type']);
 
+/** Acciones de la herramienta `spotify` que no preguntan (música del dueño, sin dinero). */
+export const SPOTIFY_FREE_ACTIONS = [
+  'estado',
+  'dispositivos',
+  'play',
+  'pausa',
+  'siguiente',
+  'anterior',
+  'pon',
+  'volumen',
+  'usar_dispositivo',
+].map((a) => `spotify:${a}`);
+
 export const BROWSER_FREE_ACTIONS = [
   'open',
   'snapshot',
@@ -2950,6 +2967,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'tareas',
   'correo_reglas',
   'casa',
+  'spotify',
   'fetch',
   'write',
   'edit',
