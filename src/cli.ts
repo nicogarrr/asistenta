@@ -9264,6 +9264,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     onLocationUpdate: async (u) => {
       if (!isOwnerDm(u, vigilanteOwnerId)) return;
+      // Un punto compartido no es «estar ahí»: solo para «guarda esto como…».
+      if (u.live === false) return llegadaDeps().store.puntoCompartido(u.chatId, u);
       for (const aviso of llegadaDeps().store.position(u.chatId, u)) {
         await sendToChat(u.chatId, llegadaFiredText(aviso));
       }
