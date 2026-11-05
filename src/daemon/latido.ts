@@ -17,6 +17,7 @@ import { lazySchema, Type } from '../core/lazy-schema.js';
 import { writeFileReplacing } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { foldAccents } from '../text.js';
+import { whenFromWords } from '../tools/reminder.js';
 
 export const LATIDO_MIN_EVERY = 5;
 export const LATIDO_MAX_EVERY = 120;
@@ -43,6 +44,8 @@ export interface Latido {
   checks: number;
   /** Lo último que se le dijo a Nico (para no repetirlo). */
   last?: string;
+  /** La hora de fin tal como se le dice («las 20:00»), si la dijo él («hasta las 8»). */
+  hasta?: string;
 }
 
 export interface LatidoDeps {
@@ -126,6 +129,7 @@ export class Latidos {
     task: string,
     everyMin = LATIDO_DEFAULT_EVERY,
     hours = LATIDO_DEFAULT_HOURS,
+    end: { untilMs?: number; hasta?: string } = {},
   ): Latido | string {
     const what = task.replace(/\s+/g, ' ').trim();
     if (!what) return 'Falta qué vigilar.';
@@ -141,8 +145,17 @@ export class Latidos {
       LATIDO_MIN_EVERY,
       LATIDO_MAX_EVERY,
     );
-    const h = clamp(Number(hours) || LATIDO_DEFAULT_HOURS, 0.25, LATIDO_MAX_HOURS);
     const now = this.#now();
+    let h = clamp(Number(hours) || LATIDO_DEFAULT_HOURS, 0.25, LATIDO_MAX_HOURS);
+    if (end.untilMs !== undefined) {
+      const left = end.untilMs - now;
+      const said = end.hasta ? `hasta ${end.hasta}` : 'Esa hora';
+      if (left > LATIDO_MAX_HOURS * 3_600_000)
+        return `${said} son más de ${LATIDO_MAX_HOURS} h: como mucho vigilo ${LATIDO_MAX_HOURS} h seguidas.`;
+      if (left < every * 60_000)
+        return `${said} no da tiempo a ninguna comprobación (una cada ${every} min).`;
+      h = left / 3_600_000;
+    }
     this.#seq++;
     const l: Latido = {
       id: `${now.toString(36)}${this.#seq}`,
@@ -153,6 +166,7 @@ export class Latidos {
       startedAt: now,
       untilMs: now + Math.round(h * 3_600_000),
       checks: 0,
+      ...(end.untilMs !== undefined && end.hasta ? { hasta: end.hasta } : {}),
     };
     this.#items.set(l.id, l);
     this.#schedule(l, every * 60_000);
@@ -196,7 +210,9 @@ export class Latidos {
       const hours = Math.max(1, Math.round((l.untilMs - l.startedAt) / 3_600_000));
       await this.#say(
         l,
-        `⏱️ Dejo de vigilar «${l.task}»: ya van ${hours} h. Si quieres que siga, dímelo.`,
+        l.hasta
+          ? `⏱️ Dejo de vigilar «${l.task}»: ya son ${l.hasta}, como dijiste. Si quieres que siga, dímelo.`
+          : `⏱️ Dejo de vigilar «${l.task}»: ya van ${hours} h. Si quieres que siga, dímelo.`,
       );
       return;
     }
@@ -244,9 +260,11 @@ export class Latidos {
 
   #schedule(l: Latido, ms: number): void {
     this.#timers.get(l.id)?.cancel();
+    // Con hora de fin dicha («hasta las 8»), el último toque es a esa hora y no hasta 10 min tarde.
+    const wait = l.hasta ? Math.max(0, Math.min(ms, l.untilMs - this.#now())) : ms;
     this.#timers.set(
       l.id,
-      this.#later(() => void this.tick(l.id), ms),
+      this.#later(() => void this.tick(l.id), wait),
     );
   }
 
@@ -296,8 +314,44 @@ export function latidoListRequest(text: string): boolean {
   );
 }
 
+/**
+ * La hora de fin dicha: «hasta las 8» (a las 10 de la mañana son las 20:00), «hasta las 8 de
+ * la tarde», «hasta mediodía», «hasta medianoche», «hasta las 20:30». Antes solo valía un
+ * número de horas que tenía que calcular el modelo, y «hasta las 8» acababa en 3 h (lo de
+ * por defecto) o en una cuenta mal hecha. null si no es una hora.
+ */
+export function latidoHasta(said: string, now: Date, timeZone?: string): Date | null {
+  let t = said
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!?]+$/u, '')
+    .replace(/^hasta\s+(?:que\s+sean\s+)?/iu, '');
+  if (!t) return null;
+  if (/^\d{1,2}(?:[:,.]\d{2})?(?:\s*h)?$/u.test(t))
+    t = `las ${t.replace(/\s*h$/u, '').replace(/[,.]/u, ':')}`;
+  if (/^(?:las?\s|mediod[ií]a$|medianoche$)/iu.test(t)) t = `a ${t}`;
+  if (!/^a\s/iu.test(t)) return null;
+  const at = whenFromWords(t, now, timeZone);
+  return at && at.getTime() > now.getTime() ? at : null;
+}
+
+/** «las 20:00», «la 1:00»: una hora como se le dice a Nico. */
+export function horaDicha(d: Date, timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat('es-ES', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone,
+  }).formatToParts(d);
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const m = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  return `${h === 1 ? 'la' : 'las'} ${h}:${m}`;
+}
+
 /** «cada 10 min, durante 3 h»: cómo se le dice a Nico. */
 export function latidoLine(l: Latido): string {
+  if (l.hasta) return `«${l.task}» cada ${l.everyMin} min, hasta ${l.hasta}`;
   const hours = Math.round(((l.untilMs - l.startedAt) / 3_600_000) * 10) / 10;
   return `«${l.task}» cada ${l.everyMin} min, durante ${String(hours).replace('.', ',')} h`;
 }
@@ -321,6 +375,12 @@ const Params = lazySchema(() =>
         description: `start: stop after this many hours (default ${LATIDO_DEFAULT_HOURS}, max ${LATIDO_MAX_HOURS}).`,
       }),
     ),
+    until: Type.Optional(
+      Type.String({
+        description:
+          'start: the end time exactly as the user said it («hasta las 8», «hasta las 20:30», «hasta mediodía», «hasta medianoche»). Use it instead of hours when they said a time; do not convert it yourself.',
+      }),
+    ),
   }),
 );
 
@@ -333,6 +393,8 @@ export function createLatidoTool(deps: {
   latidos: Latidos;
   scopeOf: () => string;
   chatIdOf: () => string;
+  now?: () => number;
+  timeZone?: string;
 }): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'latido',
@@ -342,7 +404,8 @@ export function createLatidoTool(deps: {
       'message the user ONLY when something changed; it stops by itself when what they wait',
       'for happened or after `hours`. Use it for «vigila esto cada 10 min», «mientras arreglo',
       'el router, mira cada 10 min si vuelve internet y avísame», «avísame cuando acabe la',
-      'descarga». Not for a reminder at a time (reminder) nor a web page (/vigila).',
+      'descarga», «vigila la web cada 10 min hasta las 8» (until). Not for a reminder at a',
+      'time (reminder) nor a web page (/vigila).',
       'action=list shows them; action=stop with a word from the task stops it.',
     ].join('\n'),
     parameters: Params(),
@@ -365,16 +428,28 @@ export function createLatidoTool(deps: {
             : 'No había nada así vigilándose en este chat.',
         );
       }
+      const until = String(args.until ?? '').trim();
+      let end: { untilMs?: number; hasta?: string } = {};
+      if (until) {
+        const at = latidoHasta(until, new Date((deps.now ?? Date.now)()), deps.timeZone);
+        if (!at)
+          return reply(
+            `No entiendo «${until}» como hora de fin: dímelo como «hasta las 20:00» o «durante 2 horas».`,
+            true,
+          );
+        end = { untilMs: at.getTime(), hasta: horaDicha(at, deps.timeZone) };
+      }
       const got = deps.latidos.start(
         scope,
         deps.chatIdOf(),
         String(args.task ?? ''),
         args.every_minutes,
         args.hours,
+        end,
       );
       if (typeof got === 'string') return reply(got, true);
       return reply(
-        `Vigilando ${latidoLine(got)}. Solo escribo si cambia algo, y paro solo al cumplirse. Primera comprobación en ${got.everyMin} min.`,
+        `Vigilando ${latidoLine(got)}. Solo escribo si cambia algo, y paro solo al cumplirse${got.hasta ? ` o a ${got.hasta}` : ''}. Primera comprobación en ${got.everyMin} min.`,
       );
     },
   };
