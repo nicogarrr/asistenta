@@ -88,7 +88,24 @@ const MAIL_STOPWORDS = new Set([
   'por',
   'para',
   'que',
+  // «que diga urgente», «que ponga factura», «con la palabra urgente»:
+  // antes «diga» o «palabra» se buscaban en el correo y el disparador no saltaba nunca.
+  'diga',
+  'digan',
+  'ponga',
+  'pongan',
+  'contenga',
+  'contengan',
+  'lleve',
+  'lleven',
+  'tenga',
+  'tengan',
+  'palabra',
+  'palabras',
 ]);
+
+/** «de la Agencia Tributaria», «de mi banco»: tras «de», el artículo no es el remitente. */
+const MAIL_FROM_SKIP = new Set(['la', 'las', 'los', 'el', 'mi', 'mis', 'un', 'una']);
 
 /** «o»/«u»/«or» entre dos palabras: cualquiera de las dos vale («de renfe o iberia»). */
 const MAIL_OR = new Set(['o', 'u', 'or']);
@@ -146,6 +163,12 @@ export function parseMailMatch(match: string): MailMatch {
         key = as;
         value = next.value;
         i++;
+        // «de la seguridad social»: antes el remitente buscado era «la».
+        const after = parts[i + 1];
+        if (as === 'de' && MAIL_FROM_SKIP.has(value) && plain(after) && !isOr(after)) {
+          value = after.value;
+          i++;
+        }
       }
     }
     const field: 'from' | 'subject' | 'any' =
