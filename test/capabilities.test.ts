@@ -27,6 +27,7 @@ const BEFORE = {
     'reminder',
     'latido',
     'tareas',
+    'compra',
     'temas',
     'agenda',
     'cuentas',

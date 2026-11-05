@@ -1,5 +1,9 @@
 import { sliceSafe } from '../text.js';
 
+/** Mensajes de log de una reacción del dueño: /estado los cuenta (src/status.ts), sin leer campos. */
+export const REACTION_LOG_MSG = 'telegram reaction';
+export const REACTION_NEGATIVE_LOG_MSG = 'telegram reaction negativa';
+
 /**
  * Reacciones del dueño a los mensajes de Asistenta.
  *
