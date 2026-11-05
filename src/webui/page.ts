@@ -596,6 +596,16 @@ export function renderPage(): string {
         <div id="panel-pagina-vista" class="tarjeta-cuerpo" hidden></div>
       </article>
 
+      <article class="tarjeta" aria-labelledby="titulo-apuntes">
+        <header class="tarjeta-cabecera">
+          <h2 id="titulo-apuntes">Apuntes</h2>
+          <button class="mini" type="button" data-refrescar="apuntes" aria-label="Refrescar Apuntes">Refrescar</button>
+        </header>
+        <div id="panel-apuntes" class="tarjeta-cuerpo">
+          <p class="muted">Cargando…</p>
+        </div>
+      </article>
+
       <article class="tarjeta" aria-labelledby="titulo-funciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-funciones">Funciones</h2>
@@ -2317,6 +2327,31 @@ ${renderFormatScript()}
         }
       }
 
+      async function cargarApuntes(silencio) {
+        var contenedor = document.getElementById('panel-apuntes');
+        if (silencio !== true) pintarCarga(contenedor);
+        try {
+          var datos = await pedir('/api/expertos');
+          if (!datos || !Array.isArray(datos.temas)) throw new Error('Respuesta de apuntes inválida');
+          contenedor.replaceChildren(nodo('p', 'muted', 'Respondo con tus apuntes y cito archivo y página. Mete los archivos en ' + datos.carpeta + ' (una carpeta por tema) o mándamelos por Telegram con «añade esto a derecho».'));
+          if (!datos.temas.length) contenedor.appendChild(nodo('p', 'muted', 'Aún no hay temas.'));
+          datos.temas.forEach(function (t) {
+            contenedor.appendChild(nodo('h3', '', t.nombre + ' · ' + t.archivos.length + (t.archivos.length === 1 ? ' archivo' : ' archivos')));
+            if (t.instrucciones) contenedor.appendChild(nodo('p', 'muted', 'Instrucciones: ' + t.instrucciones));
+            var lista = nodo('ul', 'tareas');
+            t.archivos.forEach(function (f) {
+              lista.appendChild(nodo('li', 'texto', f.archivo + (f.motivo ? ' · sin leer: ' + f.motivo : ' · ' + f.trozos + ' fragmentos')));
+            });
+            contenedor.appendChild(lista);
+          });
+          finCarga(contenedor, true);
+        } catch (error) {
+          if (silencio === true) return false;
+          pintarError(contenedor, error, cargarApuntes); return false;
+        }
+        return true;
+      }
+
       async function cargarPaginas(silencio) {
         var contenedor = document.getElementById('panel-paginas');
         if (silencio !== true) pintarCarga(contenedor);
@@ -2515,6 +2550,7 @@ ${renderFormatScript()}
         tareas: cargarTareas,
         repartos: cargarRepartos,
         paginas: cargarPaginas,
+        apuntes: cargarApuntes,
         funciones: cargarFunciones,
         estado: cargarEstado,
         contexto: cargarContexto,
@@ -2545,7 +2581,8 @@ ${renderFormatScript()}
           cargarAuditoria(),
           cargarAprobaciones(),
           cargarRepartos(),
-          cargarPaginas()
+          cargarPaginas(),
+          cargarApuntes()
         ])
           .then(function (resultados) {
             var fallos = resultados.filter(function (ok) { return !ok; }).length;
