@@ -114,6 +114,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'lanza una rutina cuando pasa algo',
       },
       { command: 'disparadores', description: 'disparadores activos' },
+      { command: 'scripts', args: '[aprobar]', description: 'tus scripts del PC en eventos' },
     ],
   },
   {

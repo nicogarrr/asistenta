@@ -175,6 +175,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'profile', what: 'tu perfil', backup: 'dir' },
   { name: 'services', what: 'servicios registrados', backup: 'dir' },
   { name: 'salidas', what: 'salidas de rutinas entregadas «a fichero»', backup: 'dir' },
+  {
+    name: 'scripts',
+    what: 'tus scripts en eventos y sus aprobaciones (PA_SCRIPTS)',
+    backup: 'dir',
+  },
   { name: 'audit', what: 'registro de auditoría de llamadas a herramientas', backup: 'dir' },
   { name: 'factory', what: 'herramientas de la fábrica (TOOL.md editables)', backup: 'dir' },
   { name: 'evolve', what: 'historial de intentos de auto-mejora', backup: 'dir' },
