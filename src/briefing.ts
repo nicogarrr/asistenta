@@ -1,4 +1,5 @@
 import { localDay, wallClock, zonedTime } from './datecontext.js';
+import { type UpcomingDate, upcomingDateLine } from './memory/fechas.js';
 import { sliceSafe } from './text.js';
 /**
  * El resumen proactivo del día, en texto plano y en español.
@@ -39,6 +40,8 @@ export interface BriefingInput {
   goals?: Array<{ title: string; status: 'active' | 'blocked'; next?: string }>;
   /** Vigilancias de precio: último precio leído y, si lo hay, el objetivo. */
   watches?: Array<{ label: string; lastCents?: number | null; targetCents?: number | null }>;
+  /** Cumpleaños y aniversarios que el dueño contó y caen en los próximos días. */
+  dates?: UpcomingDate[];
 }
 
 const WEEKDAYS_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -167,7 +170,7 @@ function clamp(text: string): string {
 }
 
 /**
- * Construye el briefing. Las secciones van en orden fijo (Hoy, Tareas, Correo, Paquetes, Pendiente,
+ * Construye el briefing. Las secciones van en orden fijo (Hoy, Fechas, Tareas, Correo, Paquetes, Pendiente,
  * Recordatorios, Seguimientos, Objetivos, Precios; el tiempo, si lo hay, va pegado al saludo) para que el mismo día
  * se lea siempre igual; las que no tienen contenido no aparecen.
  */
@@ -180,6 +183,10 @@ export function buildBriefing(input: BriefingInput): string {
         ...input.agenda.map(agendaLine),
         input.festivo ? oneLine(input.festivo, 160) || null : null,
       ]),
+    },
+    {
+      title: 'Fechas',
+      items: section((input.dates ?? []).map((d) => oneLine(upcomingDateLine(d), 140) || null)),
     },
     {
       title: 'Tareas',

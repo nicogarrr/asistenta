@@ -230,6 +230,7 @@ import { AudioRecall } from './media/recall.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
 import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
+import { upcomingDates } from './memory/fechas.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import { InstinctStore } from './memory/instincts.js';
 import {
@@ -5257,6 +5258,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return key ? briefingTasks(new TaskBoard(join(paths.state, 'tareas.json')), key) : [];
     },
     deliveries: () => briefingDeliveries(activeDeliveries(memoryDb, Date.now())),
+    dates: () => {
+      const owner = briefingOwner();
+      const key = owner ? ownerChatKey(owner) : undefined;
+      const remembered = key
+        ? memory
+            .allIn(memoryScopesFor(key).read)
+            .filter((e) => !e.supersededBy)
+            .map((e) => e.text)
+        : [];
+      return upcomingDates([...snapshot.load().split(ENTRY_SEPARATOR), ...remembered], new Date());
+    },
     goals: () => {
       const owner = briefingOwner();
       const key = owner ? ownerChatKey(owner) : undefined;
