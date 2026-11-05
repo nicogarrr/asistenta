@@ -38,6 +38,8 @@ export interface WebUiDeps {
   paginas?(): unknown | Promise<unknown>;
   /** Una página en bloques de texto; null/undefined = no existe (404). Si falta, 503. */
   pagina?(id: string): unknown | Promise<unknown>;
+  /** Tarjeta «Apuntes»: temas de apuntes con sus archivos (expertos/panel.ts). Si falta, 503. */
+  expertos?(): unknown | Promise<unknown>;
   /**
    * Tarjeta «Contexto»: de qué está hecho el contexto de cada conversación abierta
    * (solo números y nombres, ver contexto.ts). Si falta o devuelve null, 503.
@@ -131,6 +133,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'repartos' }
   | { method: 'GET'; kind: 'paginas' }
   | { method: 'GET'; kind: 'pagina'; id: string }
+  | { method: 'GET'; kind: 'expertos' }
   | { method: 'GET'; kind: 'funciones' }
   | { method: 'GET'; kind: 'contexto' }
   | { method: 'GET'; kind: 'mapaMemoria' }
@@ -266,6 +269,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'repartos' };
     case '/api/paginas':
       return { method: 'GET', kind: 'paginas' };
+    case '/api/expertos':
+      return { method: 'GET', kind: 'expertos' };
     case '/api/funciones':
       return { method: 'GET', kind: 'funciones' };
     case '/api/contexto':
@@ -361,6 +366,11 @@ async function respondApi(
         payload = deps.paginas ? await deps.paginas() : null;
         if (payload === null || payload === undefined)
           throw new HttpError(503, 'Páginas aún no disponibles');
+        break;
+      case 'expertos':
+        payload = deps.expertos ? await deps.expertos() : null;
+        if (payload === null || payload === undefined)
+          throw new HttpError(503, 'Apuntes aún no disponibles');
         break;
       case 'pagina':
         if (!deps.pagina) throw new HttpError(503, 'Páginas aún no disponibles');

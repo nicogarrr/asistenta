@@ -220,6 +220,14 @@ import {
 } from './evolve/review.js';
 import { addHypothesis, describeLast, isEvolveDue, runEvolution } from './evolve/run.js';
 import { repoRoot } from './evolve/worktree.js';
+import { BaseExpertos, sePuedeLeer } from './expertos/base.js';
+import { panelApuntes } from './expertos/panel.js';
+import {
+  expertoDesdeDocumentos,
+  notaApuntes,
+  temaParaAnadir,
+  textoComandoExperto,
+} from './expertos/turno.js';
 import { createFactorySync, loadInstalledFactoryTools } from './factory/loader.js';
 import { createHolidayCheck, createProximoFestivo } from './festivos-rutinas.js';
 import { PlaybookStore } from './gestor/playbooks.js';
@@ -593,6 +601,7 @@ import { createDocsTool } from './tools/docs.js';
 import { createAskTool, createDoneTool } from './tools/done.js';
 import { createDownloadTool } from './tools/download.js';
 import { createEntregableTool } from './tools/entregable.js';
+import { createExpertosTool, textoTemas } from './tools/expertos.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFestivosTool } from './tools/festivos.js';
 import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
@@ -1919,6 +1928,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   const fullControl = (await vaultGet('agent:fullControl')) === 'true';
   const ocrAvailability = desktop ? await ocrAvailable().catch(() => false) : false;
+  // Apuntes por tema («modo experto»): una carpeta por tema con sus PDF, Word, textos y
+  // fotos; se busca en ellos antes de contestar y se cita archivo y página.
+  const baseExpertos = new BaseExpertos({
+    root: process.env.PA_EXPERTOS_DIR?.trim() || join(paths.state, 'expertos'),
+    dbPath: join(paths.docs, 'expertos.sqlite'),
+    embedder: semanticRecall,
+    ocr: async (bytes, ext) => {
+      const out = await ocrImageBytes(bytes, `image/${ext === 'jpg' ? 'jpeg' : ext}`, {
+        ocrAvailable: async () => ocrAvailability,
+        ocrImage,
+      });
+      return out.status === 'ok' ? out.text : null;
+    },
+  });
   // Voz solo si Nico la pide (o activa /voz on): por defecto, texto.
   const voiceDefault = (await vaultGet('agent:voice')) === 'on';
   /** Mensajes en los que Nico pidió la respuesta en voz o dijo que conduce. */
@@ -2143,6 +2166,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
           // Tarjeta Páginas: páginas vivas y salidas de rutinas a fichero (solo texto, sin HTML).
           paginas: () => panelPaginas(paginasVivas, join(paths.state, 'salidas'), localTimeZone()),
+          // Tarjeta Apuntes: temas de apuntes por tema con sus archivos (solo lectura).
+          expertos: () => panelApuntes(baseExpertos),
           pagina: (id) =>
             panelPagina(paginasVivas, join(paths.state, 'salidas'), id, localTimeZone()),
           // Tarjeta Contexto: qué ocupa cada conversación y cuánto falta para resumir
@@ -2584,6 +2609,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createAireTool(() => weatherConfigFromEnv()),
       // «¿Cuánto son 120 dólares en euros?»: tipos del BCE, solo lectura.
       createDivisasTool(),
+      // «Según mis apuntes de derecho…»: busca en sus apuntes por tema y cita archivo y página.
+      createExpertosTool(baseExpertos, {
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        // «pasa el contrato de mis documentos a derecho»: el texto guardado al llegar.
+        fromDocs: (ref) =>
+          expertoDesdeDocumentos(
+            docMemory.listIn(memoryScopesFor(scope()).read, 500),
+            ref,
+            join(paths.docs, 'mirror'),
+          ),
+      }),
       // «Hazme una página con mis gastos (y que se rehaga cada mañana)»: tarjeta Páginas del panel.
       createPaginaVivaTool({
         store: paginasVivas,
@@ -3303,6 +3339,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       memoryDb.close();
       goalsDb.close();
       docMemory.close();
+      baseExpertos.close();
       log.info('daemon stopped', { threads: threads.size });
     },
   });
@@ -7268,6 +7305,54 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
   };
 
+  /** /expertos [tema]: tus temas de apuntes con sus archivos, y cómo usarlos. Solo el dueño. */
+  const cmdExpertos = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Los apuntes por tema solo se ven en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    await baseExpertos.reindexar(true).catch((err: unknown) => {
+      log.warn('expertos: reindexado fallido', { err: String(err) });
+    });
+    const tema = args.trim() ? baseExpertos.resolver(args) : null;
+    if (tema) {
+      const files = baseExpertos.archivos(tema);
+      const ins = baseExpertos.instrucciones(tema);
+      await say(
+        inbound,
+        [
+          `📚 ${tema}: ${files.length} ${files.length === 1 ? 'archivo' : 'archivos'}`,
+          ...files.map(
+            (f) =>
+              `• ${f.archivo}${f.motivo ? ` — sin leer: ${f.motivo}` : ` (${f.trozos} fragmentos)`}`,
+          ),
+          ins ? `Instrucciones: ${ins}` : '',
+          `Carpeta: ${baseExpertos.carpeta(tema)}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        { quote: true },
+      );
+      return;
+    }
+    await say(
+      inbound,
+      [
+        '📚 Tus apuntes por tema',
+        textoTemas(baseExpertos),
+        '',
+        'Cómo se usa:',
+        '• Manda un PDF, Word o foto con el pie «añade esto a derecho» (crea el tema si no existe).',
+        '• O suelta los archivos en la carpeta del tema.',
+        '• Pregunta normal, «según mis apuntes de derecho…» o «/experto derecho ¿…?»: respondo con tus apuntes y cito archivo y página.',
+        '• «Para derecho, cita artículos del derecho español»: instrucciones del tema.',
+      ].join('\n'),
+      { quote: true },
+    );
+  };
+
   const cmdStart = async (inbound: Inbound): Promise<void> => {
     const chatKey = `${inbound.channel}:${inbound.chatId}:${inbound.threadId ?? ''}`;
     if (!startWelcomeDue(chatKey, Date.now(), inbound.sentAt)) return;
@@ -7523,15 +7608,46 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         }
       };
 
+      // «añade esto a derecho» como pie de un archivo o una foto: va a sus apuntes de ese
+      // tema (carpeta + índice) en vez de a la memoria del chat. Solo el dueño, en privado.
+      const temaAnadir =
+        !opts.external && isOwnerDm(inbound, vigilanteOwnerId)
+          ? temaParaAnadir(inbound.text, baseExpertos.nombres())
+          : null;
+      const alTema = async (
+        tema: string,
+        nombre: string,
+        bytes: Buffer | null,
+      ): Promise<string> => {
+        if (!bytes) return `[Apuntes: no pude descargar «${nombre}»; no se añadió a ${tema}.]`;
+        if (!sePuedeLeer(nombre))
+          return `[Apuntes: «${nombre}» no se añadió a ${tema}: leo PDF, Word/Excel/PowerPoint, LibreOffice, txt/md/csv y fotos.]`;
+        try {
+          const r = await baseExpertos.anadir(tema, nombre, bytes);
+          if (!r) return `[Apuntes: «${tema}» no vale como nombre de tema; no se añadió nada.]`;
+          return r.motivo
+            ? `[Apuntes: «${r.archivo}» guardado en el tema ${r.tema}, pero no se pudo leer: ${r.motivo}. Díselo.]`
+            : `[Apuntes: «${r.archivo}» añadido al tema ${r.tema} (${r.trozos} fragmentos). Confírmaselo en una línea: desde ahora sus preguntas de ${r.tema} se responden con estos apuntes.]`;
+        } catch (err) {
+          log.warn('expertos: no se pudo añadir', { err: String(err) });
+          return `[Apuntes: falló al añadir «${nombre}» a ${tema}.]`;
+        }
+      };
       let documentNote = photoDownloadNote;
       if (inbound.photoFileId && images?.[0]?.data) {
-        documentNote = await indexImage(
-          Buffer.from(images[0].data, 'base64'),
-          'image/jpeg',
-          inbound.photoFileId,
-          inbound.text,
-          'Foto',
-        );
+        documentNote = temaAnadir
+          ? await alTema(
+              temaAnadir,
+              `foto-${Date.now()}.jpg`,
+              Buffer.from(images[0].data, 'base64'),
+            )
+          : await indexImage(
+              Buffer.from(images[0].data, 'base64'),
+              'image/jpeg',
+              inbound.photoFileId,
+              inbound.text,
+              'Foto',
+            );
       }
       // Resto de un álbum: cada foto entra en el mismo turno (vista e indexada igual).
       if (inbound.photoFileId && inbound.albumPhotoFileIds?.length) {
@@ -7545,7 +7661,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             { type: 'image', mimeType: 'image/jpeg', data: photo.data.toString('base64') },
           ];
           notes.push(
-            await indexImage(photo.data, 'image/jpeg', photo.id, inbound.text, `Foto ${i + 2}`),
+            temaAnadir
+              ? await alTema(temaAnadir, `foto-${Date.now()}-${i + 2}.jpg`, photo.data)
+              : await indexImage(photo.data, 'image/jpeg', photo.id, inbound.text, `Foto ${i + 2}`),
           );
         }
         if (album.missing)
@@ -7565,6 +7683,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const indexDocument = async (doc: InboundDocument): Promise<string> => {
         let note = '';
         const label = doc.name ?? doc.mimeType ?? 'documento';
+        if (temaAnadir)
+          return alTema(
+            temaAnadir,
+            doc.name ?? `archivo-${Date.now()}`,
+            await telegram.downloadFile(doc.fileId).catch(() => null),
+          );
         const docMime = doc.mimeType?.toLowerCase() ?? '';
         if (imageExtension(docMime)) {
           const bytes = await telegram.downloadFile(doc.fileId).catch(() => null);
@@ -7667,6 +7791,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await settleFileReceipt();
 
       let prompt = text;
+      /** Lo que dijo el dueño (texto o lo oído en la nota de voz), para buscar en sus apuntes. */
+      let apuntesQuery = text;
       if (inbound.audioFileId) {
         const bytes = await telegram.downloadFile(inbound.audioFileId);
         if (!bytes) {
@@ -7712,6 +7838,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // Marked as a transcription so the model does not treat a misheard word as
           // something the user typed, and so the reply can be spoken back.
           prompt = voiceNotePrompt(heard, inbound.forwardedFrom, text);
+          apuntesQuery = heard.text;
           // El acuse queda con lo entendido: si oyó mal, se ve antes de la respuesta.
           // Sin acuse con lo entendido (Nico: que haga la acción sin decirme «transcribiendo»).
           // Solo si no se oyó nada, para que el silencio no parezca que se ignoró el audio.
@@ -7813,8 +7940,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         threads.values(),
         Date.now(),
       );
+      // Apuntes por tema: si su mensaje va de uno de sus temas («según mis apuntes de
+      // derecho…», o una pregunta que sale en ellos), el turno llega con los pasajes delante.
+      const apuntesNote =
+        !opts.external && !temaAnadir && isOwnerDm(inboundFor(thread), vigilanteOwnerId)
+          ? await notaApuntes(baseExpertos, apuntesQuery).catch((err: unknown) => {
+              log.warn('expertos: nota de apuntes fallida', { err: String(err) });
+              return '';
+            })
+          : '';
       thread.agent.attachContext(
-        [contextNote, othersNote, learnHint].filter((part) => Boolean(part)).join('\n\n'),
+        [contextNote, othersNote, learnHint, apuntesNote]
+          .filter((part) => Boolean(part))
+          .join('\n\n'),
       );
 
       /** Especialistas que hicieron algo en este turno (Telegram los dice al final). */
@@ -8931,6 +9069,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['status'], run: (inbound, args) => cmdStatus(inbound, args) },
     { names: ['start'], run: (inbound) => cmdStart(inbound) },
     { names: ['funciones'], run: (inbound, args) => cmdFunciones(inbound, args) },
+    {
+      names: ['expertos', 'experto', 'apuntes'],
+      run: (inbound, args) => cmdExpertos(inbound, args),
+    },
     { names: ['help'], run: (inbound) => cmdHelp(inbound) },
   ]);
 
@@ -8990,6 +9132,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
     onMessage: async (inbound) => {
       if (!inbound.authorised) return;
+      // «/experto derecho ¿qué es la usucapión?»: pregunta normal al modelo con sus apuntes
+      // («según mis apuntes de derecho: …»); «/expertos» a secas es el comando de la lista.
+      if (inbound.text.startsWith('/expert') && isOwnerDm(inbound, vigilanteOwnerId)) {
+        const pregunta = textoComandoExperto(inbound.text, baseExpertos.nombres());
+        if (pregunta) inbound.text = pregunta;
+      }
       await withInboundFailureReply(
         async () => {
           const chatKey_ = chatKey(inbound);
