@@ -5,6 +5,7 @@ import { childEnv } from '../child-env.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { lastSharedView } from '../screen/ui-map.js';
+import { foldAccents } from '../text.js';
 import { psErrorSummary } from './ps-error.js';
 
 const execFileAsync = promisify(execFile);
@@ -118,12 +119,29 @@ export async function foregroundWindow(): Promise<WindowInfo | null> {
  * returns true when it worked and false when Windows refused, which is the signal the
  * caller needs rather than a silent no-op.
  */
+/**
+ * La ventana que se pide: título exacto, luego título que lo contiene y, si no, el nombre
+ * del programa («spotify»: su ventana se titula con la canción que suena). Sin tildes ni
+ * mayúsculas a ningún lado: «configuracion» encuentra «Configuración» y al revés. Antes
+ * solo valía el título con sus tildes y la respuesta era «no encuentro ninguna ventana».
+ */
+export function pickWindow(windows: WindowInfo[], match: string): WindowInfo | undefined {
+  const norm = (v: string): string =>
+    foldAccents(v.normalize('NFC').toLocaleLowerCase('es')).replace(/\s+/g, ' ').trim();
+  const needle = norm(match);
+  if (!needle) return undefined;
+  const procOf = (w: WindowInfo): string => norm(w.process).replace(/\.exe$/, '');
+  return (
+    windows.find((w) => norm(w.title) === needle) ??
+    windows.find((w) => norm(w.title).includes(needle)) ??
+    windows.find((w) => procOf(w) === needle.replace(/\.exe$/, '')) ??
+    windows.find((w) => needle.length >= 3 && procOf(w).includes(needle))
+  );
+}
+
 export async function activateWindow(match: string): Promise<{ ok: boolean; title: string }> {
   const windows = await listWindows();
-  const needle = match.toLowerCase();
-  const target =
-    windows.find((w) => w.title.toLowerCase() === needle) ??
-    windows.find((w) => w.title.toLowerCase().includes(needle));
+  const target = pickWindow(windows, match);
   if (!target) {
     const names = windows.slice(0, 12).map((w) => w.title);
     throw new Error(
