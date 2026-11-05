@@ -50,6 +50,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -163,6 +164,7 @@ import {
   routeInboundControl,
   threadForSentIds,
 } from './daemon/inbound.js';
+import { LatencyStats, latencyLine } from './daemon/latency.js';
 import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/panel-chat.js';
 import { ParcelCheckIn, parcelAnswerReply } from './daemon/parcel-checkin.js';
 import { ProgressMilestones } from './daemon/progress-milestone.js';
@@ -1734,6 +1736,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const followups = new FollowupTracker({ db: memoryDb });
   const pageWatches = new PageWatchStore(memoryDb);
   const projectContexts = new ProjectContextStore(join(paths.state, 'proyectos.json'));
+  // Lo que tarda en contestar en Telegram (/estado), acotado a las últimas 100.
+  const latency = new LatencyStats(100);
   const lastTurns = new LastTurns<unknown, NonNullable<Inbound['images']>[number]>();
   // Sin red o con el modelo caído: el mensaje se reintenta solo (PA_AUTO_RETRY=0 lo apaga).
   const autoRetries = new AutoRetries();
@@ -6077,7 +6081,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     let logSummary: ReturnType<typeof summarizeLog> | null = null;
     try {
       const day = localDay();
-      logSummary = summarizeLog(readFileSync(join(paths.log, `${day}.jsonl`), 'utf8'));
+      // Sin bloquear: el log del día puede pesar megas y el daemon atiende otros chats.
+      logSummary = summarizeLog(await readFile(join(paths.log, `${day}.jsonl`), 'utf8'));
     } catch {
       logSummary = null;
     }
@@ -6126,6 +6131,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         { name: 'ffmpeg (/watch)', ok: ffmpegAvailable() },
       ],
       log: logSummary,
+      latency: latencyLine(latency.summary()),
       pageWatches: pageWatches.list(inbound.chatId).length,
       droppedReminders: readDroppedReminders(join(paths.state, 'dropped-reminders.jsonl')),
     });
@@ -7508,8 +7514,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         if (offer) result = { ...result, text: `${result.text}\n\n${offer.line}`.trim() };
       }
 
+      // Velocidad para /estado: desde que llegó el mensaje hasta la respuesta.
+      const doneAt = Date.now();
+      const receivedMs = Date.parse(inbound.receivedAt);
+      const sinceReceived = Number.isFinite(receivedMs) ? doneAt - receivedMs : doneAt - startedAt;
+      // Un reintento automático (sin red) no cuenta: mediría los minutos sin conexión.
+      if (
+        !out &&
+        !opts.external &&
+        opts.autoRetry === undefined &&
+        inbound.channel === 'telegram' &&
+        result.error === null
+      ) {
+        latency.record(sinceReceived, Number.isFinite(receivedMs) ? startedAt - receivedMs : 0);
+      }
       log.info('task done', {
         thread: thread.name,
+        ms: sinceReceived,
         toolCalls: result.toolCalls,
         blocked: result.blocked,
         toolErrors: result.toolErrors,
