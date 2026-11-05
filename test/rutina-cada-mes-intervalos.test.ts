@@ -16,7 +16,8 @@ describe('rutinas: cada mes, cada N días e intervalos dichos en palabras', () =
   it('lo que un cron no dice simple ya no se guarda como «cada día»: pregunta', () => {
     expect(at('cada 2 días a las 9 riega')).toBeNull();
     expect(at('cada dos semanas a las 10 limpia el filtro')).toBeNull();
-    expect(at('el último día de cada mes a las 9 cierra caja')).toBeNull();
+    // bugs30: el último día de cada mes ya se programa («L» de croner).
+    expect(at('el último día de cada mes a las 9 cierra caja')).toBe('0 9 L * *');
     expect(at('cada mes a las 9 paga')).toBeNull();
     expect(at('cada mes paga 20 euros')).toBeNull();
   });

@@ -182,6 +182,9 @@ export function scheduleEs(schedule: string): string | null {
   if (days && mon === '*' && dow === '*' && days.every((x) => x !== null && x >= 1)) {
     return `cada mes los días ${days.slice(0, -1).join(', ')} y ${days.at(-1)} ${at}`;
   }
+  // «0 20 L * *»: el último día de cada mes. Antes salía el cron crudo.
+  if (dom.toUpperCase() === 'L' && mon === '*' && dow === '*')
+    return `cada mes el último día ${at}`;
   const day = num(dom, 31);
   if (day === null || dow !== '*') return null;
   if (mon === '*') return `cada mes el día ${day} ${at}`;

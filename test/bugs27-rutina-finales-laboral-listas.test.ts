@@ -9,8 +9,9 @@ const sched = (text: string) => parseNatural(text)?.schedule ?? null;
 
 describe('rutinas: fin de mes, laboral y listas de días sin coma', () => {
   it('fin de mes se pregunta en vez de sonar a diario', () => {
-    expect(sched('a final de mes a las 9 cierre')).toBeNull();
-    expect(sched('a fin de cada mes a las 9 cierre')).toBeNull();
+    // bugs30: ahora el último día de cada mes («L»), ya no se pregunta ni suena a diario.
+    expect(sched('a final de mes a las 9 cierre')).toBe('0 9 L * *');
+    expect(sched('a fin de cada mes a las 9 cierre')).toBe('0 9 L * *');
     expect(sched('a finales de mes a las 9 cierre')).toBeNull();
   });
   it('día laboral = lunes a viernes', () => {
