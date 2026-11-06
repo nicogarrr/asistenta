@@ -781,6 +781,7 @@ import { type BargeInLevel, ConversationSession } from './voice/conversation.js'
 import { splitPhrases } from './voice/phrases.js';
 import { createDefaultTts } from './voice/piper.js';
 import { plainVoiceError } from './voice/plain-error.js';
+import { precargarOnnxRuntime } from './voice/sherpa.js';
 import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
@@ -1444,6 +1445,8 @@ function hasPwsh(): boolean {
  * Everything else (channels, scheduler) plugs in behind this same shape.
  */
 async function chatCommand(control?: ControlStartup): Promise<number> {
+  // Windows: onnxruntime-node primero, antes que sherpa o whisper (ver sherpa.ts).
+  precargarOnnxRuntime();
   ensureDirs();
   const config = loadConfig();
 
@@ -1797,6 +1800,8 @@ export async function capturePageIfOpen(
 }
 
 async function serveCommand(control?: ControlStartup): Promise<number> {
+  // Windows: onnxruntime-node primero, antes que sherpa o whisper (ver sherpa.ts).
+  precargarOnnxRuntime();
   if (!applyConfiguredTimeZone() && process.env.PA_TIMEZONE?.trim()) {
     log.warn('PA_TIMEZONE is not a valid time zone: using the system one', {
       value: process.env.PA_TIMEZONE,

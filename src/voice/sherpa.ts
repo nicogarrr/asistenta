@@ -11,6 +11,7 @@
 
 import { createRequire } from 'node:module';
 import { availableParallelism } from 'node:os';
+import { log } from '../log.js';
 import { pcmToWavPcm16 } from './audio.js';
 import {
   encodeSpeech,
@@ -59,14 +60,63 @@ export function cargarSherpaCon(
   requerir: (id: string) => unknown,
   plataforma: NodeJS.Platform = process.platform,
 ): SherpaModulo {
-  if (plataforma === 'win32') {
-    try {
-      requerir('onnxruntime-node');
-    } catch {
-      // Sin onnxruntime-node no hay whisper con el que chocar.
-    }
+  cargarOrt(requerir, plataforma);
+  try {
+    return requerir('sherpa-onnx-node') as SherpaModulo;
+  } catch (error) {
+    throw new Error(
+      `No pude cargar la voz local (sherpa-onnx-node: ${mensajeCorto(error)}). Ejecuta «npm ci» en la carpeta de Asistenta y reiníciala; mientras, hablo con la voz de Windows.`,
+    );
   }
-  return requerir('sherpa-onnx-node') as SherpaModulo;
+}
+
+/** Resultado de cargar onnxruntime-node antes que nada (solo Windows). */
+export interface PrecargaOrt {
+  ok: boolean;
+  /** Qué pasa y cómo arreglarlo, en castellano, si no cargó. */
+  error?: string;
+}
+
+function mensajeCorto(error: unknown): string {
+  const m = error instanceof Error ? error.message : String(error);
+  return m.split('\n')[0]?.slice(0, 160) ?? '';
+}
+
+function cargarOrt(requerir: (id: string) => unknown, plataforma: NodeJS.Platform): PrecargaOrt {
+  if (plataforma !== 'win32') return { ok: true };
+  try {
+    requerir('onnxruntime-node');
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `No pude cargar onnxruntime-node (${mensajeCorto(error)}): no entenderé las notas de voz. Ejecuta «npm ci» en la carpeta de Asistenta y reiníciala.`,
+    };
+  }
+}
+
+let precarga: PrecargaOrt | null = null;
+
+/**
+ * Al arrancar, en Windows: carga onnxruntime-node (1.30) antes que cualquier otra cosa, para
+ * que su `onnxruntime.dll` sea la del proceso pase lo que pase después (sherpa, whisper,
+ * memoria semántica, palabra de activación). Sin esto el orden dependía de qué se usaba
+ * primero. Una sola vez; si falla, lo dice claro en el log en vez de callarlo.
+ */
+export function precargarOnnxRuntime(
+  requerir: (id: string) => unknown = createRequire(import.meta.url),
+  plataforma: NodeJS.Platform = process.platform,
+  avisar: (texto: string) => void = (t) => log.warn(t),
+): PrecargaOrt {
+  if (precarga) return precarga;
+  precarga = cargarOrt(requerir, plataforma);
+  if (precarga.error) avisar(precarga.error);
+  return precarga;
+}
+
+/** Solo para tests. */
+export function olvidarPrecargaOrt(): void {
+  precarga = null;
 }
 
 const cargarPorDefecto: CargarSherpa = () => cargarSherpaCon(createRequire(import.meta.url));
