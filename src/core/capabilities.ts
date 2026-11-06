@@ -52,6 +52,11 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'read', threadAllow: true },
   { name: 'list', threadAllow: true },
   { name: 'fetch', threadAllow: true },
+  {
+    name: 'resumen_video',
+    threadAllow: true,
+    note: 'Resumen de un vídeo de YouTube o X: solo lee (subtítulos o audio transcrito en el PC).',
+  },
   { name: 'done', threadAllow: true },
   { name: 'preguntar', threadAllow: true },
   { name: 'memory', threadAllow: true },

@@ -520,7 +520,7 @@ export function createFetchTool(
     label: 'Fetch',
     description:
       'Download a web page and return its text content. Use this when the user shares a link or asks about a page. Returns text only: no images, no scripts, no interaction. ' +
-      'For a YouTube video link it returns the video transcript (subtitles) instead of the page: use it for "resúmeme este vídeo" / "de qué va este vídeo". ' +
+      'For a YouTube video link it returns the video transcript (subtitles) instead of the page: for an executive summary of a YouTube or X video use resumen_video instead. ' +
       'For a GitHub pull request, commit or compare link it returns the summary, changed files, automatic risk warnings and the diff; for a GitHub issue, its description and latest comments: use it for "revisa este PR" or "mira esta issue".',
     parameters: FetchParams(),
     executionMode: 'parallel',
