@@ -31,6 +31,11 @@ barriendo, al doble de intervalo (normal cada 60 min, rápido cada ~24 min). El 
 «🚨 ERROR DE PRECIO» sale en el momento aunque sea de madrugada; nada más del vigilante manda
 mensajes de noche.
 
+**Sin precio tachado.** Un resultado sin tachado se compara con 3 o más iguales (misma marca y
+modelo: las dos primeras palabras del título y las que llevan cifras) de la misma página. Si
+cuesta ≤40 % de su mediana (p. ej. una ghd Gold a 29,90 € entre otras a 185–239 €), se abre la
+ficha y se confirma con un histórico real (el propio o camelcamelcamel) antes de avisar.
+
 **Siempre en marcha en el PC.** `pa autostart install --start` (una vez, en PowerShell desde la
 carpeta de Asistenta) la arranca al iniciar sesión y deja la tarea «Asistenta-vigilante», que la
 vuelve a levantar cada 5 min si se cae (ver docs/windows-startup.md). Los barridos van por reloj

@@ -25,6 +25,7 @@ import {
   candidato,
   type Lectura,
   type Referencia,
+  referenciaPares,
   verificar,
 } from './regla.js';
 
@@ -357,6 +358,7 @@ const FUENTE: Record<Referencia['fuente'], string> = {
   externo: 'histórico real: media en Amazon según camelcamelcamel',
   recomendado: 'solo PVP («Recomendado»)',
   antes: 'solo precio tachado «antes»',
+  pares: 'solo la mediana de iguales en la misma página',
 };
 
 /** Enlace que mete ese ASIN en la cesta de un toque (formato «add to cart» de Amazon, vigente el 6-nov-2026). */
@@ -524,8 +526,15 @@ export class VigilantePrecios {
         }
         const a = e.asins[it.asin] ?? { t: it.titulo, l: [] };
         const lecturas = a.l.map(([at, cents]) => ({ at, cents }));
-        if (candidato(it, lecturas, cfg) && !porVerificar.some((p) => p.it.asin === it.asin)) {
-          porVerificar.push({ it, lecturas });
+        if (!porVerificar.some((p) => p.it.asin === it.asin)) {
+          if (candidato(it, lecturas, cfg)) porVerificar.push({ it, lecturas });
+          else {
+            // Sin tachado: comparado con sus iguales de esta página (solo pista; la ficha y un
+            // histórico real deciden).
+            const pares = referenciaPares(it, items, cfg);
+            if (pares)
+              porVerificar.push({ it: { ...it, refCents: pares, refTipo: 'pares' }, lecturas });
+          }
         }
         const ult = a.l.at(-1);
         if (!ult || ult[1] !== it.cents || inicio - ult[0] > 3 * HORA) a.l.push([inicio, it.cents]);
