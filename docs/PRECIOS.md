@@ -26,6 +26,11 @@ búsqueda—), tres listados: «Los más vendidos»,
 
     PA_PRECIOS_CATEGORIAS=cocina,informatica,https://www.amazon.es/s?k=robot+aspirador
 
+**De noche también.** En las horas de silencio del dueño (22:00–08:00 por defecto) sigue
+barriendo, al doble de intervalo (normal cada 60 min, rápido cada ~24 min). El aviso
+«🚨 ERROR DE PRECIO» sale en el momento aunque sea de madrugada; nada más del vigilante manda
+mensajes de noche.
+
 Además, un **barrido rápido** cada ~12 min (±25 %, `PA_PRECIOS_RAPIDO_MIN`) de búsquedas de
 marcas y productos caros, donde un error de precio dura poco: relojes inteligentes (Apple Watch,
 Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles de marca —Lenovo, HP, ASUS, Acer, MSI, Dell— y
