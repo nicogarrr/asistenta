@@ -64,10 +64,10 @@ describe('panel: tarjeta de aprobación legible', () => {
     expect(f?.tiempoRestante(301_000, 41_000)).toBe('Caduca en 4 min 20 s');
   });
 
-  it('la página incluye ambos scripts válidos, botones claros y confirmación para «siempre»', () => {
+  it('la página incluye sus scripts válidos (formato, Mini App y panel), botones claros y confirmación para «siempre»', () => {
     const html = renderPage();
     const bloques = scripts(html);
-    expect(bloques.length).toBe(2);
+    expect(bloques.length).toBe(3);
     for (const bloque of bloques) expect(() => new Function(bloque)).not.toThrow();
     expect(html).toContain('Permitir una vez');
     expect(html).toContain('Permitir por ahora');

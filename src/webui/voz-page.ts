@@ -1,3 +1,4 @@
+import { renderMiniAppReadyScript } from './miniapp.js';
 /**
  * /voz: hablar con Asistenta desde el móvil (Mini App de Telegram con /voz, o el
  * navegador del móvil por Tailscale). Pulsas, hablas, la nota va al PC, el whisper local
@@ -36,6 +37,9 @@ export function renderVozPage(): string {
   <label><input id="manos" type="checkbox"> Manos libres</label>
   <label><input id="leer" type="checkbox" checked> Leer respuestas en voz alta</label>
 </footer>
+<script>
+${renderMiniAppReadyScript()}
+</script>
 <script>
 (function () {
   var CLAVE = 'asistenta.webui.token';
