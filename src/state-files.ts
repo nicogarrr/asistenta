@@ -154,6 +154,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'lista de la compra por chat (/compra, botones para tachar)',
     backup: 'file',
   },
+  {
+    name: 'mercadona.json',
+    what: 'pedido semanal de Mercadona: día del aviso, productos elegidos antes y el pedido en curso',
+    backup: 'file',
+  },
   { name: 'actions.jsonl', what: 'registro de acciones hechas por el agente', backup: 'file' },
   {
     name: 'dropped-reminders.jsonl',

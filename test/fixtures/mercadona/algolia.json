@@ -1,0 +1,543 @@
+{
+  "_source": "Algolia products_prod_mad1_es, recorded 2026-11-05 from tienda.mercadona.es (public search key in the web bundle v10100)",
+  "leche": {
+    "hits": [
+      {
+        "id": "10381",
+        "display_name": "Leche semidesnatada Hacendado",
+        "packaging": null,
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/b91d8b8bafd5eabab8961aabbe16c28b.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10381/leche-semidesnatada-hacendado-pack-6",
+        "price_instructions": {
+          "unit_price": "4.98",
+          "bulk_price": "0.83",
+          "reference_price": "0.830",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 6.0,
+          "total_units": 6,
+          "pack_size": 1.0,
+          "is_pack": true,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10379",
+        "display_name": "Leche entera Hacendado",
+        "packaging": "Pack-6",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/b4db71bda48058bb37cd556c55b2fc64.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10379/leche-entera-hacendado-pack-6",
+        "price_instructions": {
+          "unit_price": "5.76",
+          "bulk_price": "0.96",
+          "reference_price": "0.960",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 6.0,
+          "total_units": 6,
+          "pack_size": 1.0,
+          "is_pack": true,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10721",
+        "display_name": "Leche semidesnatada sin lactosa Hacendado",
+        "packaging": null,
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/6b8cf0ba135f7e717632541922c5791d.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10721/leche-semidesnatada-sin-lactosa-hacendado-pack-6",
+        "price_instructions": {
+          "unit_price": "5.64",
+          "bulk_price": "0.94",
+          "reference_price": "0.940",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 6.0,
+          "total_units": 6,
+          "pack_size": 1.0,
+          "is_pack": true,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10383",
+        "display_name": "Leche desnatada Hacendado",
+        "packaging": "Pack-6",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/3b2cde7125f13d701043eef134149fe3.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10383/leche-desnatada-hacendado-pack-6",
+        "price_instructions": {
+          "unit_price": "4.86",
+          "bulk_price": "0.81",
+          "reference_price": "0.810",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 6.0,
+          "total_units": 6,
+          "pack_size": 1.0,
+          "is_pack": true,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10730",
+        "display_name": "Leche desnatada sin lactosa Hacendado",
+        "packaging": "Pack-6",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/84271adfb6b8db545c2f7c32ce09e1ed.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10730/leche-desnatada-sin-lactosa-hacendado-pack-6",
+        "price_instructions": {
+          "unit_price": "5.46",
+          "bulk_price": "0.91",
+          "reference_price": "0.910",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 6.0,
+          "total_units": 6,
+          "pack_size": 1.0,
+          "is_pack": true,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10783",
+        "display_name": "Leche entera Hacendado",
+        "packaging": null,
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/6e6f87557b2929cfffcc08ef72385328.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10783/leche-entera-hacendado-pack-6",
+        "price_instructions": {
+          "unit_price": "1.71",
+          "bulk_price": "1.43",
+          "reference_price": "1.425",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 1.2,
+          "total_units": 6,
+          "pack_size": 0.2,
+          "is_pack": true,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10380",
+        "display_name": "Leche entera Hacendado",
+        "packaging": "Brik",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/a731a91252722a3a9cb5856ae8f7d282.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10380/leche-entera-hacendado-brick",
+        "price_instructions": {
+          "unit_price": "0.96",
+          "bulk_price": "0.96",
+          "reference_price": "0.960",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 1.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "10382",
+        "display_name": "Leche semidesnatada Hacendado",
+        "packaging": "Brik",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/da2348eb6ffa595fbfdbe66367bcad3c.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/10382/leche-semidesnatada-hacendado-brick",
+        "price_instructions": {
+          "unit_price": "0.83",
+          "bulk_price": "0.83",
+          "reference_price": "0.830",
+          "reference_format": "L",
+          "size_format": "l",
+          "unit_size": 1.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      }
+    ]
+  },
+  "huevos": {
+    "hits": [
+      {
+        "id": "30167",
+        "display_name": "Huevos",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/3a0b8ec917c50794e9aed65bbfea018b.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/30167/huevos-tamanos-diferentes-paquete",
+        "price_instructions": {
+          "unit_price": "5.25",
+          "bulk_price": "0.22",
+          "reference_price": "2.625",
+          "reference_format": "dz",
+          "size_format": "ud",
+          "unit_size": 24.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "31504",
+        "display_name": "Huevos grandes L",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/707625e3e76b36f1834d56c1ed8aa8df.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/31504/huevos-grandes-l-paquete",
+        "price_instructions": {
+          "unit_price": "3.05",
+          "bulk_price": "0.25",
+          "reference_price": "3.050",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 12.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "15768",
+        "display_name": "Huevos de gallinas camperas",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/50933500ef69e4c4cc91733c48e4e909.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/15768/huevos-gallinas-camperas-paquete",
+        "price_instructions": {
+          "unit_price": "3.35",
+          "bulk_price": "0.28",
+          "reference_price": "3.350",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 12.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "31592",
+        "display_name": "Huevos super grandes XL",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/5bad6ba1d83593e621cdee275de8fd77.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/31592/huevos-super-grandes-xl-paquete",
+        "price_instructions": {
+          "unit_price": "4.30",
+          "bulk_price": "0.36",
+          "reference_price": "4.300",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 12.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "31505",
+        "display_name": "Huevos medianos M",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/96ba986bc89d7298da0a7605824227a9.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/31505/huevos-medianos-m-paquete",
+        "price_instructions": {
+          "unit_price": "2.85",
+          "bulk_price": "0.24",
+          "reference_price": "2.850",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 12.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "31540",
+        "display_name": "Huevos grandes L",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/f320cc362d58afd514c38aae399c6cec.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/31540/huevos-grandes-l-paquete",
+        "price_instructions": {
+          "unit_price": "1.80",
+          "bulk_price": "0.30",
+          "reference_price": "3.600",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 6.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "31010",
+        "display_name": "Huevos cocidos",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/415028c8977c97560369dcebb4c2357d.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/31010/huevos-cocidos-paquete",
+        "price_instructions": {
+          "unit_price": "2.20",
+          "bulk_price": "0.37",
+          "reference_price": "4.400",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 6.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "31310",
+        "display_name": "Huevos de gallinas camperas",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/91e31618d31b0cf31818de4e76dcc031.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/31310/huevos-gallinas-camperas-paquete",
+        "price_instructions": {
+          "unit_price": "1.95",
+          "bulk_price": "0.33",
+          "reference_price": "3.900",
+          "reference_format": "dc",
+          "size_format": "ud",
+          "unit_size": 6.0,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      }
+    ]
+  },
+  "pan": {
+    "hits": [
+      {
+        "id": "82322",
+        "display_name": "Pan de molde blanco sin corteza Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/7931704a16106081eb2e0d81c340306c.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/82322/pan-molde-blanco-sin-corteza-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "1.05",
+          "bulk_price": "2.33",
+          "reference_price": "2.334",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.45,
+          "total_units": 16,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "83867",
+        "display_name": "Pan de molde blanco familiar Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/f26045084b08d8792979df13779e97d3.jpeg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/83867/pan-molde-blanco-familiar-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "1.15",
+          "bulk_price": "1.40",
+          "reference_price": "1.403",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.82,
+          "total_units": 26,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "82933",
+        "display_name": "Pan de leche Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/91121503647f92da9fa6d7d56357c99c.jpeg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/82933/pan-leche-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "1.85",
+          "bulk_price": "3.85",
+          "reference_price": "3.855",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.48,
+          "total_units": 12,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "82332",
+        "display_name": "Pan hot dog Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/1a4384796c10baa72355deb00039cbd4.jpeg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/82332/pan-hot-dog-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "0.90",
+          "bulk_price": "2.73",
+          "reference_price": "2.728",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.33,
+          "total_units": 6,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "52602",
+        "display_name": "Pan de burger Brioche Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/c4f9f0e92cd76bbb10bb9761df1ca7b6.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/52602/pan-hamburguesa-brioche-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "1.10",
+          "bulk_price": "7.33",
+          "reference_price": "7.334",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.15,
+          "total_units": 2,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": 10
+        }
+      },
+      {
+        "id": "83886",
+        "display_name": "Pan de molde 100% integral familiar Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/bb4bc87dd5cde05303b1e222c2131fb0.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/83886/pan-molde-100-integral-familiar-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "1.15",
+          "bulk_price": "1.40",
+          "reference_price": "1.403",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.82,
+          "total_units": 26,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "23643",
+        "display_name": "Pan de molde 100% integral sin corteza Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/3c3a0ceabc49c8022b255bb92751d3d5.jpeg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/23643/pan-molde-100-integral-sin-corteza-hacendado-0-azucares-anadidos-paquete",
+        "price_instructions": {
+          "unit_price": "1.10",
+          "bulk_price": "2.44",
+          "reference_price": "2.445",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.45,
+          "total_units": 16,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": null
+        }
+      },
+      {
+        "id": "82219",
+        "display_name": "Pan rallado Hacendado",
+        "packaging": "Paquete",
+        "published": true,
+        "thumbnail": "https://prod-mercadona.imgix.net/images/fe031df985de4909241d4503364df110.jpg?fit=crop&h=300&w=300",
+        "share_url": "https://tienda.mercadona.es/product/82219/pan-rallado-hacendado-paquete",
+        "price_instructions": {
+          "unit_price": "0.85",
+          "bulk_price": "1.13",
+          "reference_price": "1.134",
+          "reference_format": "kg",
+          "size_format": "kg",
+          "unit_size": 0.75,
+          "total_units": null,
+          "pack_size": null,
+          "is_pack": false,
+          "selling_method": 0,
+          "approx_size": false,
+          "iva": 4
+        }
+      }
+    ]
+  }
+}

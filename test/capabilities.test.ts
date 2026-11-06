@@ -10,6 +10,7 @@ import {
 import { MACHINE_TOOLS } from '../src/core/tool-registry.js';
 import { DEFERRED_DEFAULTS, THREAD_ALLOW_TOOLS } from '../src/core/toolset.js';
 import { checkPatch } from '../src/evolve/guard.js';
+import { TOOL_ABILITIES } from '../src/funciones.js';
 import { DESKTOP_ONLY_TOOLS } from '../src/platform.js';
 
 // Valores exactos que tenían las cuatro listas sueltas antes del catálogo (main 76667ff).
@@ -100,5 +101,13 @@ describe('catálogo de capacidades (P1)', () => {
       "+  { name: 'checkout', machine: true, threadAllow: true },",
     ].join('\n');
     expect(checkPatch(diff).some((v) => v.rule.includes('herramientas libres'))).toBe(true);
+  });
+});
+
+describe('mercadona (pedido semanal)', () => {
+  it('está en el catálogo y en /funciones, sin ser libre en hilos ni de máquina', () => {
+    expect(TOOL_ABILITIES.mercadona?.area).toBe('compras');
+    expect(THREAD_ALLOW_TOOLS).not.toContain('mercadona');
+    expect([...MACHINE_TOOLS]).not.toContain('mercadona');
   });
 });

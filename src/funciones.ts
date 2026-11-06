@@ -335,6 +335,10 @@ export const TOOL_ABILITIES: Readonly<
     text: 'enciendo, apago o miro luces, enchufes y ventiladores de tu Home Assistant',
   },
   vigilar_precio: { area: 'compras', text: 'vigilo el precio de un producto y te aviso si baja' },
+  mercadona: {
+    area: 'compras',
+    text: 'hago el pedido semanal de Mercadona con tu lista y pago solo cuando confirmas',
+  },
   checkout: { area: 'compras', text: 'preparo una compra y te pido permiso antes de pagar' },
   memory: { area: 'memoria', text: 'recuerdo datos tuyos y los uso cuando hacen falta' },
   decision: { area: 'memoria', text: 'apunto lo que decides en cada proyecto' },

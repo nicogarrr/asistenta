@@ -64,6 +64,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'Avisos por lugar con la ubicación en directo; solo apunta, no envía nada fuera.',
   },
   { name: 'compra', threadAllow: true, note: 'Lista de la compra del chat.' },
+  {
+    name: 'mercadona',
+    note: 'Solo lee o cambia el día del pedido semanal; pedir y pagar van con botones y «✅ Confirmar pedido» del dueño.',
+  },
   { name: 'temas', threadAllow: true },
   {
     name: 'correo_reglas',
