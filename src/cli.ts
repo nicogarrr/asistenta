@@ -765,6 +765,7 @@ import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
 import {
+  loadWhisperPipeline,
   SMALL_STT_MODEL,
   SttError,
   sttModelFromEnv,
@@ -2041,6 +2042,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   // Al arrancar (también tras autoactualizar) baja la voz si falta o cambió; no bloquea.
   void tts.precargar();
+  /** Última vez que /voz precargó whisper y la voz (ver `prewarm` del panel). */
+  let vozCalentadaEn = 0;
 
   /**
    * One mutex for everything that moves the machine. Reasoning runs outside it;
@@ -2471,6 +2474,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // /voz desde el móvil: la nota se transcribe aquí con el whisper local.
           transcribe: async (audio: Buffer, mime: string) =>
             (await transcribeVoiceNote(audio, { mimeType: mime })).text,
+          // Al abrir /voz: whisper y la voz se cargan ya (como mucho una vez cada 5 min).
+          prewarm: () => {
+            const ahora = Date.now();
+            if (ahora - vozCalentadaEn < 5 * 60_000) return;
+            vozCalentadaEn = ahora;
+            const modelo = sttModelFromEnv();
+            void loadWhisperPipeline(whisperCached(modelo) ? modelo : SMALL_STT_MODEL).catch(
+              (err: unknown) =>
+                log.warn('voz movil: no pude precargar whisper', { err: String(err) }),
+            );
+            // Con la voz local ya bajada, una frase de prueba deja el motor cargado.
+            void tts.precargar().then((lista) =>
+              lista
+                ? tts.speak('Vale.').then(
+                    () => undefined,
+                    () => undefined,
+                  )
+                : undefined,
+            );
+          },
           // …y la respuesta vuelve con la voz local del PC, no con la robótica del móvil.
           speak: (text: string) =>
             speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
