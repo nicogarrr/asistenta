@@ -11,7 +11,7 @@
  */
 
 import type { Ficha, ItemListado, RefTipo } from './amazon.js';
-import type { HistorialExterno } from './historial.js';
+import { type HistorialExterno, precioRealExterno } from './historial.js';
 
 export interface ConfigRegla {
   /** Avisa si el precio es ≤ ratio × referencia. 0,40 = 60 % de descuento o más. */
@@ -101,7 +101,8 @@ export function mejorReferencia(
   if (tachado.cents && tachado.tipo && real && vendeAmazon !== false) {
     refs.push({ cents: tachado.cents, fuente: tachado.tipo });
   }
-  if (externo?.media) refs.push({ cents: externo.media, fuente: 'externo' });
+  const ext = precioRealExterno(externo);
+  if (ext) refs.push({ cents: ext, fuente: 'externo' });
   if (!refs.length) return null;
   return refs.reduce((a, b) => (b.cents < a.cents ? b : a));
 }

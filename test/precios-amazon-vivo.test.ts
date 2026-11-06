@@ -212,3 +212,48 @@ describe('en el Chrome de Asistenta', () => {
     expect(c).toContain('data-field');
   });
 });
+
+describe('ghd Gold real (6-nov-2026): camelcamelcamel sin media y vendedor con nombre largo', () => {
+  const ext = parseCamel(fx('camel-ghd-gold-solo-actual.html'));
+  it('producto reciente en camelcamelcamel: sin media, pero su último precio real cuenta', () => {
+    expect(ext).toMatchObject({ campo: 'amazon', actual: 21_165, media: null });
+  });
+  it('la ghd Gold vendida por Amazon a 29,90 € avisa frente a su precio real (211,65 €)', () => {
+    const it: ItemListado = {
+      asin: 'B0H7L5F396',
+      titulo: 'ghd Gold - Plancha de Pelo Profesional Avanzada',
+      cents: 2990,
+      refCents: 24_900,
+      refTipo: 'recomendado',
+      patrocinado: false,
+      desde: false,
+      porUnidad: false,
+    };
+    const f: Ficha = {
+      titulo: it.titulo,
+      marca: 'ghd',
+      cents: 2990,
+      precioOculto: false,
+      refCents: null,
+      refTipo: null,
+      enStock: true,
+      vendedor: 'Amazon',
+      envio: 'Amazon',
+      estado: 'nuevo',
+    };
+    expect(verificar(it, f, [])).toMatchObject({ ok: false, soloPvp: true });
+    expect(verificar(it, f, [], undefined, ext)).toMatchObject({
+      ok: true,
+      ref: { cents: 21_165, fuente: 'externo' },
+    });
+  });
+  it('«Remitente / Vendedor» con nombre de varias palabras sale entero y una vez', () => {
+    const caja =
+      '<div id="merchantInfoFeature_feature_div">Remitente / Vendedor</div><div>Productos Profesionales AMP</div>' +
+      '<div>Productos Profesionales AMP</div><div>Remitente / Vendedor Productos Profesionales AMP</div>';
+    expect(parseFicha(caja)).toMatchObject({
+      vendedor: 'Productos Profesionales AMP',
+      envio: 'Productos Profesionales AMP',
+    });
+  });
+});
