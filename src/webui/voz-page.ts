@@ -71,11 +71,35 @@ ${renderMiniAppReadyScript()}
     decir('Abre esto desde Telegram con /voz, o abre antes el panel con tu token en este navegador.');
   }
 
-  function hablar(t) {
-    if (!leer.checked || !window.speechSynthesis) { siguiente(); return; }
+  // iOS solo deja sonar audio que nace de un toque: el primer «Hablar» desbloquea este
+  // reproductor con un instante de silencio y luego se reutiliza para la voz del PC.
+  var reproductor = new Audio();
+  var desbloqueado = false;
+  var SILENCIO = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+  function desbloquear() {
+    if (desbloqueado) return;
+    desbloqueado = true;
+    try { reproductor.src = SILENCIO; var p = reproductor.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+  }
+  function vozSistema(t) {
+    if (!window.speechSynthesis) { siguiente(); return; }
     var u = new SpeechSynthesisUtterance(t); u.lang = 'es-ES';
     u.onend = siguiente; u.onerror = siguiente;
     speechSynthesis.cancel(); speechSynthesis.speak(u);
+  }
+  function hablar(t, audio) {
+    if (!leer.checked) { siguiente(); return; }
+    if (!audio || !audio.data) { vozSistema(t); return; }
+    var hecho = false;
+    function fin() { if (!hecho) { hecho = true; siguiente(); } }
+    function falla() { if (!hecho) { hecho = true; vozSistema(t); } }
+    try {
+      var bin = atob(audio.data); var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      reproductor.src = URL.createObjectURL(new Blob([bytes], { type: audio.mime || 'audio/mpeg' }));
+      reproductor.onended = fin; reproductor.onerror = falla;
+      var p = reproductor.play(); if (p && p.catch) p.catch(falla);
+    } catch (e) { falla(); }
   }
   function siguiente() { if (manos.checked) empezar(); else decir('Pulsa el botón y habla.'); }
 
@@ -130,12 +154,13 @@ ${renderMiniAppReadyScript()}
         if (!x.ok) { decir((x.d && x.d.error) || 'No ha salido bien.'); return; }
         if (x.d.oido) linea('yo', x.d.oido);
         linea('ella', x.d.text || '');
-        hablar(x.d.text || '');
+        hablar(x.d.text || '', x.d.audio);
       })
       .catch(function () { boton.disabled = false; decir('No llego al PC. ¿Tailscale está conectado?'); });
   }
 
   boton.addEventListener('click', function () {
+    desbloquear();
     if (grabador && grabador.state === 'recording') parar(); else empezar();
   });
 })();
