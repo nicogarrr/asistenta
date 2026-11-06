@@ -48,7 +48,18 @@ const CATALOGO: Record<string, [string, string, string]> = {
   licores: ['Bebidas y licores', 'grocery', 'grocery'],
 };
 
-export const CATEGORIAS_POR_DEFECTO = Object.keys(CATALOGO);
+/** Categorías sin «más vendidos» propio en Amazon.es: se barren por búsqueda (id → [nombre, búsquedas]). */
+const CATALOGO_BUSQUEDA: Record<string, [string, [string, string][]]> = {
+  relojes: [
+    'Relojes inteligentes',
+    [
+      ['reloj inteligente', 'electronics'],
+      ['smartwatch', 'electronics'],
+    ],
+  ],
+};
+
+export const CATEGORIAS_POR_DEFECTO = [...Object.keys(CATALOGO), ...Object.keys(CATALOGO_BUSQUEDA)];
 
 /**
  * Búsquedas de marcas y productos caros que se barren más a menudo (cada 10–15 min): ahí es
@@ -56,6 +67,30 @@ export const CATEGORIAS_POR_DEFECTO = Object.keys(CATALOGO);
  * Regal Mizunara a 12,50 €, vendidos por Amazon.es, 6-nov-2026). `texto|alias de búsqueda`.
  */
 export const RAPIDAS_POR_DEFECTO = [
+  // Relojes inteligentes (Nico, 6-nov-2026).
+  'apple watch|electronics',
+  'galaxy watch|electronics',
+  'garmin reloj|electronics',
+  'amazfit|electronics',
+  'huawei watch|electronics',
+  'pixel watch|electronics',
+  // Informática, «sobre todo».
+  'portátil gaming|computers',
+  'macbook|computers',
+  'monitor|computers',
+  'ssd nvme|computers',
+  'tarjeta gráfica rtx|computers',
+  'procesador ryzen|computers',
+  'procesador intel core|computers',
+  'ipad|computers',
+  'tablet|computers',
+  'auriculares sony|electronics',
+  'auriculares bose|electronics',
+  'airpods|electronics',
+  'iphone|electronics',
+  'samsung galaxy s|electronics',
+  'router mesh|computers',
+  // Belleza y licores (los casos de Quique: ghd 29,90 €, Chivas 12,50 €).
   'ghd|beauty',
   'dyson|beauty',
   'plancha de pelo|beauty',
@@ -64,10 +99,6 @@ export const RAPIDAS_POR_DEFECTO = [
   'whisky|grocery',
   'ginebra premium|grocery',
   'ron añejo|grocery',
-  'apple|electronics',
-  'portátil|computers',
-  'bosch professional|diy',
-  'lego|toys',
 ];
 
 function busqueda(texto: string, alias?: string): string {
@@ -98,6 +129,15 @@ export function rapidasDesde(valor: string | undefined): Categoria[] {
 }
 
 function categoriaDe(id: string): Categoria | null {
+  const b = CATALOGO_BUSQUEDA[id];
+  if (b) {
+    const [nombre, qs] = b;
+    return {
+      id,
+      nombre,
+      urls: qs.flatMap(([t, a]) => [busqueda(t, a), `${busqueda(t, a)}&s=date-desc-rank`]),
+    };
+  }
   const c = CATALOGO[id];
   if (!c) return null;
   const [nombre, bs, alias] = c;
@@ -157,7 +197,7 @@ export interface DepsVigilante {
   categorias: Categoria[];
   leerListado(url: string): Promise<Respuesta>;
   leerFicha(url: string): Promise<Respuesta>;
-  avisar(texto: string): Promise<void>;
+  avisar(texto: string, botones?: BotonAviso[]): Promise<void>;
   now?: () => number;
   esperar?: (ms: number) => Promise<void>;
   azar?: () => number;
@@ -166,7 +206,7 @@ export interface DepsVigilante {
   paginas?: number;
   /** Búsquedas del barrido rápido (`barrer({ rapido: true })`). */
   rapidas?: Categoria[];
-  /** Páginas por barrido rápido (por defecto 2). */
+  /** Páginas por barrido rápido (por defecto 4). */
   paginasRapido?: number;
   /** Fichas que se abren como mucho por barrido para verificar (por defecto 3). */
   fichas?: number;
@@ -243,6 +283,24 @@ const FUENTE: Record<Referencia['fuente'], string> = {
   antes: 'precio anterior',
 };
 
+/** Enlace que mete ese ASIN en la cesta de un toque (formato «add to cart» de Amazon, vigente el 6-nov-2026). */
+export function urlCesta(asin: string): string {
+  return `${AMAZON_ORIGIN}/gp/aws/cart/add.html?ASIN.1=${encodeURIComponent(asin)}&Quantity.1=1`;
+}
+
+export interface BotonAviso {
+  label: string;
+  action: string;
+}
+
+/** Botones del aviso: comprar (a la cesta) y ver la ficha. */
+export function botonesAviso(asin: string): BotonAviso[] {
+  return [
+    { label: '🛒 Comprar ya', action: `url:${urlCesta(asin)}` },
+    { label: '🔗 Ver en Amazon', action: `url:${urlFicha(asin)}` },
+  ];
+}
+
 export function textoAviso(a: {
   asin: string;
   titulo: string;
@@ -252,12 +310,13 @@ export function textoAviso(a: {
 }): string {
   const pct = Math.round((1 - a.cents / a.ref.cents) * 100);
   return [
-    '🚨 Posible error de precio en Amazon.es',
+    '🚨 ERROR DE PRECIO',
     a.titulo.slice(0, 160),
-    `💶 ${eurosTexto(a.cents)} (antes ${eurosTexto(a.ref.cents)}, −${pct} %)`,
-    `📏 Referencia: ${FUENTE[a.ref.fuente]}`,
-    `✅ Comprobado en la ficha: nuevo, en stock, lo vende ${a.vendedor}`,
-    urlFicha(a.asin),
+    `💶 ${eurosTexto(a.cents)} (referencia ${eurosTexto(a.ref.cents)}, −${pct} %)`,
+    `📏 Por qué: ${FUENTE[a.ref.fuente]} ${eurosTexto(a.ref.cents)}; comprobado en la ficha: nuevo, en stock, mismo precio, lo vende ${a.vendedor}`,
+    '⏱️ Estos errores duran minutos.',
+    `🛒 Comprar: ${urlCesta(a.asin)}`,
+    `🔗 Ficha: ${urlFicha(a.asin)}`,
   ].join('\n');
 }
 
@@ -344,7 +403,7 @@ export class VigilantePrecios {
     };
     const porVerificar: { it: ItemListado; lecturas: Lectura[] }[] = [];
     let bloqueado = false;
-    const n = Math.min(rapido ? (this.#d.paginasRapido ?? 2) : (this.#d.paginas ?? 6), urls.length);
+    const n = Math.min(rapido ? (this.#d.paginasRapido ?? 4) : (this.#d.paginas ?? 6), urls.length);
     for (let i = 0; i < n && !bloqueado; i++) {
       const url = urls[(cursor + i) % urls.length] as string;
       if (i > 0) await this.#pausa();
@@ -434,6 +493,7 @@ export class VigilantePrecios {
             ref: v.ref,
             vendedor: v.vendedor,
           }),
+          botonesAviso(it.asin),
         );
         e.avisados[it.asin] = { cents: v.cents, at: inicio };
         e.avisosTotal++;

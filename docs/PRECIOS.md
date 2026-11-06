@@ -19,22 +19,34 @@ Barrer ya: `/precios ahora`.
 ## Qué barre
 
 Por categoría (por defecto: informática, electrónica, grandes electrodomésticos, hogar y cocina,
-videojuegos, juguetes, deportes, bricolaje, belleza, bebé y bebidas/licores), tres listados: «Los más vendidos»,
+videojuegos, juguetes, deportes, bricolaje, belleza, bebé, bebidas/licores y relojes inteligentes —este por
+búsqueda—), tres listados: «Los más vendidos»,
 «Los que más suben» y las novedades de la búsqueda. Cada barrido lee 6 páginas (rotando), con
 6–12 s entre petición y petición. Elegir categorías:
 
     PA_PRECIOS_CATEGORIAS=cocina,informatica,https://www.amazon.es/s?k=robot+aspirador
 
 Además, un **barrido rápido** cada ~12 min (±25 %, `PA_PRECIOS_RAPIDO_MIN`) de búsquedas de
-marcas y productos caros, donde un error de precio dura poco: ghd, Dyson, planchas y secadores
-de pelo, perfumes, whisky, ginebra premium, ron añejo, Apple, portátiles, Bosch Professional y
-LEGO. Son 2 páginas por barrido. Cambiarlas: `PA_PRECIOS_RAPIDAS=ghd,chivas regal|grocery,dyson`
+marcas y productos caros, donde un error de precio dura poco: relojes inteligentes (Apple Watch,
+Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles
+gaming, MacBook, monitores, SSD NVMe, tarjetas RTX, procesadores Ryzen/Intel, iPad y tablets,
+auriculares Sony/Bose/AirPods, iPhone, Galaxy S, routers mesh), y belleza y licores (ghd, Dyson,
+planchas y secadores, perfumes, whisky, ginebra premium, ron añejo). Son 4 páginas por barrido
+(rotando, `PA_PRECIOS_RAPIDO_PAGINAS`). Cambiarlas: `PA_PRECIOS_RAPIDAS=ghd,chivas regal|grocery,dyson`
 («no» = ninguna). Casos reales que tienen que salir: la plancha ghd Gold a 29,90 € (normal
 ~250 €) y el Chivas Regal Mizunara a 12,50 € (normal ~69 €), los dos vendidos por Amazon.es.
 
 Los listados y las fichas se abren en el Chrome de Asistenta (con su sesión, Amazon pone menos
 captchas). Si ese Chrome falla, lee sin navegador y no lo vuelve a intentar en 6 h; `/precios`
 lo dice.
+
+## El aviso
+
+Por Telegram, con «🚨 ERROR DE PRECIO», el producto, el precio frente a la referencia, el −X % y
+por qué, y dos botones: «🛒 Comprar ya» (mete ese producto en la cesta de un toque:
+`https://www.amazon.es/gp/aws/cart/add.html?ASIN.1=<ASIN>&Quantity.1=1`; si Amazon no tiene la
+sesión iniciada en ese navegador, pide entrar y luego lo añade) y «🔗 Ver en Amazon» (la ficha).
+Los dos enlaces van también en el texto.
 
 ## Cuándo avisa
 

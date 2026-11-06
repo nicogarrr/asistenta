@@ -25,7 +25,9 @@ import {
   verificar,
 } from '../src/precios/regla.js';
 import {
+  CATEGORIAS_POR_DEFECTO,
   categoriasDesde,
+  RAPIDAS_POR_DEFECTO,
   rapidasDesde,
   textoEstado,
   VigilantePrecios,
@@ -223,6 +225,7 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
     leerListado: (u: string) => Promise<{ status: number; html: string }>,
     avisos: string[],
     pedidas: string[],
+    botones: unknown[] = [],
   ) =>
     new VigilantePrecios({
       archivo: join(mkdtempSync(join(tmpdir(), 'precios-')), 'precios-amazon.json'),
@@ -235,11 +238,33 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
         pedidas.push(u);
         return { status: 200, html: fichaCon('9', '99', '89,99\u00a0€') };
       },
-      avisar: async (t) => void avisos.push(t),
+      avisar: async (t, b) => {
+        avisos.push(t);
+        botones.push(b);
+      },
       esperar: async () => undefined,
       paginas: 2,
       now: () => 1_800_000_000_000,
     });
+
+  it('el aviso dice «ERROR DE PRECIO» y lleva botones de compra directa y de la ficha', async () => {
+    const avisos: string[] = [];
+    const botones: unknown[] = [];
+    const v = mk(async () => ({ status: 200, html: listado }), avisos, [], botones);
+    await v.barrer();
+    expect(avisos[0]?.split('\n')[0]).toBe('🚨 ERROR DE PRECIO');
+    expect(avisos[0]).toContain(
+      'https://www.amazon.es/gp/aws/cart/add.html?ASIN.1=B0TEST0001&Quantity.1=1',
+    );
+    expect(avisos[0]).toMatch(/Por qué: .*precio más bajo reciente/);
+    expect(botones[0]).toEqual([
+      {
+        label: '🛒 Comprar ya',
+        action: 'url:https://www.amazon.es/gp/aws/cart/add.html?ASIN.1=B0TEST0001&Quantity.1=1',
+      },
+      { label: '🔗 Ver en Amazon', action: 'url:https://www.amazon.es/dp/B0TEST0001' },
+    ]);
+  });
 
   it('avisa una vez con producto, precio, referencia, motivo y enlace; no repite', async () => {
     const avisos: string[] = [];
@@ -288,7 +313,7 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
       'https://www.amazon.es/s?k=robot+aspirador',
     ]);
     expect(r.desconocidas).toEqual(['foo']);
-    expect(categoriasDesde('').categorias.length).toBe(11);
+    expect(categoriasDesde('').categorias.length).toBe(12);
   });
 });
 
@@ -574,8 +599,54 @@ describe('casos reales de Quique: ghd Gold y Chivas Regal Mizunara', () => {
       expect(urls).toContain(q);
     }
     expect(rapidasDesde('no')).toEqual([]);
-    expect(configPrecios({})).toMatchObject({ rapidoMin: 12, paginasRapido: 2 });
+    expect(configPrecios({})).toMatchObject({ rapidoMin: 12, paginasRapido: 4 });
     expect(configPrecios({ PA_PRECIOS_RAPIDO_MIN: '0' }).rapidoMin).toBe(0);
     expect(categoriasDesde('licores').categorias[0]?.nombre).toBe('Bebidas y licores');
+  });
+});
+
+describe('precios: qué barre (Nico, 6-nov-2026: relojes e informática sí, LEGO no)', () => {
+  const textos = RAPIDAS_POR_DEFECTO.map((r) => r.split('|')[0]?.toLowerCase());
+  it('el barrido rápido ya no busca LEGO', () => {
+    expect(textos.some((t) => t?.includes('lego'))).toBe(false);
+  });
+  it('busca relojes inteligentes de las marcas grandes', () => {
+    for (const m of [
+      'apple watch',
+      'galaxy watch',
+      'garmin',
+      'amazfit',
+      'huawei watch',
+      'pixel watch',
+    ])
+      expect(textos.some((t) => t?.includes(m))).toBe(true);
+  });
+  it('busca sobre todo informática, y sigue con belleza y licores', () => {
+    for (const m of [
+      'portátil gaming',
+      'macbook',
+      'monitor',
+      'ssd',
+      'rtx',
+      'ryzen',
+      'intel',
+      'ipad',
+      'tablet',
+      'sony',
+      'bose',
+      'airpods',
+      'iphone',
+      'galaxy s',
+      'router mesh',
+      'ghd',
+      'whisky',
+    ])
+      expect(textos.some((t) => t?.includes(m))).toBe(true);
+  });
+  it('el barrido de 30 min incluye «relojes inteligentes» (por búsqueda) e «informática»', () => {
+    expect(CATEGORIAS_POR_DEFECTO).toEqual(expect.arrayContaining(['relojes', 'informatica']));
+    const [r] = categoriasDesde('relojes').categorias;
+    expect(r?.nombre).toBe('Relojes inteligentes');
+    expect(r?.urls).toContain('https://www.amazon.es/s?k=reloj+inteligente&i=electronics');
   });
 });
