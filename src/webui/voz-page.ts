@@ -1,4 +1,5 @@
 import { renderMiniAppReadyScript } from './miniapp.js';
+import { VOZ_WAV_JS } from './voz-wav.js';
 /**
  * /voz: hablar con Asistenta desde el móvil (Mini App de Telegram con /voz, o el
  * navegador del móvil por Tailscale). Pulsas, hablas, la nota va al PC, el whisper local
@@ -153,6 +154,8 @@ ${renderMiniAppReadyScript()}
     }).catch(function () { decir('Sin permiso para el micrófono. Actívalo para Telegram o el navegador en los ajustes del móvil.'); });
   }
 
+  ${VOZ_WAV_JS}
+
   function parar() {
     if (vigia) { clearInterval(vigia); try { vigia.ctx.close(); } catch (e) {} vigia = null; }
     if (grabador && grabador.state !== 'inactive') grabador.stop();
@@ -165,7 +168,26 @@ ${renderMiniAppReadyScript()}
     var audio = new Blob(trozos, { type: tipo });
     if (!audio.size) { decir('No ha llegado audio.'); return; }
     boton.disabled = true; decir('Pensando…');
-    fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': tipo.split(';')[0], Authorization: 'Bearer ' + token }, body: audio })
+    // El móvil decodifica su propio mp4/webm y manda WAV: el PC no necesita ffmpeg.
+    aWav(audio).then(function (wav) { mandar(wav, 'audio/wav'); }, function () { mandar(audio, tipo.split(';')[0]); });
+  }
+
+  function aWav(blob) {
+    var C = window.AudioContext || window.webkitAudioContext;
+    if (!C || !blob.arrayBuffer) return Promise.reject(new Error('sin WebAudio'));
+    return blob.arrayBuffer().then(function (buf) {
+      var ctx = new C();
+      return new Promise(function (ok, ko) { ctx.decodeAudioData(buf, ok, ko); }).then(function (ab) {
+        try { ctx.close(); } catch (e) {}
+        var canales = [];
+        for (var i = 0; i < ab.numberOfChannels; i++) canales.push(ab.getChannelData(i));
+        return new Blob([wavMono16k(canales, ab.sampleRate)], { type: 'audio/wav' });
+      });
+    });
+  }
+
+  function mandar(audio, mime) {
+    fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': mime, Authorization: 'Bearer ' + token }, body: audio })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
       .then(function (x) {
         boton.disabled = false;

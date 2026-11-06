@@ -518,6 +518,38 @@ export function createLocalWhisperStt(opts: { model?: string } = {}): Stt {
   };
 }
 
+/**
+ * El motivo real de un fallo de transcripción, en una frase corta en castellano. Antes
+ * todo lo que no era silencio, formato o descarga salía como «no pude transcribir», y
+ * desde el móvil (/voz) no había forma de saber si era ffmpeg, whisper o la memoria.
+ * Lo desconocido va recortado y sin rutas ni enlaces: el detalle entero está en el log.
+ */
+export function motivoStt(detail: string): string {
+  if (/no pude ejecutar ffmpeg/i.test(detail)) {
+    return 'el PC no deja arrancar ffmpeg; ¿lo bloquea el antivirus?';
+  }
+  if (/ffmpeg tardo/i.test(detail)) return 'ffmpeg tardó demasiado en leer el audio';
+  if (/did not finish transcribing/i.test(detail)) {
+    return 'whisper tardó demasiado; el PC iba muy cargado';
+  }
+  if (/api version|VERS_\d|onnxruntime|\bORT\b/i.test(detail)) {
+    return 'whisper y la voz del PC chocan al cargar onnxruntime; reinicia Asistenta';
+  }
+  if (/bad.?alloc|out of memory|failed to allocate|ENOMEM/i.test(detail)) {
+    return 'el PC se quedó sin memoria para whisper';
+  }
+  if (/decodificado supera/i.test(detail)) return 'la nota es demasiado larga';
+  const corto = detail
+    .replace(/https?:\/\/\S+/g, '…')
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"]*/g, '…')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s:…]+$/, '')
+    .trim()
+    .replace(/\s+(?:at|in|en)$/i, '')
+    .slice(0, 60);
+  return corto ? `fallo de whisper: ${corto}` : 'fallo de whisper';
+}
+
 /** Error with a message worth showing to the user rather than a stack trace. */
 /** Fallo de red al bajar el modelo (Node fetch o la descarga del hub de modelos). */
 const OFFLINE_DOWNLOAD =
@@ -760,7 +792,9 @@ async function transcribeVoiceNoteNow(
         'la primera nota de voz necesita internet para descargar el modelo de voz (solo una vez). Conéctate y vuelve a mandarla',
       );
     }
-    // El detalle técnico ya está en el registro; al chat solo va la frase.
-    throw new SttError('no pude transcribir la nota de voz. Prueba otra vez en un momento');
+    // El detalle completo ya está en el registro; al chat va el motivo en una frase corta.
+    throw new SttError(
+      `no pude transcribir la nota de voz (${motivoStt(detail)}). Prueba otra vez en un momento`,
+    );
   }
 }
