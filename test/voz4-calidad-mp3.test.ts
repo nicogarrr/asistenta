@@ -39,8 +39,14 @@ describe('voz4: el mp3 de la voz conserva la calidad del motor', () => {
     expect(c.hz).toBe(22_050);
   });
 
-  it('una frecuencia rara (44,1 kHz) baja a 24 kHz', () => {
+  it('Supertonic (44,1 kHz) se queda a 44,1 kHz, sin bajar a 24 kHz', () => {
     const c = cabeceraMp3(encodeSpeech(pcmToWavPcm16(tono(44_100, 0.5), 44_100), 'x', 'x').data);
+    expect(c.hz).toBe(44_100);
+    expect(c.kbps).toBe(64);
+  });
+
+  it('una frecuencia rara (48 kHz) baja a 24 kHz', () => {
+    const c = cabeceraMp3(encodeSpeech(pcmToWavPcm16(tono(48_000, 0.5), 48_000), 'x', 'x').data);
     expect(c.hz).toBe(24_000);
   });
 });

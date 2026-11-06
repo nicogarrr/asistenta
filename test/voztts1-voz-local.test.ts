@@ -280,10 +280,10 @@ describe('createTtsConVozLocal: nunca espera a la descarga', () => {
 });
 
 describe('vozLocalDesdeEnv', () => {
-  it('kokoro por defecto en Windows; davefx si se pide; desconocida = la de por defecto', () => {
-    expect(vozLocalDesdeEnv({}, 'win32')?.clave).toBe('kokoro');
+  it('supertonic-f2 por defecto en Windows; davefx si se pide; desconocida = la de por defecto', () => {
+    expect(vozLocalDesdeEnv({}, 'win32')?.clave).toBe('supertonic-f2');
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'DaveFX' }, 'win32')?.clave).toBe('davefx');
-    expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'rara' }, 'win32')?.clave).toBe('kokoro');
+    expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'rara' }, 'win32')?.clave).toBe('supertonic-f2');
     expect(vozLocalDesdeEnv({}, 'linux')).toBeNull();
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'sharvard' }, 'linux')?.clave).toBe('sharvard');
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'off' }, 'win32')).toBeNull();
@@ -297,6 +297,9 @@ describe('vozLocalDesdeEnv', () => {
       'kokoro-alex',
       'kokoro-santa',
       'sharvard',
+      'supertonic',
+      'supertonic-f2',
+      'supertonic-f5',
     ]);
     for (const v of Object.values(VOCES_LOCALES)) {
       expect(v.url).toMatch(

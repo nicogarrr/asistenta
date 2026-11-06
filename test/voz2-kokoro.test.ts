@@ -33,8 +33,8 @@ function colocar(raiz: string, voz: VozLocal): void {
 }
 
 describe('voz natural: Kokoro por defecto', () => {
-  it('en Windows la voz por defecto es Kokoro (castellano); sharvard sigue a mano', () => {
-    const k = vozLocalDesdeEnv({}, 'win32');
+  it('Kokoro (castellano) sigue a mano con PA_TTS_LOCAL=kokoro; sharvard también', () => {
+    const k = vozLocalDesdeEnv({ PA_TTS_LOCAL: 'kokoro' }, 'win32');
     expect(k?.clave).toBe('kokoro');
     expect(k?.motor).toBe('kokoro');
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'kokoro-alex' }, 'win32')?.sid).toBe(29);
@@ -99,7 +99,7 @@ describe('voz natural: Kokoro por defecto', () => {
       },
     };
     const tts = createTtsConVozLocal(
-      {},
+      { PA_TTS_LOCAL: 'kokoro' },
       {
         respaldo,
         raiz,

@@ -11,7 +11,8 @@
  * quedó, se comprueba el SHA-256 antes de usar nada y se coloca con un rename, así que
  * un corte nunca deja un modelo a medias. Sin red, se reintenta pasados 10 minutos.
  *
- * `PA_TTS_LOCAL`: sharvard (por defecto) | davefx (la voz de Piper) | off (ni se
+ * `PA_TTS_LOCAL`: supertonic-f2 (por defecto; Supertonic 3, voz F2) | supertonic (F3) |
+ * supertonic-f5 | kokoro | kokoro-alex | kokoro-santa | sharvard | davefx | off (ni se
  * descarga ni se usa). Las dos son voces castellanas (es_ES). `PA_TTS=piper` o `PA_TTS=sapi` también la
  * apagan. En Windows va encendida por defecto; en otros sistemas solo si se pone
  * `PA_TTS_LOCAL`.
@@ -51,8 +52,8 @@ export interface VozLocal {
   onnx: string;
   /** Hablante dentro del modelo (sharvard trae dos: 0 = hombre, 1 = mujer). */
   sid: number;
-  /** Kokoro (más natural, multivoz) en vez de VITS/Piper. */
-  motor?: 'kokoro';
+  /** Kokoro (multivoz) o Supertonic 3 (la más natural) en vez de VITS/Piper. */
+  motor?: 'kokoro' | 'supertonic';
 }
 
 const RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
@@ -72,12 +73,31 @@ const KOKORO = {
   motor: 'kokoro',
 } as const;
 
+/**
+ * Supertonic 3 (Supertone, OpenRAIL-M), int8 de la release de sherpa-onnx: 31 idiomas,
+ * castellano incluido, a 44,1 kHz. En voz5 (4 hilos, CPU) cada oración salió en 0,6-0,9 s
+ * con ~300 MB de RAM, tan rápida como Kokoro y más natural. Pesa 129 MB. Sus 10 voces van
+ * por orden F1-F5 y M1-M5 (sid 0-9).
+ */
+const SUPERTONIC = {
+  id: 'sherpa-onnx-supertonic-3-tts-int8-2026-05-11',
+  url: `${RELEASE}/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2`,
+  sha256: '82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427',
+  bytes: 128_774_318,
+  onnx: 'vector_estimator.int8.onnx',
+  motor: 'supertonic',
+} as const;
+
 /** Modelos fijados (release oficial «tts-models» de k2-fsa/sherpa-onnx). */
 export const VOCES_LOCALES: Readonly<Record<string, VozLocal>> = {
   // ef_dora (mujer), em_alex (hombre), em_santa (hombre).
   kokoro: { clave: 'kokoro', ...KOKORO, sid: 28 },
   'kokoro-alex': { clave: 'kokoro-alex', ...KOKORO, sid: 29 },
   'kokoro-santa': { clave: 'kokoro-santa', ...KOKORO, sid: 53 },
+  // voice.bin va F1..F5 y luego M1..M5: F2 = sid 1 (la que eligió Nico), F3 = 2, F5 = 4.
+  'supertonic-f2': { clave: 'supertonic-f2', ...SUPERTONIC, sid: 1 },
+  supertonic: { clave: 'supertonic', ...SUPERTONIC, sid: 2 },
+  'supertonic-f5': { clave: 'supertonic-f5', ...SUPERTONIC, sid: 4 },
   sharvard: {
     clave: 'sharvard',
     id: 'vits-piper-es_ES-sharvard-medium',
@@ -98,10 +118,21 @@ export const VOCES_LOCALES: Readonly<Record<string, VozLocal>> = {
   },
 };
 
-export const VOZ_LOCAL_POR_DEFECTO = 'kokoro';
+/** Supertonic 3 F2 (Nico, 6 nov): mientras se descarga, o si falla, habla Kokoro. */
+export const VOZ_LOCAL_POR_DEFECTO = 'supertonic-f2';
 
 /** Mientras Kokoro se descarga, si ya está la voz anterior (sharvard), habla esa. */
 export const VOZ_LOCAL_PUENTE = 'sharvard';
+
+/**
+ * La voz que habla mientras la elegida se descarga o si falla: Supertonic tira de Kokoro
+ * (la que ya tiene el PC desde #2195); las demás, de sharvard. null si es ella misma.
+ */
+export function vozPuente(voz: VozLocal): VozLocal | null {
+  const clave = voz.motor === 'supertonic' ? 'kokoro' : VOZ_LOCAL_PUENTE;
+  if (voz.clave === clave) return null;
+  return VOCES_LOCALES[clave] ?? null;
+}
 
 /** Tras un fallo de descarga (sin red, servidor caído) no se vuelve a probar antes. */
 export const REINTENTO_DESCARGA_MS = 10 * 60_000;
@@ -140,6 +171,19 @@ export function vozLocalLista(raiz: string, voz: VozLocal): VozLocalLista | null
     if (readFileSync(join(dir, '.ok'), 'utf8').trim() !== voz.sha256) return null;
   } catch {
     return null;
+  }
+  if (voz.motor === 'supertonic') {
+    const supertonic = {
+      durationPredictor: join(dir, 'duration_predictor.int8.onnx'),
+      textEncoder: join(dir, 'text_encoder.int8.onnx'),
+      vectorEstimator: join(dir, 'vector_estimator.int8.onnx'),
+      vocoder: join(dir, 'vocoder.int8.onnx'),
+      ttsJson: join(dir, 'tts.json'),
+      unicodeIndexer: join(dir, 'unicode_indexer.bin'),
+      voiceStyle: join(dir, 'voice.bin'),
+    };
+    if (!Object.values(supertonic).every((f) => existsSync(f))) return null;
+    return { dir, onnx: supertonic.vectorEstimator, tokens: '', datos: '', supertonic };
   }
   const lista: VozLocalLista = {
     dir,
@@ -355,7 +399,7 @@ export function createTtsConVozLocal(
   const ahora = deps.ahora ?? Date.now;
   const crearLocal =
     deps.crearLocal ?? ((modelo: VozLocalLista, sid: number) => createSherpaTts({ modelo, sid }));
-  const puente = voz.clave === VOZ_LOCAL_PUENTE ? null : (VOCES_LOCALES[VOZ_LOCAL_PUENTE] ?? null);
+  const puente = vozPuente(voz);
   let reintentarDesde = 0;
   let local: Tts | null = null;
   let localPuente: Tts | null = null;
@@ -379,6 +423,20 @@ export function createTtsConVozLocal(
     }
   };
 
+  /** La voz puente si ya está en el PC; null si no está o también falla. */
+  const hablarPuente = async (text: string, opts: TtsSpeakOptions): Promise<TtsAudio | null> => {
+    const listaPuente = puente ? vozLocalLista(raiz, puente) : null;
+    if (!listaPuente || !puente) return null;
+    localPuente ??= crearLocal(listaPuente, puente.sid);
+    try {
+      return await localPuente.speak(text, opts);
+    } catch (err) {
+      if (opts.signal?.aborted) throw err;
+      deps.onFallback?.(err);
+      return null;
+    }
+  };
+
   return {
     name: `local+${respaldo.name}`,
     precargar,
@@ -386,18 +444,8 @@ export function createTtsConVozLocal(
       const lista = vozLocalLista(raiz, voz);
       if (!lista) {
         void precargar();
-        // Al cambiar a Kokoro, mientras baja, la voz local anterior si ya estaba.
-        const listaPuente = puente ? vozLocalLista(raiz, puente) : null;
-        if (listaPuente && puente) {
-          localPuente ??= crearLocal(listaPuente, puente.sid);
-          try {
-            return await localPuente.speak(text, opts);
-          } catch (err) {
-            if (opts.signal?.aborted) throw err;
-            deps.onFallback?.(err);
-          }
-        }
-        return respaldo.speak(text, opts);
+        // Al cambiar de voz, mientras baja, la voz local anterior si ya estaba.
+        return (await hablarPuente(text, opts)) ?? respaldo.speak(text, opts);
       }
       if (fallos < FALLOS_PARA_DEJARLA) {
         local ??= crearLocal(lista, voz.sid);
@@ -410,6 +458,11 @@ export function createTtsConVozLocal(
           fallos++;
           deps.onFallback?.(err);
         }
+      }
+      // Supertonic que falla habla con Kokoro antes que con la voz del sistema.
+      if (voz.motor === 'supertonic') {
+        const audio = await hablarPuente(text, opts);
+        if (audio) return audio;
       }
       return respaldo.speak(text, opts);
     },
