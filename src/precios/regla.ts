@@ -62,7 +62,8 @@ export function mejorReferencia(
   const h = referenciaHistorial(lecturas);
   if (h) refs.push(h);
   if (tachado.cents && tachado.tipo) {
-    const fiable = tachado.tipo === 'mas-bajo-reciente' || vendeAmazon !== false;
+    const fiable =
+      tachado.tipo === 'mas-bajo-reciente' || tachado.tipo === 'mediana' || vendeAmazon !== false;
     if (fiable) refs.push({ cents: tachado.cents, fuente: tachado.tipo });
   }
   if (!refs.length) return null;
