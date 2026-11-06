@@ -226,6 +226,17 @@ const TOTAL_LABEL =
 const NOT_THE_PURCHASE_TOTAL =
   /(?<![\p{L}\p{N}])(descuentos?|ahorros?|ahorras|ahorrado|ahorro|rebaja|cupon|iva|impuestos?|envio|gastos de envio|discounts?|savings|saved|tax|taxes|vat|shipping)\s*$/u;
 
+/** Lo que sigue a «total» cuando es el subtotal de los productos (texto ya plegado). */
+const SUBTOTAL_AFTER_LABEL = /^(?:de\s+(?:los\s+)?)?(?:productos|articulos)\b/u;
+
+/**
+ * «(IVA incluido)», «(IVA incl.)», «(impuestos incluidos)», «IVA incluido»: dice que el
+ * total lleva el impuesto, no que sea el impuesto. «Total IVA: 8,00 €» (sin «incluido»)
+ * sigue siendo el importe del IVA y deniega.
+ */
+const TAX_INCLUDED_QUALIFIER =
+  /(?:\(\s*(?:iva|impuestos?)\s+(?:incluidos?|incl\.?|inc\.?)\s*\)|(?:iva|impuestos?)\s+incluidos?\b)\s*[:=-]?\s*/;
+
 function matchPriceAt(text: string, at: number): PriceText | null {
   const re = new RegExp(PRICE_RE.source, 'yi');
   re.lastIndex = at;
@@ -244,13 +255,22 @@ function matchPriceAt(text: string, at: number): PriceText | null {
 export function findTotalPrice(text: string): PriceText | null {
   let found: PriceText | null = null;
   for (const m of text.matchAll(new RegExp(TOTAL_LABEL.source, 'giu'))) {
+    const after = m.index + m[0].length;
+    // «Total productos», «Total de los artículos»: el subtotal de la cesta, no lo que se
+    // paga. Se salta (no deniega): el total de verdad viene después. Si solo hay esto,
+    // no queda total y se deniega como siempre.
+    if (SUBTOTAL_AFTER_LABEL.test(fold(text.slice(after, after + 40)))) continue;
     // "Descuento total: 5,00 €", "Ahorro total", "IVA total", "Envío total": a total of
     // something that is not the purchase. If that is the only label on the page, the
     // discount was quoted as the amount and passed the cap. Any such label denies.
     if (NOT_THE_PURCHASE_TOTAL.test(fold(text.slice(Math.max(0, m.index - 30), m.index)))) {
       return null;
     }
-    const price = matchPriceAt(text, m.index + m[0].length);
+    // «Total (IVA incluido): 50,20 €»: el calificativo va entre la etiqueta y el importe.
+    const qualifier = new RegExp(TAX_INCLUDED_QUALIFIER.source, 'iuy');
+    qualifier.lastIndex = after;
+    const q = qualifier.exec(text);
+    const price = matchPriceAt(text, q ? after + q[0].length : after);
     if (!price) return null;
     if (found && (found.raw !== price.raw || found.symbol !== price.symbol)) return null;
     found = price;
