@@ -1,7 +1,7 @@
 # Vigilante de errores de precio — Amazon.es
 
 Asistenta barre Amazon.es cada 30 minutos y te avisa por Telegram cuando un producto cuesta
-**un 70 % o más por debajo de una referencia fiable** y la ficha del producto lo confirma.
+**un 60 % o más por debajo de un histórico real** y la ficha del producto lo confirma.
 
 ## Encenderlo
 
@@ -51,6 +51,20 @@ por qué, y dos botones: «🛒 Comprar ya» (mete ese producto en la cesta de u
 sesión iniciada en ese navegador, pide entrar y luego lo añade) y «🔗 Ver en Amazon» (la ficha).
 Los dos enlaces van también en el texto.
 
+## −60 % frente a un histórico REAL
+
+Nico (6-nov-2026, 12:08): «60 % vale siempre que el histórico sea real, que no sea un falso 60 %».
+Avisa con precio ≤ 40 % de una referencia que sea un precio al que se ha vendido de verdad:
+
+- el historial propio de Asistenta (≥ 3 lecturas en más de un día);
+- el «precio más bajo de los últimos 30 días» o el «Mediano» de Amazon (si no lo vende un tercero);
+- el histórico de camelcamelcamel (media de lo que ha costado en Amazon), que se abre solo para un
+  candidato que pasaría con el PVP, nunca durante el barrido.
+
+El «Recomendado»/PVP o un tachado «antes» no valen nunca solos. Caso real: unos Sony WH-CH520 a
+25,49 € con «Recomendado 69,99 €» (−64 %) que en Amazon cuestan de media 30,06 €: no avisa. El
+aviso dice qué referencia usó («histórico real: …»). `PA_PRECIOS_UMBRAL=60` (por defecto).
+
 ## Sin marca, fuera
 
 Nico (6-nov-2026): «Quita productos sin marca». No avisa (ni abre la ficha) de productos con marca
@@ -68,7 +82,7 @@ una tablet sin marca en oferta flash a 82,99 € «antes» 299,99 €, vendida p
   producto (3 lecturas en más de un día); el «Precio más bajo reciente» de Amazon; o el
   «Recomendado» tachado **solo si lo vende Amazon**. Así un producto nuevo sin historial también
   puede avisar.
-- **Precio ≤ 30 % de la referencia** (`PA_PRECIOS_UMBRAL=70`) y referencia de 40 € o más.
+- **Precio ≤ 40 % de la referencia real** (`PA_PRECIOS_UMBRAL=60`) y referencia de 40 € o más.
 - **Verificado en la ficha**: nuevo (no reacondicionado ni de segunda mano), en stock, el mismo
   precio que en el listado (±5 %), y lo vende o lo envía Amazon.
 - **Descarta**: recambios y accesorios («Kit de recambios compatible con Conga…», «Cepillos

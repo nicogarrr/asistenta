@@ -390,6 +390,7 @@ import {
   configPrecios,
   conRespaldo,
   leerFichaNavegador,
+  leerHistorialNavegador,
   leerHttp,
   leerListadoNavegador,
   type NavegadorPrecios,
@@ -6183,6 +6184,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }, leerHttp());
   const preciosListado = conChrome(leerListadoNavegador);
   const preciosFicha = conChrome(leerFichaNavegador);
+  const preciosHistorial = conChrome(leerHistorialNavegador);
   const vigilantePrecios = new VigilantePrecios({
     archivo: join(paths.state, 'precios-amazon.json'),
     categorias: preciosCats.categorias,
@@ -6192,6 +6194,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     paginasRapido: preciosConf.paginasRapido,
     leerListado: (url) => preciosListado(url),
     leerFicha: (url) => preciosFicha(url),
+    leerHistorial: (url) => preciosHistorial(url),
     avisar: async (text, buttons) => {
       const owner = briefingOwner();
       if (!owner) throw new Error('no sé cuál es el chat del dueño');

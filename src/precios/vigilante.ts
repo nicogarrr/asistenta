@@ -18,6 +18,7 @@ import {
   parseListado,
   urlFicha,
 } from './amazon.js';
+import { parseCamel, urlCamel } from './historial.js';
 import {
   CONFIG_REGLA,
   type ConfigRegla,
@@ -239,6 +240,8 @@ export interface DepsVigilante {
   rapidas?: Categoria[];
   /** Páginas por barrido rápido (por defecto 4). */
   paginasRapido?: number;
+  /** Histórico externo (camelcamelcamel) de un candidato que solo tiene PVP. */
+  leerHistorial?(url: string): Promise<Respuesta>;
   /** Fichas que se abren como mucho por barrido para verificar (por defecto 3). */
   fichas?: number;
   /** Pausa entre peticiones [mín, máx] en ms (por defecto 6–12 s). */
@@ -308,11 +311,12 @@ export function eurosTexto(cents: number): string {
 }
 
 const FUENTE: Record<Referencia['fuente'], string> = {
-  historial: 'mediana de lo que he visto antes',
-  'mas-bajo-reciente': '«precio más bajo reciente» de Amazon',
-  mediana: '«precio mediano» de Amazon',
-  recomendado: 'precio recomendado',
-  antes: 'precio anterior',
+  historial: 'histórico real: lo que ha visto Asistenta',
+  'mas-bajo-reciente': 'histórico real: precio más bajo de los últimos 30 días (Amazon)',
+  mediana: 'histórico real: precio mediano (Amazon)',
+  externo: 'histórico real: media en Amazon según camelcamelcamel',
+  recomendado: 'solo PVP («Recomendado»)',
+  antes: 'solo precio tachado «antes»',
 };
 
 /** Enlace que mete ese ASIN en la cesta de un toque (formato «add to cart» de Amazon, vigente el 6-nov-2026). */
@@ -345,7 +349,8 @@ export function textoAviso(a: {
     '🚨 ERROR DE PRECIO',
     a.titulo.slice(0, 160),
     `💶 ${eurosTexto(a.cents)} (referencia ${eurosTexto(a.ref.cents)}, −${pct} %)`,
-    `📏 Por qué: ${FUENTE[a.ref.fuente]} ${eurosTexto(a.ref.cents)}; comprobado en la ficha: nuevo, en stock, mismo precio, lo vende ${a.vendedor}`,
+    `📏 Referencia: ${eurosTexto(a.ref.cents)} (${FUENTE[a.ref.fuente]})`,
+    `✅ Comprobado en la ficha: nuevo, en stock, mismo precio, lo vende ${a.vendedor}`,
     '⏱️ Estos errores duran minutos.',
     `🛒 Comprar: ${urlCesta(a.asin)}`,
     `🔗 Ficha: ${urlFicha(a.asin)}`,
@@ -511,7 +516,24 @@ export class VigilantePrecios {
         bloqueado = true;
         break;
       }
-      const v = verificar(it, parseFicha(res.html), lecturas, cfg);
+      const ficha = parseFicha(res.html);
+      let v = verificar(it, ficha, lecturas, cfg);
+      // Solo con PVP: se confirma con el histórico externo de ESTE candidato (nunca en el barrido).
+      if (!v.ok && v.soloPvp && this.#d.leerHistorial) {
+        await this.#pausa();
+        try {
+          const h = await this.#d.leerHistorial(urlCamel(it.asin));
+          const ext = h.status === 200 ? parseCamel(h.html) : null;
+          v = ext
+            ? verificar(it, ficha, lecturas, cfg, ext)
+            : { ok: false, motivo: 'solo hay PVP y no pude leer el histórico externo' };
+        } catch (err) {
+          v = {
+            ok: false,
+            motivo: `solo hay PVP y el histórico externo falló: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
+      }
       if (!v.ok) {
         this.#pendiente(e, it, lecturas, v.motivo);
         continue;

@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { Ficha } from '../src/precios/amazon.js';
 import { type ItemListado, parseFicha, parseListado, parseOfertas } from '../src/precios/amazon.js';
+import { parseCamel, urlCamel } from '../src/precios/historial.js';
+import { codigoHistorial, codigoListado } from '../src/precios/red.js';
 import {
   candidato,
   descarteListado,
@@ -9,7 +12,7 @@ import {
   sinMarca,
   verificar,
 } from '../src/precios/regla.js';
-import { RAPIDAS_POR_DEFECTO } from '../src/precios/vigilante.js';
+import { RAPIDAS_POR_DEFECTO, textoAviso } from '../src/precios/vigilante.js';
 
 // Fallos vistos al cazar en amazon.es real desde un navegador en Madrid (6-nov-2026).
 const fx = (n: string) => readFileSync(join('test', 'fixtures', 'amazon', n), 'utf8');
@@ -122,5 +125,90 @@ describe('sin marca fuera y tachado de vendedor externo (Nico, 6-nov-2026: «Qui
     expect(sinMarca('Mini PC 16GB RAM 512GB SSD Windows 11', '')).toMatch(/sin marca/);
     expect(sinMarca('Memoria RAM G.Skill Trident Z5 DDR5 32GB', 'G.SKILL')).toBeNull();
     expect(sinMarca('Memoria RAM DDR5 32GB 6000MHz para PC', '')).toMatch(/sin marca/);
+  });
+});
+
+describe('−60 % solo frente a un histórico REAL (Nico, 6-nov 12:08: «que no sea un falso 60 %»)', () => {
+  // Sony WH-CH520 en amazon.es (6-nov-2026, vendido por Amazon): 25,49 € con «Recomendado 69,99 €».
+  const sony: ItemListado = {
+    asin: 'B0BTJD6LCL',
+    titulo: 'Sony WH-CH520, Auriculares de diadema inalámbricos Bluetooth, 50 h de batería',
+    cents: 2549,
+    refCents: 6999,
+    refTipo: 'recomendado',
+    patrocinado: false,
+    desde: false,
+    porUnidad: false,
+  };
+  const fichaSony: Ficha = {
+    titulo: sony.titulo,
+    marca: 'Sony',
+    cents: 2549,
+    precioOculto: false,
+    refCents: 6999,
+    refTipo: 'recomendado',
+    enStock: true,
+    vendedor: 'Amazon',
+    envio: 'Amazon',
+    estado: 'nuevo',
+  };
+  const camel = parseCamel(fx('camel-sony-wh-ch520.html'));
+  it('lee la tabla real de camelcamelcamel (fila Amazon: mínimo, máximo, actual, media)', () => {
+    expect(camel).toEqual({
+      fuente: 'camelcamelcamel',
+      campo: 'amazon',
+      minimo: 2478,
+      maximo: 7000,
+      actual: 2690,
+      media: 3006,
+    });
+    expect(urlCamel('B0BTJD6LCL')).toBe('https://es.camelcamelcamel.com/product/B0BTJD6LCL');
+  });
+  it('el «Recomendado» solo no basta: candidato sí, pero pide histórico real', () => {
+    expect(candidato(sony, [])).not.toBeNull();
+    expect(verificar(sony, fichaSony, [])).toMatchObject({ ok: false, soloPvp: true });
+  });
+  it('con su histórico real (media 30,06 €) el Sony a 25,49 € NO es un error', () => {
+    expect(verificar(sony, fichaSony, [], undefined, camel)).toMatchObject({ ok: false });
+  });
+  it('un −60 % real frente al histórico externo sí avisa y dice qué referencia es', () => {
+    const ghd = {
+      ...sony,
+      asin: 'B0GHD00001',
+      titulo: 'ghd Gold plancha de pelo',
+      cents: 2990,
+      refCents: 24900,
+    };
+    const f = { ...fichaSony, titulo: ghd.titulo, marca: 'ghd', cents: 2990, refCents: 24900 };
+    const ext = { ...(camel ?? ({} as never)), minimo: 17_900, media: 22_950 };
+    const v = verificar(ghd, f, [], undefined, ext);
+    expect(v).toMatchObject({ ok: true, ref: { cents: 22_950, fuente: 'externo' } });
+    if (!v.ok) return;
+    const txt = textoAviso({
+      asin: ghd.asin,
+      titulo: ghd.titulo,
+      cents: v.cents,
+      ref: v.ref,
+      vendedor: v.vendedor,
+    });
+    expect(txt).toContain('histórico real: media en Amazon según camelcamelcamel');
+  });
+  it('«precio más bajo de los últimos 30 días» de Amazon sí es histórico real', () => {
+    expect(mejorReferencia([], { cents: 9000, tipo: 'mas-bajo-reciente' }, true)).toEqual({
+      cents: 9000,
+      fuente: 'mas-bajo-reciente',
+    });
+    expect(mejorReferencia([], { cents: 9000, tipo: 'recomendado' }, true)).toBeNull();
+  });
+});
+
+describe('en el Chrome de Asistenta', () => {
+  it('la página de Ofertas devuelve su JSON incrustado (antes el navegador la daba vacía)', () => {
+    expect(codigoListado('https://www.amazon.es/deals')).toContain('productSearchResponse');
+  });
+  it('el histórico externo solo lee la tabla de precios de camelcamelcamel', () => {
+    const c = codigoHistorial(urlCamel('B0BTJD6LCL'));
+    expect(c).toContain('https://es.camelcamelcamel.com/product/B0BTJD6LCL');
+    expect(c).toContain('data-field');
   });
 });

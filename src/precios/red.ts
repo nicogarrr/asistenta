@@ -91,6 +91,9 @@ export function codigoListado(url: string): string {
     "    return c.outerHTML.replace(/\\s+/g, ' ').slice(0, 3000);",
     '  };',
     '  const items = [...document.querySelectorAll(\'div[role="listitem"][data-asin], #gridItemRoot, [id="gridItemRoot"]\')];',
+    // «Ofertas» (/deals): los productos van en un JSON dentro de la página, no en el HTML.
+    '  const raw = items.length ? -1 : document.documentElement.innerHTML.indexOf(\'"productSearchResponse":\');',
+    "  if (raw >= 0) return '<html><body><script>' + document.documentElement.innerHTML.slice(raw, raw + 200000) + '</script></body></html>';",
     "  return '<html><body>' + items.slice(0, 60).map(limpia).join('') + '</body></html>';",
     '});',
     'state.preciosPagina = html;',
@@ -122,6 +125,33 @@ export function leerListadoNavegador(nav: NavegadorPrecios, scope: string) {
     if (!Number.isFinite(n) || n <= 0)
       throw new Error(`el navegador no pudo abrir el listado: ${r.text.slice(0, 160)}`);
     return { status: 200, html: await trozos(nav, scope, 'preciosPagina', n) };
+  };
+}
+
+/** Código que corre en la pestaña: abre el histórico de camelcamelcamel y deja su tabla de precios. */
+export function codigoHistorial(url: string): string {
+  return [
+    `await page.goto(${JSON.stringify(url)}, { waitUntil: 'domcontentloaded', timeout: 30000 });`,
+    'await page.waitForTimeout(3000);',
+    'const html = await page.evaluate(() => {',
+    '  const fila = document.querySelector(\'tr[data-field="amazon"], tr[data-field="new"]\');',
+    "  const t = fila ? fila.closest('table') : null;",
+    "  return t ? t.outerHTML.replace(/\\s+/g, ' ').slice(0, 20000) : '<html></html>';",
+    '});',
+    'state.preciosHistorial = html;',
+    'return String(html.length);',
+  ].join('\n');
+}
+
+/** Histórico externo de un candidato (camelcamelcamel) en el navegador real. */
+export function leerHistorialNavegador(nav: NavegadorPrecios, scope: string) {
+  return async (url: string): Promise<Respuesta> => {
+    if (!/^https:\/\/es\.camelcamelcamel\.com\/product\/[A-Z0-9]{10}$/.test(url))
+      throw new Error('histórico no válido');
+    const r = await nav.execJs(scope, codigoHistorial(url));
+    const n = Number(r.text);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`el navegador no pudo abrir el histórico`);
+    return { status: 200, html: await trozos(nav, scope, 'preciosHistorial', n) };
   };
 }
 
@@ -195,7 +225,7 @@ export interface ConfigPrecios {
 }
 
 /**
- * .env: PA_PRECIOS=0 lo apaga (encendido por defecto); PA_PRECIOS_UMBRAL=70 (descuento mínimo,
+ * .env: PA_PRECIOS=0 lo apaga (encendido por defecto); PA_PRECIOS_UMBRAL=60 (descuento mínimo frente a un histórico real,
  * %); PA_PRECIOS_CADA_MIN=30; PA_PRECIOS_PAGINAS=6 (listados por barrido);
  * PA_PRECIOS_CATEGORIAS=cocina,informatica,… (vacío = todas); PA_PRECIOS_RAPIDO_MIN=12 (búsquedas
  * caras: ghd, Dyson, whisky…; 0 = no), PA_PRECIOS_RAPIDO_PAGINAS=4, PA_PRECIOS_RAPIDAS=ghd,chivas…
@@ -208,7 +238,7 @@ export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPreci
     const n = Number.parseFloat((v ?? '').replace(',', '.'));
     return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
   };
-  const descuento = num(env.PA_PRECIOS_UMBRAL, 70, 30, 95);
+  const descuento = num(env.PA_PRECIOS_UMBRAL, 60, 30, 95);
   return {
     activo: !off,
     motivoApagado: off ? 'PA_PRECIOS=0 en el .env' : undefined,
