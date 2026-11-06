@@ -316,6 +316,18 @@ import { ENTRY_SEPARATOR, MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
 import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
+import { browserTransport, buscarProductos } from './mercadona/api.js';
+import {
+  avisoSemanal,
+  createMercadonaTool,
+  fijarDia,
+  MERCA_PREFIX,
+  type MercadonaDeps,
+  mercadonaIntent,
+  mercadonaPress,
+  pagoEnWeb,
+  textoAjustes,
+} from './mercadona/pedido.js';
 import { aplicarModeloPanel, MODELOS_PANEL } from './modelos-panel.js';
 import {
   createTemasTool,
@@ -2888,6 +2900,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createLlegadaTool(llegadaDeps(), () => thread.chatKey.split(':')[1] ?? ''),
       // «añade leche», «ya he comprado el pan»: la lista de la compra de este chat (/compra con botones).
       createCompraTool(new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey)),
+      // «el pedido de Mercadona los lunes»: el día del aviso semanal (pedir y pagar van con botones).
+      createMercadonaTool(join(paths.state, 'mercadona.json')),
       createMailRulesTool({ account: () => loadMailAccount() }),
       createGoalTool({
         goals: goalStore,
@@ -6070,6 +6084,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     timeZone: localTimeZone,
   });
   setInterval(() => void parcelCheckIn.tick().catch(() => null), 10 * 60 * 1000).unref();
+  // Pedido semanal de Mercadona (src/mercadona/pedido.ts): la pestaña de tienda.mercadona.es del
+  // Chrome del dueño (perfil compartido «dueno»), su sesión y su tarjeta guardada en la web.
+  const mercadonaDeps = (chatKey: string): MercadonaDeps => {
+    const owner = chatKey.split(':')[1] ?? '';
+    const scope = `telegram:dm:${owner}#mercadona`;
+    const browser = browserFor(scope);
+    return {
+      archivo: join(paths.state, 'mercadona.json'),
+      chatKey,
+      lista: new CompraStore(join(paths.state, 'lista-compra.json'), chatKey),
+      transporte: () => browserTransport(browser, scope),
+      buscar: (q, wh) => buscarProductos(q, wh),
+      pagar: pagoEnWeb(browser, scope),
+    };
+  };
+  // El día del pedido (viernes salvo que diga otro): «Tienes esto en la lista: … ¿Hago el pedido?».
+  setInterval(
+    () =>
+      void (async () => {
+        const owner = briefingOwner();
+        if (!owner || inQuietHours(Date.now(), ownerQuiet(), localTimeZone())) return;
+        const view = avisoSemanal(mercadonaDeps(`telegram:${owner}`), Date.now(), localTimeZone());
+        if (!view) return;
+        await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: owner,
+          text: view.text,
+          buttons: view.buttons,
+        });
+      })().catch(() => null),
+    10 * 60 * 1000,
+  ).unref();
   // Avisos de GitHub (CI en rojo en main, PR/issue/comentario nuevos): apagado salvo
   // PA_GITHUB_AVISOS=dueño/repo o «avísame de dueño/repo» en el chat (herramienta github_avisos).
   // Sin modelo; sondeo con ETag y espera larga (github-avisos.ts). Sin repos no arranca.
@@ -9616,10 +9663,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     },
     onCompraButton: async (press) =>
-      compraPress(
-        new CompraStore(join(paths.state, 'lista-compra.json'), `${press.channel}:${press.chatId}`),
-        press.data,
-      ),
+      press.data.startsWith(MERCA_PREFIX)
+        ? isOwnerDm(press, vigilanteOwnerId)
+          ? mercadonaPress(mercadonaDeps(`${press.channel}:${press.chatId}`), press.data)
+          : { text: 'El pedido de Mercadona es solo del dueño.', buttons: [] }
+        : compraPress(
+            new CompraStore(
+              join(paths.state, 'lista-compra.json'),
+              `${press.channel}:${press.chatId}`,
+            ),
+            press.data,
+          ),
     onUpdateButton: async (press) => {
       const { createUpdateButton } = await import('./autoupdate-boton.js');
       const { autostartRepo } = await import('./autostart.js');
@@ -9846,6 +9900,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
                 llegada.modo ?? 'llegar',
               );
               await say(inbound, reply, { quote: true });
+              return;
+            }
+          }
+          // «haz el pedido de Mercadona», «el pedido de Mercadona los lunes»: botones, sin modelo.
+          {
+            const mi = isOwnerDm(inbound, vigilanteOwnerId) ? mercadonaIntent(inbound.text) : null;
+            if (mi) {
+              const view =
+                mi.kind === 'dia'
+                  ? {
+                      text: textoAjustes(
+                        fijarDia(join(paths.state, 'mercadona.json'), mi.dia, mi.hora),
+                      ),
+                      buttons: [],
+                    }
+                  : await mercadonaPress(mercadonaDeps(chatKey_), `${MERCA_PREFIX}si`);
+              await say(inbound, view.text, { quote: true, buttons: view.buttons });
               return;
             }
           }
