@@ -6255,6 +6255,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     paginas: preciosConf.paginas,
     rapidas: preciosRapidas,
     paginasRapido: preciosConf.paginasRapido,
+    tz: localTimeZone(),
     leerListado: (url) => preciosListado(url),
     leerFicha: (url) => preciosFicha(url),
     leerHistorial: (url) => preciosHistorial(url),
@@ -6310,6 +6311,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     cadaMin: preciosConf.cadaMin,
     rapidoMin: preciosRapidas.length ? preciosConf.rapidoMin : 0,
     silencio: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+    // A las 21:00, una línea «Precios hoy: …» para saber que sigue vivo (PA_PRECIOS_RESUMEN_DIARIO=0 la quita).
+    cadaTick: async () => {
+      const owner = briefingOwner();
+      if (!preciosConf.resumenDiario || !preciosEncendido() || !owner) return;
+      await vigilantePrecios.resumenDiario(async (text) => {
+        await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: owner,
+          text,
+        });
+      });
+    },
   }).arrancar();
   /** /precios [on|off|ahora]: estado del vigilante de errores de precio de Amazon.es. */
   const cmdPrecios = async (inbound: Inbound, args: string): Promise<void> => {

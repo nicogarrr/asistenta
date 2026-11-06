@@ -31,6 +31,17 @@ barriendo, al doble de intervalo (normal cada 60 min, rápido cada ~24 min). El 
 «🚨 ERROR DE PRECIO» sale en el momento aunque sea de madrugada; nada más del vigilante manda
 mensajes de noche.
 
+**Siempre en marcha en el PC.** `pa autostart install --start` (una vez, en PowerShell desde la
+carpeta de Asistenta) la arranca al iniciar sesión y deja la tarea «Asistenta-vigilante», que la
+vuelve a levantar cada 5 min si se cae (ver docs/windows-startup.md). Los barridos van por reloj
+de pared: tras suspender o hibernar el portátil, el barrido atrasado sale en el primer minuto
+despierto, y uno que se quedó colgado durante la suspensión deja de bloquear a los 30 min.
+Con la tapa cerrada o el PC apagado no barre.
+
+**Resumen diario.** A las 21:00 (hora local) manda una línea por Telegram para que se vea que
+sigue vivo: «Precios hoy: N páginas, mejor descuento X % (producto), 0 errores de precio». Si el
+portátil dormía a esa hora, sale al despertar ese mismo día. `PA_PRECIOS_RESUMEN_DIARIO=0` la quita.
+
 Además, un **barrido rápido** cada ~12 min (±25 %, `PA_PRECIOS_RAPIDO_MIN`) de búsquedas de
 marcas y productos caros, donde un error de precio dura poco: relojes inteligentes (Apple Watch,
 Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles de marca —Lenovo, HP, ASUS, Acer, MSI, Dell— y
