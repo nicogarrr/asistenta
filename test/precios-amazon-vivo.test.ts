@@ -116,6 +116,10 @@ describe('sin marca fuera y tachado de vendedor externo (Nico, 6-nov-2026: «Qui
       sinMarca('Reloj Inteligente Mujer Hombre, 1.85" Smartwatch con Llamadas', 'FURUID'),
     ).toMatch(/título genérico/);
     expect(sinMarca('Portátil HP 15s-fq5000ns', 'HP')).toBeNull();
+    expect(sinMarca('PcCom Imperial Ordenador Gaming Intel Core i7 RTX 4070', 'PcCom')).toBeNull();
+    expect(sinMarca('Ordenador de sobremesa Lenovo Legion Tower 5', 'Lenovo')).toBeNull();
+    expect(sinMarca('Mini PC Intel NUC 13 Pro', 'Intel')).toBeNull();
+    expect(sinMarca('Mini PC 16GB RAM 512GB SSD Windows 11', '')).toMatch(/sin marca/);
     expect(sinMarca('Memoria RAM G.Skill Trident Z5 DDR5 32GB', 'G.SKILL')).toBeNull();
     expect(sinMarca('Memoria RAM DDR5 32GB 6000MHz para PC', '')).toMatch(/sin marca/);
   });
