@@ -73,6 +73,20 @@ const MP3_NATIVAS = new Set([16_000, 22_050, 24_000, 44_100]);
 const MP3_SAMPLE_RATE = 24_000;
 
 /**
+ * Silencio al final de cada audio. Sin él, la última sílaba caía en el último frame mp3,
+ * pegada al final del archivo, y el reproductor la cortaba: «tienes» se oía «tiene» (voz-2/4).
+ */
+const COLA_MS = 150;
+
+/** La voz con `COLA_MS` de silencio detrás. */
+export function conCola(pcm: Float32Array, hz: number): Float32Array {
+  const cola = Math.round((hz * COLA_MS) / 1000);
+  const out = new Float32Array(pcm.length + cola);
+  out.set(pcm);
+  return out;
+}
+
+/**
  * Truncate at a word boundary near the limit.
  *
  * Cutting mid-word is audible and makes the truncation obvious in a way that
@@ -94,13 +108,13 @@ export function encodeSpeech(wav: Buffer, spoken: string, original: string): Tts
   const durationSeconds = decoded.samples.length / decoded.sampleRate;
   // Sin remuestrear si el motor ya da una frecuencia de mp3 (Supertonic 44,1 kHz, Kokoro 24 kHz, Piper/SAPI 22 050).
   const hz = MP3_NATIVAS.has(decoded.sampleRate) ? decoded.sampleRate : MP3_SAMPLE_RATE;
-  const pcm =
+  const voz =
     hz === decoded.sampleRate
       ? decoded.samples
       : resampleLinear(decoded.samples, decoded.sampleRate, hz);
   return {
     durationSeconds,
-    data: encodeMp3(pcm, hz, MP3_KBPS),
+    data: encodeMp3(conCola(voz, hz), hz, MP3_KBPS),
     mimeType: 'audio/mpeg',
     format: 'mp3',
     text: spoken,
