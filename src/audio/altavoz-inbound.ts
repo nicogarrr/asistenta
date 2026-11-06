@@ -9,6 +9,8 @@ export interface AltavozInbound {
   text: string;
   audioFileId?: string;
   audioMimeType?: string;
+  /** Duración que da Telegram, para «✅ Sonó en el PC (0:17)». */
+  audioDurationSeconds?: number;
   /** Resto de audios enviados juntos (álbum): suenan detrás del primero. */
   albumAudios?: ReadonlyArray<{ fileId: string; mimeType?: string }>;
 }
@@ -25,6 +27,11 @@ export interface AltavozInboundDeps {
   download(fileId: string): Promise<Buffer | null>;
   /** Contesta en el chat de la nota. */
   reply(text: string): void;
+  /**
+   * Resultado de cada nota («✅ Sonó en el PC (0:17)» / «⚠️ En la tele no sonó: …»). Quien
+   * lo conecta lo pone en el mismo «Sonando…» (editándolo). Sin él, solo se avisa del fallo.
+   */
+  done?: (text: string) => void;
   /** Chat que la mandó: /stop en ese chat la para. */
   key: string;
 }
@@ -37,6 +44,14 @@ export type AltavozInboundResult = 'skipped' | 'queued' | 'full';
  * altavoz encendido su nota SUENA y nada más; no se transcribe ni se contesta. Para
  * hablarle al asistente: /altavoz off o escribir).
  */
+/** «✅ Sonó en el PC (0:17)» / «✅ Sonando en la tele (1:15)»: la tele solo dice que la aceptó. */
+export function altavozDoneText(mode: 'pc' | 'tele', seconds?: number): string {
+  const base = mode === 'tele' ? '✅ Sonando en la tele' : '✅ Sonó en el PC';
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return base;
+  const s = Math.round(seconds);
+  return `${base} (${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')})`;
+}
+
 export function altavozConfirmText(mode: 'pc' | 'tele'): string {
   return mode === 'tele' ? '📺 Sonando en la tele…' : '🔊 Sonando…';
 }
@@ -117,7 +132,11 @@ export function routeInboundToAltavoz(
   // Varios audios enviados juntos (álbum) suenan todos, en orden: antes solo el primero,
   // y en modo megáfono los demás ni sonaban ni se transcribían.
   const notes = [
-    { fileId: inbound.audioFileId, mimeType: inbound.audioMimeType },
+    {
+      fileId: inbound.audioFileId,
+      mimeType: inbound.audioMimeType,
+      seconds: inbound.audioDurationSeconds,
+    },
     ...(inbound.albumAudios ?? []),
   ];
   for (const [i, note] of notes.entries()) {
@@ -130,10 +149,12 @@ export function routeInboundToAltavoz(
       },
       (err) => {
         const why = err instanceof Error ? err.message : String(err);
-        deps.reply(`🔇 No he podido soltarla en el altavoz: ${why}`);
+        if (deps.done) deps.done(`⚠️ En ${mode === 'tele' ? 'la tele' : 'el PC'} no sonó: ${why}`);
+        else deps.reply(`🔇 No he podido soltarla en el altavoz: ${why}`);
       },
       deps.key,
       (text) => deps.reply(text),
+      () => deps.done?.(altavozDoneText(mode, 'seconds' in note ? note.seconds : undefined)),
     );
     if (queued) continue;
     if (i === 0) {
