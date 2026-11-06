@@ -1,0 +1,69 @@
+<!-- muestra recortada y anonimizada de https://www.amazon.es/dp/B0C9D4KL9D (Chromium real, sin sesión), descargada 2026-11-06 desde una IP no española -->
+<html><body>e"> <span id="productTitle" class="a-size-large product-title-word-break"> Dreo Calefactor Bajo Consumo Cerámico, con Termostato Portátil, Temporizador 12H, Modo Eco y Ventilador, 1500W PTC Rápido y Seguro para Oficina, Dormitorio y Casa </span> </h1> 
+ <div id="expandTitleToggle" class="a-section a-spacing-none expand aok-hidden"></div> </div> </div>
+ <div id="bylineInfo_feature_div" class="celwidget" data-feature-name="bylineInfo">
+ <div class="a-section a-spacing-none"> <a id="bylineInfo" class="a-link-normal" href="/stores/DREO/page/2610D603-EDF8-4717-8523-A08109DFC2BE?lp_asin=B0C9D4KL9D&amp;ref_=ast_bln&amp;store_ref=">Visita la tienda de DREO</a> </div> </div>
+ <div id="cmrsSummary_feature_div" class="celwidget" data-feature-name="cmrsSummary" data-csa-c-content-id="<div <div id="corePriceDisplay_desktop_feature_div" class="celwidget" data-feature-name="corePriceDisplay_desktop">
+ <div class="a-section apex-core-price-identifier"> <div class="a-section a-spacing-none aok-align-center aok-relative"> <span id="apex-pricetopay-accessibility-label" data-pricetopay-label="{priceToPay}" data-pricetopay-savings-label="{priceToPay} con un ahorro del {savings}&nbsp;%" class="aok-offscreen"> 41,31&nbsp;€ </span> <span class="a-price aok-align-center reinventPricePriceToPayMargin priceToPay apex-pricetopay-value" data-a-size="xl" data-a-color="base"><span class="a-offscreen"> </span><span aria-hidden="true"><span class="a-price-whole">41<span class="a-price-decimal">,</span></span><span class="a-price-fraction">31</span><span class="a-price-symbol">€</span></span></span> <span id="taxInclusiveMessage" class="a-size-mini a-color-base aok-align-center aok-nowrap"> </span> <div class="a-section a-spacing-none aok-relative aok-inline-block"> </div> </div> <div class="a-section a-spacing-small aok-align-center"> <span> <span class="apex-basisprice-feature"> <span class="a-size-small aok-align-center basisPriceLegalMessage apex-basisprice-legal-message-icon"> </span> </span> </span> </div> </div> </div>
+ <div id="oneTimePaymentPrice_feature_div" class="celwidget" data-feature-name="oneTimePaymentPrice">
+ </div>
+ <div id="paymentOptions_PriceblockMessaging_feature_div" class="celwidget" data-feature-name="paymentOptions_Priceblock">
+<div id="payment-options-feature" class="a-section aok-hidden"><input type="checkbox" class="payment-options-checkbox aok-hidden">
+</div><div id="price-block-container-0" data-buying-option-index="0" data-buying-option-type="" class="a-section price-block-container"><div id="price-block-error-icon" class="a-box a-alert-inline a-alert-inline-error price-block-icon aok-hidden" role="alert"><div class="a-box-inner a-alert-container"><i class="a-icon a-icon-alert" aria-hidden="true"></i><div class="a-alert-content"></div></div></div><div id="price-block-text" class="a-section price-block-text"><span id="price-block-error-message" class="price-block-error-message aok-hidden"><span id="price-block-error-string" data-payment-option-unavailable="El plan de pago no está disponible con esta opción." data-plan-unavailable-over-max-quantity="El plan no está disponible si compras ${maxQuantity} o más unidades del mismo producto." class="price-block-error-string"></span></span></div></div> </div>
+ <div id="customPriceMerchandisedMessagingDevices_feature_div" class="celwidget" data-feature-name="customPriceMerchandisedMessagingDevices">
+ </div>
+ <div id="mapleAdvertisement_feature_div" class="celwidget" data-feature-name="mapleAdvertisement">
+ <script type="text/javascript">
+ P.when('A', 'ready').execute(function (A) {
+ var $ = A.$;
+ function createNexusEvent(impressionSchema) {
+ let attributesMap = {
+ buyingOption : impressionSchema.buyingOptionName,
+ buyingOptionIndex : String(impressionSchema.buyingOptionIndex),
+ robot : "false",
+ issuancePlacementShortNm : impressionSchema.issuancePlacementShortNm
+ }
+ // Event payload for Nexus should contain all the attributes present in schema 'odysseus.Impression'
+ let event = {
+ sessionId : impressionSchema.sessionId,
+ impressionId : impressionSchema.impressionId,
+ requestId : impressionSchema.requestId,
+ marketplaceId : impressionSchema.marketplaceId,
+ attributes : attributesMap,
+ lob: window.ue_lob
+ };
+ return event;
+ }
+ function publishNexusEvent(asin, index, issuanceOcfSelectorId, requestId){
+ let impressionSchema = A.state("impressionSchema_" + requestId + "-" + asin + ":" + index);
+ if(impressionSchema) {
+ let event = createNexusEvent(impressionSchema);
+ ue.event(event, impressionSchema.nexusProducerId, impressionSchema.nexusSchemaId);
+ $(issuanceOcfSelectorId).attr('visited', "true");
+ }
+ }
+ // Publish impression metrics to Nexus upon toggling non-landing buying options
+ A.on('a:accordion:buybox-accordion:select', function (data){
+ let buyingOptionIndex = A.$(data.selectedRow.$row).index();
+ let issuanceOcfSelector = '.issuance_ocf_selector#issuanceOcfAccordianRowName_' + buyingOptionIndex;
+ if(issuanceOcfSelector) {
+ let isVisited = $(issuanceOcfSelector).attr("visited");
+ if (isVisited === 'false' && window.ue) {
+ let asin = $(issuanceOcfSelector).attr("asin");
+ let requestId = $(issuanceOcfSelector).attr("requestId");
+ publishNexusEvent(asin, buyingOptionIndex, issuanceOcfSelector, requestId)
+ }
+ }
+ });
+ /**
+ * Publish impression metrics to Nexus upon switching tab.
+ * Generally, tabbed offer display is used fo</div><div <div id="availability" class="a-section a-spacing-base a-spacing-top-micro }"> <span class="a-size-medium a-color-success primary-availability-message"> En stock </span> <br> </div> <div class="a-section a-spacing-none"> </div> <div class="a-section a-spacing-mini"> </div> </div> </div>
+ <div id="quantityLimitExhaustionAOD_feature_div" class="celwidget" data-feature-name="quantityLimitExhaustionAOD" data-csa-c-asin="B</div><div all" offer-display-feature-name="desktop-merchant-info" role="heading" aria-level="4">
+ <div class="a-spacing-none">
+ <span class="a-size-small a-color-tertiary">Remitente / Vendedor</span> </div>
+ </div>
+ <div class="offer-display-feature-text a-size-small" offer-display-feature-name="desktop-merchant-info">
+ <div class="offer-display-feature-text a-spacing-none odf-truncation-popover">
+ <span class="a-size-small offer-display-feature-text-message">Amazon</span> </div>
+ <span class="a-declarative" data-action="a-popover" data-a-popover="{&quot;max-width&quot;:&quot;500&quot;,&quot;name&quot;:&quot;offerDisplayFeatureMerchantInfoPopover-0&quot;,&quot;activate&quot;:&quot;onmouseover&quot;,&quot;position&quot;:&quot;triggerBottom&quot;,&quot;popoverLabel&quot;:&quot;Remitente / Vendedor&quot;}"> <a class="a-link-normal a-popover-trigger a-declarative odf-truncation-popover aok-hidden" href="javascript:void(0)" role="button"> <span class="a-size-small offer-display-feature-text-message">Amazon</span> </a> </span> <div class="a-popover-preload" id="a-popover-offerDisplayFeatureMerchantInfoPopover-0"> <div class="a-section a-padding-none"> <div aria-level="5" class="a-row a-spacing-base" role="heading"> <span class="a-text-bold">Remitente / Vendedor</span> </div> <div class="a-row a-spacing-micro odf-popover-overflow-wrap"> Amazon </div> </div> </div> </div> </div>
+ <div id="staticPremiumBrandSourcedOfferDisplayFeature_feature_div" class="celwidget" data-feature-name="staticPremiumBrandSourcedOfferDisplayFeature" data-csa-c-t</div></body></html>
