@@ -6192,10 +6192,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     paginasRapido: preciosConf.paginasRapido,
     leerListado: (url) => preciosListado(url),
     leerFicha: (url) => preciosFicha(url),
-    avisar: async (text) => {
+    avisar: async (text, buttons) => {
       const owner = briefingOwner();
       if (!owner) throw new Error('no sé cuál es el chat del dueño');
-      await telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text });
+      await telegram.send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId: owner,
+        text,
+        ...(buttons?.length ? { buttons } : {}),
+      });
     },
   });
   const preciosEncendido = (): boolean => vigilantePrecios.leer().encendido ?? preciosConf.activo;

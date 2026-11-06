@@ -195,7 +195,7 @@ export interface ConfigPrecios {
  * .env: PA_PRECIOS=0 lo apaga (encendido por defecto); PA_PRECIOS_UMBRAL=70 (descuento mínimo,
  * %); PA_PRECIOS_CADA_MIN=30; PA_PRECIOS_PAGINAS=6 (listados por barrido);
  * PA_PRECIOS_CATEGORIAS=cocina,informatica,… (vacío = todas); PA_PRECIOS_RAPIDO_MIN=12 (búsquedas
- * caras: ghd, Dyson, whisky…; 0 = no), PA_PRECIOS_RAPIDO_PAGINAS=2, PA_PRECIOS_RAPIDAS=ghd,chivas…
+ * caras: ghd, Dyson, whisky…; 0 = no), PA_PRECIOS_RAPIDO_PAGINAS=4, PA_PRECIOS_RAPIDAS=ghd,chivas…
  */
 export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPrecios {
   const off = /^(0|no|off|false|apagado)$/i.test((env.PA_PRECIOS ?? '').trim());
@@ -215,7 +215,7 @@ export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPreci
       const m = num(env.PA_PRECIOS_RAPIDO_MIN, 12, 0, 24 * 60);
       return m <= 0 ? 0 : Math.max(5, Math.round(m));
     })(),
-    paginasRapido: Math.round(num(env.PA_PRECIOS_RAPIDO_PAGINAS, 2, 1, 10)),
+    paginasRapido: Math.round(num(env.PA_PRECIOS_RAPIDO_PAGINAS, 4, 1, 10)),
     rapidas: env.PA_PRECIOS_RAPIDAS,
   };
 }
