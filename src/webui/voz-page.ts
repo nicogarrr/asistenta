@@ -27,12 +27,14 @@ export function renderVozPage(): string {
   #boton:disabled { opacity: .5; }
   #estado { min-height: 1.4em; font-size: 15px; color: #9fb3c4; text-align: center; }
   label { font-size: 15px; }
+  #tiempos { min-height: 1em; font-size: 12px; color: #6f8394; }
 </style>
 </head>
 <body>
 <main id="chat" aria-live="polite"></main>
 <footer>
   <div id="estado">Pulsa el botón y habla.</div>
+  <div id="tiempos"></div>
   <button id="boton" type="button">🎙️ Hablar</button>
   <label><input id="manos" type="checkbox"> Manos libres</label>
   <label><input id="leer" type="checkbox" checked> Leer respuestas en voz alta</label>
@@ -47,6 +49,7 @@ ${renderMiniAppReadyScript()}
   try { token = (localStorage.getItem(CLAVE) || '').trim(); } catch (e) {}
   var chat = document.getElementById('chat');
   var estado = document.getElementById('estado');
+  var tiempos = document.getElementById('tiempos');
   var boton = document.getElementById('boton');
   var manos = document.getElementById('manos');
   var leer = document.getElementById('leer');
@@ -87,12 +90,7 @@ ${renderMiniAppReadyScript()}
     u.onend = siguiente; u.onerror = siguiente;
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   }
-  function hablar(t, audio) {
-    if (!leer.checked) { siguiente(); return; }
-    if (!audio || !audio.data) { vozSistema(t); return; }
-    var hecho = false;
-    function fin() { if (!hecho) { hecho = true; siguiente(); } }
-    function falla() { if (!hecho) { hecho = true; vozSistema(t); } }
+  function sonar(audio, fin, falla) {
     try {
       var bin = atob(audio.data); var bytes = new Uint8Array(bin.length);
       for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -101,6 +99,26 @@ ${renderMiniAppReadyScript()}
       var p = reproductor.play(); if (p && p.catch) p.catch(falla);
     } catch (e) { falla(); }
   }
+  // resto: promesa con el audio del resto de la respuesta (o null), pedida en cuanto llega
+  // la primera frase para que suene seguido.
+  function hablar(t, audio, resto) {
+    if (!leer.checked) { siguiente(); return; }
+    if (!audio || !audio.data) { vozSistema(t); return; }
+    var hecho = false;
+    function fin() { if (!hecho) { hecho = true; siguiente(); } }
+    function falla() { if (!hecho) { hecho = true; vozSistema(t); } }
+    sonar(audio, function () {
+      if (!resto) { fin(); return; }
+      resto.then(function (r) { if (r && r.data) sonar(r, fin, fin); else fin(); }, fin);
+    }, falla);
+  }
+  function pedirResto(id) {
+    if (!id) return null;
+    return fetch('/api/voz/resto?id=' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+  }
+  function seg(ms) { return (Math.round((ms || 0) / 100) / 10).toString().replace('.', ',') + ' s'; }
   function siguiente() { if (manos.checked) empezar(); else decir('Pulsa el botón y habla.'); }
 
   function vigilarSilencio() {
@@ -154,7 +172,9 @@ ${renderMiniAppReadyScript()}
         if (!x.ok) { decir((x.d && x.d.error) || 'No ha salido bien.'); return; }
         if (x.d.oido) linea('yo', x.d.oido);
         linea('ella', x.d.text || '');
-        hablar(x.d.text || '', x.d.audio);
+        var tm = x.d.tiempos;
+        if (tm) tiempos.textContent = 'oír ' + seg(tm.oirMs) + ' · pensar ' + seg(tm.pensarMs) + ' · voz ' + seg(tm.vozMs);
+        hablar(x.d.text || '', x.d.audio, pedirResto(x.d.audioResto));
       })
       .catch(function () { boton.disabled = false; decir('No llego al PC. ¿Tailscale está conectado?'); });
   }

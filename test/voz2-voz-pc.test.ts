@@ -15,7 +15,7 @@ async function panel(extra: Record<string, unknown>) {
     sessions: () => [],
     memory: () => [],
     auditVerify: () => ({}),
-    transcribe: async () => 'hola',
+    transcribe: async () => '¿qué tengo hoy?',
     chat: async () => ({ text: 'Hola, Nico.' }),
     ...extra,
   });
@@ -67,6 +67,6 @@ describe('/voz: la respuesta suena con la voz del PC, no con la robótica del m�
     const html = await r.text();
     expect(html).toContain('new Audio()');
     expect(html).toContain('desbloquear();');
-    expect(html).toContain("hablar(x.d.text || '', x.d.audio)");
+    expect(html).toContain("hablar(x.d.text || '', x.d.audio");
   });
 });

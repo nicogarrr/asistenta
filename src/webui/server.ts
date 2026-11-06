@@ -6,6 +6,7 @@ import { createServer } from '../node-http.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 import { renderVozPage } from './voz-page.js';
+import { guardarResto, partirPrimeraFrase, respuestaRapida, tomarResto } from './voz-rapida.js';
 
 /** Archivos que /api/chat deja pasar al panel (ver panel-chat.ts PANEL_FILE_TYPES). */
 const PANEL_FILE_URL =
@@ -105,6 +106,8 @@ export interface WebUiDeps {
    * con su propia voz.
    */
   speak?(text: string): Promise<{ data: Buffer; mimeType: string } | null>;
+  /** Al abrir /voz: carga whisper y la voz en segundo plano para que la primera nota no espere. */
+  prewarm?(): void;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -187,6 +190,7 @@ type ApiRoute =
   | { method: 'POST'; kind: 'clave' }
   | { method: 'POST'; kind: 'miniapp' }
   | { method: 'POST'; kind: 'voz' }
+  | { method: 'GET'; kind: 'vozResto' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -343,6 +347,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'miniapp' };
     case '/api/voz':
       return { method: 'POST', kind: 'voz' };
+    case '/api/voz/resto':
+      return { method: 'GET', kind: 'vozResto' };
     default:
       break;
   }
@@ -499,6 +505,12 @@ async function respondApi(
         payload = panelReply(answer);
         break;
       }
+      case 'vozResto': {
+        const audio = await tomarResto(url.searchParams.get('id') ?? '');
+        if (!audio) throw new HttpError(404, 'Ese audio ya no está');
+        payload = audio;
+        break;
+      }
       case 'voz': {
         if (!deps.transcribe || !deps.chat) throw new HttpError(503, 'La voz no está disponible');
         const mime = String(req.headers['content-type'] ?? '')
@@ -508,6 +520,7 @@ async function respondApi(
         if (!mime?.startsWith('audio/')) throw new HttpError(415, 'Eso no es audio');
         const audio = await readRawBody(req, MAX_VOICE_BYTES);
         if (audio.length === 0) throw new HttpError(400, 'No ha llegado audio');
+        const inicio = Date.now();
         let oido: string;
         try {
           oido = (await deps.transcribe(audio, mime)).trim();
@@ -517,22 +530,52 @@ async function respondApi(
             err instanceof Error && err.message ? err.message : 'no he podido leer el audio';
           throw new HttpError(422, `No te he podido entender: ${motivo}. Prueba otra vez.`);
         }
+        const oirMs = Date.now() - inicio;
         if (!oido) {
           payload = { oido: '', text: 'No te he entendido. Prueba otra vez, más cerca del micro.' };
           break;
         }
-        const answer = await deps.chat(oido);
+        // Un «hola» o un «gracias» no espera al agente entero.
+        const rapida = respuestaRapida(oido);
+        const tPensar = Date.now();
+        const answer = rapida ? { text: rapida } : await deps.chat(oido);
         if (!isRecord(answer) || typeof answer.text !== 'string') {
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
+        const pensarMs = Date.now() - tPensar;
         const respuesta: Record<string, unknown> = { oido, ...panelReply(answer) };
+        const tVoz = Date.now();
         if (deps.speak && answer.text.trim()) {
           // La voz del PC; si no sale, el texto llega igual y el móvil la lee con la suya.
-          const voz = await deps.speak(answer.text).catch(() => null);
+          // Primero la primera frase, para que empiece a sonar ya; el resto se sintetiza
+          // mientras tanto y el móvil lo pide en /api/voz/resto.
+          const speak = deps.speak;
+          const [primera, resto] = partirPrimeraFrase(answer.text);
+          const voz = await speak(primera).catch(() => null);
           if (voz && voz.data.length > 0) {
             respuesta.audio = { mime: voz.mimeType, data: voz.data.toString('base64') };
+            if (resto) {
+              respuesta.audioResto = guardarResto(
+                speak(resto)
+                  .then((v) =>
+                    v && v.data.length > 0
+                      ? { mime: v.mimeType, data: v.data.toString('base64') }
+                      : null,
+                  )
+                  .catch(() => null),
+              );
+            }
           }
         }
+        const tiempos = {
+          oirMs,
+          pensarMs,
+          vozMs: Date.now() - tVoz,
+          totalMs: Date.now() - inicio,
+          rapida: rapida !== null,
+        };
+        respuesta.tiempos = tiempos;
+        log.info('voz movil: tiempos', tiempos);
         payload = respuesta;
         break;
       }
@@ -688,6 +731,12 @@ async function handleRequest(
     case '/voz':
       res.setHeader('Content-Security-Policy', PAGE_CSP);
       res.setHeader('Cache-Control', 'no-store');
+      // Mientras Nico pulsa «Hablar», el PC ya carga whisper y la voz.
+      try {
+        deps.prewarm?.();
+      } catch {
+        // Calentar es opcional: nunca rompe la página.
+      }
       sendPage(req, res, renderVozPage(), 'text/html; charset=utf-8');
       return;
     case '/manifest.webmanifest':
