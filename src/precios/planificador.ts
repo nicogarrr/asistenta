@@ -19,16 +19,21 @@ export interface DepsPlan {
   factorNoche?: number;
   /** Espera hasta el primer barrido normal (por defecto 2 min). */
   primeraMs?: number;
+  /** Se llama en cada tick (p. ej. el resumen diario de las 21:00); decide él si toca. */
+  cadaTick?: () => Promise<unknown>;
   now?: () => number;
   azar?: () => number;
 }
 
 const MIN = 60_000;
+/** Un barrido colgado (Chrome que no contesta tras suspender el portátil) no frena el plan. */
+const ATASCO_MS = 30 * MIN;
 
 export class PlanPrecios {
   readonly #d: DepsPlan;
   readonly #prox: Record<TipoBarrido, number>;
-  #enCurso = false;
+  /** Inicio del barrido en curso, o null. */
+  #enCurso: number | null = null;
 
   constructor(d: DepsPlan) {
     this.#d = d;
@@ -58,8 +63,9 @@ export class PlanPrecios {
 
   /** Corre como mucho un barrido si toca. Devuelve cuál corrió. No lanza. */
   async tick(): Promise<TipoBarrido | null> {
-    if (this.#enCurso) return null;
+    void this.#d.cadaTick?.().catch(() => null);
     const now = this.#now();
+    if (this.#enCurso !== null && now - this.#enCurso < ATASCO_MS) return null;
     const tipo: TipoBarrido | null =
       now >= this.#prox.normal
         ? 'normal'
@@ -67,13 +73,18 @@ export class PlanPrecios {
           ? 'rapido'
           : null;
     if (!tipo) return null;
-    this.#enCurso = true;
+    const mio = now;
+    this.#enCurso = mio;
+    // Si se cuelga, el próximo de este tipo queda para dentro de ATASCO_MS + intervalo.
+    this.#prox[tipo] = now + ATASCO_MS;
     try {
       await this.#d.barrer(tipo === 'rapido').catch(() => null);
     } finally {
-      this.#enCurso = false;
-      const fin = this.#now();
-      this.#prox[tipo] = fin + this.intervalo(tipo, fin);
+      if (this.#enCurso === mio) {
+        this.#enCurso = null;
+        const fin = this.#now();
+        this.#prox[tipo] = fin + this.intervalo(tipo, fin);
+      }
     }
     return tipo;
   }

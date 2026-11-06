@@ -246,6 +246,17 @@ export interface DepsVigilante {
   fichas?: number;
   /** Pausa entre peticiones [mín, máx] en ms (por defecto 6–12 s). */
   pausa?: [number, number];
+  /** Zona horaria del dueño, para el «hoy» del resumen diario. */
+  tz?: string;
+}
+
+/** Lo barrido hoy (día local del dueño), para el resumen de las 21:00. */
+export interface Hoy {
+  dia: string;
+  paginas: number;
+  avisos: number;
+  /** Mayor descuento visto en un listado (frente a su tachado). */
+  mejor: { pct: number; titulo: string } | null;
 }
 
 interface Asin {
@@ -284,6 +295,9 @@ export interface Estado {
   bloqueo: { at: number; hasta: number; veces: number } | null;
   pendientes: Pendiente[];
   avisosTotal: number;
+  hoy?: Hoy;
+  /** Día local del último resumen diario mandado. */
+  resumenDia?: string;
 }
 
 const MIN = 60_000;
@@ -292,6 +306,32 @@ const MAX_ASINS = 5000;
 const MAX_LECTURAS = 30;
 /** No se repite el aviso del mismo ASIN en 7 días salvo que baje otro 10 %. */
 const REAVISO_MS = 7 * 24 * HORA;
+/** Un barrido que lleva más de esto (p. ej. colgado tras suspender el portátil) no bloquea el siguiente. */
+export const ATASCO_MS = 30 * MIN;
+
+/** Día local «AAAA-MM-DD» y hora local (0–23) en esa zona. */
+export function diaYHora(ms: number, tz?: string): { dia: string; hora: number } {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(ms);
+  const v = (t: string) => p.find((x) => x.type === t)?.value ?? '';
+  return { dia: `${v('year')}-${v('month')}-${v('day')}`, hora: Number(v('hour')) % 24 };
+}
+
+/** «Precios hoy: N páginas, mejor descuento X % (producto), 0 errores de precio». */
+export function textoResumenDiario(h: Hoy | undefined, dia: string): string {
+  const hoy = h?.dia === dia ? h : { dia, paginas: 0, avisos: 0, mejor: null };
+  const mejor = hoy.mejor
+    ? `mejor descuento ${hoy.mejor.pct} % (${hoy.mejor.titulo.slice(0, 50).trim()})`
+    : 'sin descuentos a la vista';
+  const errores = `${hoy.avisos} ${hoy.avisos === 1 ? 'error' : 'errores'} de precio`;
+  return `Precios hoy: ${hoy.paginas} ${hoy.paginas === 1 ? 'página' : 'páginas'}, ${mejor}, ${errores}`;
+}
 
 function vacio(): Estado {
   return {
@@ -359,7 +399,9 @@ export function textoAviso(a: {
 
 export class VigilantePrecios {
   readonly #d: DepsVigilante;
-  #corriendo = false;
+  /** Inicio del barrido en curso (null = ninguno); uno colgado más de ATASCO_MS no bloquea. */
+  #corriendo: number | null = null;
+  #resumiendo = false;
 
   constructor(deps: DepsVigilante) {
     this.#d = deps;
@@ -412,12 +454,14 @@ export class VigilantePrecios {
 
   /** Un barrido. No lanza: los fallos quedan en el resumen y en /precios. */
   async barrer(o: { rapido?: boolean } = {}): Promise<Resumen | null> {
-    if (this.#corriendo) return null;
-    this.#corriendo = true;
+    const now = this.#now();
+    if (this.#corriendo !== null && now - this.#corriendo < ATASCO_MS) return null;
+    const mio = now;
+    this.#corriendo = mio;
     try {
       return await this.#barrer(o.rapido === true);
     } finally {
-      this.#corriendo = false;
+      if (this.#corriendo === mio) this.#corriendo = null;
     }
   }
 
@@ -439,6 +483,7 @@ export class VigilantePrecios {
       errores: [],
     };
     const porVerificar: { it: ItemListado; lecturas: Lectura[] }[] = [];
+    let mejor: Hoy['mejor'] = null;
     let bloqueado = false;
     const n = Math.min(rapido ? (this.#d.paginasRapido ?? 4) : (this.#d.paginas ?? 6), urls.length);
     for (let i = 0; i < n && !bloqueado; i++) {
@@ -473,6 +518,10 @@ export class VigilantePrecios {
         r.vistos++;
         // Un precio «desde» o por kilo no es el del producto: ni candidato ni historial.
         if (it.desde || it.porUnidad) continue;
+        if (it.refCents && it.refCents > it.cents) {
+          const pct = Math.round((1 - it.cents / it.refCents) * 100);
+          if (!mejor || pct > mejor.pct) mejor = { pct, titulo: it.titulo };
+        }
         const a = e.asins[it.asin] ?? { t: it.titulo, l: [] };
         const lecturas = a.l.map(([at, cents]) => ({ at, cents }));
         if (candidato(it, lecturas, cfg) && !porVerificar.some((p) => p.it.asin === it.asin)) {
@@ -559,11 +608,39 @@ export class VigilantePrecios {
       }
     }
     if (!bloqueado && r.paginas > 0) e.bloqueo = null;
+    const { dia } = diaYHora(inicio, this.#d.tz);
+    const hoy: Hoy = e.hoy?.dia === dia ? e.hoy : { dia, paginas: 0, avisos: 0, mejor: null };
+    hoy.paginas += r.paginas;
+    hoy.avisos += r.avisos;
+    if (mejor && (!hoy.mejor || mejor.pct > hoy.mejor.pct)) hoy.mejor = mejor;
+    e.hoy = hoy;
     r.fin = this.#now();
     if (rapido) e.ultimoRapido = r;
     else e.ultimo = r;
     this.#guardar(e);
     return r;
+  }
+
+  /**
+   * Resumen diario «estoy vivo»: desde la hora `hora` (21 por defecto), una vez por día local.
+   * Si el portátil dormía a las 21:00, sale al despertar (ese mismo día). Devuelve si lo mandó.
+   */
+  async resumenDiario(enviar: (texto: string) => Promise<void>, hora = 21): Promise<boolean> {
+    const now = this.#now();
+    const local = diaYHora(now, this.#d.tz);
+    if (local.hora < hora) return false;
+    const e = this.leer();
+    if (e.resumenDia === local.dia || this.#resumiendo) return false;
+    this.#resumiendo = true;
+    try {
+      await enviar(textoResumenDiario(e.hoy, local.dia));
+    } finally {
+      this.#resumiendo = false;
+    }
+    const f = this.leer();
+    f.resumenDia = local.dia;
+    this.#guardar(f);
+    return true;
   }
 
   /** «/precios on|off»: queda guardado y manda sobre PA_PRECIOS. */

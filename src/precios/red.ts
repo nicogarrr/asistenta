@@ -211,6 +211,8 @@ export function conRespaldo(
 
 export interface ConfigPrecios {
   activo: boolean;
+  /** Línea diaria «Precios hoy: …» a las 21:00 (PA_PRECIOS_RESUMEN_DIARIO, encendido por defecto). */
+  resumenDiario: boolean;
   motivoApagado?: string;
   cadaMin: number;
   ratio: number;
@@ -241,6 +243,9 @@ export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPreci
   const descuento = num(env.PA_PRECIOS_UMBRAL, 60, 30, 95);
   return {
     activo: !off,
+    resumenDiario: !/^(0|no|off|false|apagado)$/i.test(
+      (env.PA_PRECIOS_RESUMEN_DIARIO ?? '').trim(),
+    ),
     motivoApagado: off ? 'PA_PRECIOS=0 en el .env' : undefined,
     cadaMin: Math.round(num(env.PA_PRECIOS_CADA_MIN, 30, 15, 24 * 60)),
     ratio: Math.round((1 - descuento / 100) * 100) / 100,
