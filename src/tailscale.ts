@@ -187,7 +187,7 @@ export async function tailscaleCommand(
     };
   }
   return {
-    text: '📱 Tu panel, dentro de Telegram. Funciona con Tailscale encendido en el móvil.',
+    text: '📱 Tu panel, dentro de Telegram. Funciona con Tailscale encendido en el móvil. Si se queda en gris, abre la app de Tailscale en el móvil, comprueba que dice «Conectado» y vuelve a pulsar.',
     buttons: [{ label: '📱 Abrir panel', action: `webapp:${url}` }],
   };
 }
