@@ -11,9 +11,10 @@
  */
 
 import type { Ficha, ItemListado, RefTipo } from './amazon.js';
+import type { HistorialExterno } from './historial.js';
 
 export interface ConfigRegla {
-  /** Avisa si el precio es ≤ ratio × referencia. 0,30 = 70 % de descuento o más. */
+  /** Avisa si el precio es ≤ ratio × referencia. 0,40 = 60 % de descuento o más. */
   ratio: number;
   /** Referencia mínima: un «error» en algo de 15 € no merece aviso. */
   minRefCents: number;
@@ -49,7 +50,7 @@ export function sinMarca(
   return null;
 }
 
-export const CONFIG_REGLA: ConfigRegla = { ratio: 0.3, minRefCents: 4000, tolerancia: 0.05 };
+export const CONFIG_REGLA: ConfigRegla = { ratio: 0.4, minRefCents: 4000, tolerancia: 0.05 };
 
 export interface Lectura {
   at: number;
@@ -58,7 +59,7 @@ export interface Lectura {
 
 export interface Referencia {
   cents: number;
-  fuente: 'historial' | RefTipo;
+  fuente: 'historial' | 'externo' | RefTipo;
 }
 
 const DIA = 24 * 3600 * 1000;
@@ -81,23 +82,38 @@ export function referenciaHistorial(lecturas: readonly Lectura[]): Referencia | 
  * La referencia fiable más baja. `vendeAmazon` es null mientras no se ha visto la ficha: el
  * tachado «Recomendado» cuenta entonces como pista (para ir a verificar), no como prueba.
  */
+/**
+ * Referencia REAL: un precio al que se ha vendido de verdad (Nico, 6-nov: «que no sea un falso
+ * 60 %»). Vale el historial propio, el «precio más bajo de los últimos 30 días» y el «Mediano» de
+ * Amazon (si no lo vende un tercero: esos los fija él) y el histórico externo (camelcamelcamel).
+ * El «Recomendado»/PVP o un tachado «antes» no valen nunca solos. Se toma la más baja.
+ */
 export function mejorReferencia(
   lecturas: readonly Lectura[],
   tachado: { cents: number | null; tipo: RefTipo | null },
   vendeAmazon: boolean | null,
+  externo?: HistorialExterno | null,
 ): Referencia | null {
   const refs: Referencia[] = [];
   const h = referenciaHistorial(lecturas);
   if (h) refs.push(h);
-  // El tachado de un vendedor externo (también su «precio más bajo de los últimos 30 días»: lo
-  // fija él) no vale solo: una tablet sin marca a 82,99 € «antes» 299,99 € en oferta flash
-  // (PINGLANG Tech, 6-nov-2026) no es un error de precio. Con vendedor externo hace falta historial
-  // propio. `null` = todavía no se sabe (listado): se abre la ficha para comprobarlo.
-  if (tachado.cents && tachado.tipo && vendeAmazon !== false) {
+  const real = tachado.tipo === 'mas-bajo-reciente' || tachado.tipo === 'mediana';
+  if (tachado.cents && tachado.tipo && real && vendeAmazon !== false) {
     refs.push({ cents: tachado.cents, fuente: tachado.tipo });
   }
+  if (externo?.media) refs.push({ cents: externo.media, fuente: 'externo' });
   if (!refs.length) return null;
   return refs.reduce((a, b) => (b.cents < a.cents ? b : a));
+}
+
+/** Referencia para ser CANDIDATO en el listado: también el PVP (luego hay que confirmarlo). */
+function referenciaCandidato(
+  lecturas: readonly Lectura[],
+  tachado: { cents: number | null; tipo: RefTipo | null },
+): Referencia | null {
+  const real = mejorReferencia(lecturas, tachado, null);
+  if (real) return real;
+  return tachado.cents && tachado.tipo ? { cents: tachado.cents, fuente: tachado.tipo } : null;
 }
 
 // Recambios, accesorios y consumibles: el precio no es el del aparato que da la referencia
@@ -144,14 +160,15 @@ export function candidato(
   cfg: ConfigRegla = CONFIG_REGLA,
 ): Referencia | null {
   if (descarteListado(it) || it.cents === null) return null;
-  const ref = mejorReferencia(lecturas, { cents: it.refCents, tipo: it.refTipo }, null);
+  const ref = referenciaCandidato(lecturas, { cents: it.refCents, tipo: it.refTipo });
   if (!ref || ref.cents < cfg.minRefCents) return null;
   return it.cents <= ref.cents * cfg.ratio ? ref : null;
 }
 
 export type Verificacion =
   | { ok: true; cents: number; ref: Referencia; vendedor: string }
-  | { ok: false; motivo: string };
+  /** `soloPvp`: pasaría con el PVP/«Recomendado»; falta un histórico real (externo) para saberlo. */
+  | { ok: false; motivo: string; soloPvp?: boolean };
 
 export function esAmazon(nombre: string | null): boolean {
   return !!nombre && /^amazon(?:\.es)?$/i.test(nombre.trim());
@@ -163,6 +180,7 @@ export function verificar(
   ficha: Ficha,
   lecturas: readonly Lectura[],
   cfg: ConfigRegla = CONFIG_REGLA,
+  externo?: HistorialExterno | null,
 ): Verificacion {
   if (ficha.precioOculto || ficha.cents === null) {
     return { ok: false, motivo: 'la ficha no enseña el precio (solo en la cesta)' };
@@ -189,9 +207,25 @@ export function verificar(
     ficha.refCents !== null
       ? { cents: ficha.refCents, tipo: ficha.refTipo }
       : { cents: it.refCents, tipo: it.refTipo };
-  const ref = mejorReferencia(lecturas, tachado, vendeAmazon);
-  if (!ref || ref.cents < cfg.minRefCents) return { ok: false, motivo: 'sin referencia fiable' };
-  if (ficha.cents > ref.cents * cfg.ratio)
-    return { ok: false, motivo: 'en la ficha el descuento no llega al umbral' };
+  const ref = mejorReferencia(lecturas, tachado, vendeAmazon, externo);
+  const pvp = tachado.cents && tachado.cents >= cfg.minRefCents ? tachado.cents : null;
+  if (!ref || ref.cents < cfg.minRefCents) {
+    const soloPvp = !externo && pvp !== null && ficha.cents <= pvp * cfg.ratio;
+    return {
+      ok: false,
+      motivo: soloPvp
+        ? 'solo hay PVP/«Recomendado», falta histórico real'
+        : 'sin referencia fiable',
+      ...(soloPvp ? { soloPvp } : {}),
+    };
+  }
+  if (ficha.cents > ref.cents * cfg.ratio) {
+    const soloPvp = !externo && pvp !== null && ficha.cents <= pvp * cfg.ratio;
+    return {
+      ok: false,
+      motivo: 'en la ficha el descuento no llega al umbral',
+      ...(soloPvp ? { soloPvp } : {}),
+    };
+  }
   return { ok: true, cents: ficha.cents, ref, vendedor: ficha.vendedor ?? 'Amazon' };
 }

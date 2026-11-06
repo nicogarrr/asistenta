@@ -145,7 +145,7 @@ describe('Amazon.es: lectura de páginas reales', () => {
 describe('regla del error de precio', () => {
   it('producto nuevo sin historial: el tachado basta para ir a verificar', () => {
     expect(candidato(item({}), [])?.cents).toBe(22900);
-    expect(candidato(item({ cents: 9000 }), [])).toBeNull(); // 39 %: no llega
+    expect(candidato(item({ cents: 9500 }), [])).toBeNull(); // 41 %: no llega al −60 %
   });
 
   it('historial propio: mediana con 3 lecturas en más de un día; se usa la referencia más baja', () => {
@@ -256,7 +256,9 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
     expect(avisos[0]).toContain(
       'https://www.amazon.es/gp/aws/cart/add.html?ASIN.1=B0TEST0001&Quantity.1=1',
     );
-    expect(avisos[0]).toMatch(/Por qué: .*precio más bajo reciente/);
+    expect(avisos[0]).toMatch(
+      /Referencia: .*histórico real: precio más bajo de los últimos 30 días/,
+    );
     expect(botones[0]).toEqual([
       {
         label: '🛒 Comprar ya',
@@ -277,7 +279,7 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
     expect(avisos[0]).toContain('9,99 €');
     expect(avisos[0]).toContain('89,99 €');
     expect(avisos[0]).toContain('−89 %');
-    expect(avisos[0]).toContain('precio más bajo reciente');
+    expect(avisos[0]).toContain('precio más bajo de los últimos 30 días');
     expect(avisos[0]).toContain('https://www.amazon.es/dp/B0TEST0001');
     await v.barrer();
     expect(avisos).toHaveLength(1);
@@ -356,7 +358,7 @@ describe('lectura en el Chrome de Asistenta y configuración', () => {
   });
 
   it('.env: encendido por defecto, umbral en % de descuento, límites sensatos', () => {
-    expect(configPrecios({})).toMatchObject({ activo: true, cadaMin: 30, ratio: 0.3, paginas: 6 });
+    expect(configPrecios({})).toMatchObject({ activo: true, cadaMin: 30, ratio: 0.4, paginas: 6 });
     expect(configPrecios({ PA_PRECIOS: '0' })).toMatchObject({ activo: false });
     expect(configPrecios({ PA_PRECIOS_UMBRAL: '80', PA_PRECIOS_CADA_MIN: '1' })).toMatchObject({
       ratio: 0.2,
@@ -532,7 +534,9 @@ describe('casos reales de Quique: ghd Gold y Chivas Regal Mizunara', () => {
     }),
   };
 
-  it('avisan el ghd (con su «Recomendado» de Amazon.es) y el Chivas (con su historial); los parecidos no', async () => {
+  // Desde el 6-nov (Nico: «que no sea un falso 60 %») el «Recomendado» solo no vale: la ghd avisa
+  // porque Asistenta ya la había visto a su precio normal (historial), como el Chivas.
+  it('avisan el ghd y el Chivas (los dos con historial real); los parecidos no', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'precios-quique-'));
     const archivo = join(dir, 'precios-amazon.json');
     // El Chivas ya se había visto a su precio normal (69 €) varias veces en dos días.
@@ -543,6 +547,14 @@ describe('casos reales de Quique: ghd Gold y Chivas Regal Mizunara', () => {
       archivo,
       JSON.stringify({
         asins: {
+          [GHD]: {
+            t: 'ghd Gold Professional',
+            l: [
+              [now - 2 * d, 24900],
+              [now - d, 24500],
+              [now - d / 2, 24900],
+            ],
+          },
           [CHIVAS]: {
             t: 'Chivas Regal Mizunara',
             l: [
@@ -575,8 +587,8 @@ describe('casos reales de Quique: ghd Gold y Chivas Regal Mizunara', () => {
     expect(ghd).toContain(`https://www.amazon.es/dp/${GHD}`);
     const chivas = avisos.find((a) => a.includes('Chivas')) ?? '';
     expect(chivas).toContain('12,50 €');
-    expect(chivas).toMatch(/antes 69,\d\d €/);
-    expect(chivas).toContain('mediana de lo que he visto antes');
+    expect(chivas).toMatch(/referencia 69,\d\d €/);
+    expect(chivas).toContain('histórico real: lo que ha visto Asistenta');
     // El recambio ni se abre; el del vendedor externo se descarta al verificar.
     expect(avisos.some((a) => a.includes('repuesto'))).toBe(false);
     const pend = v.leer().pendientes;
