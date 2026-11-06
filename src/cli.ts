@@ -3310,14 +3310,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       onAwaiting: (waiting) => {
         holder.agent?.setAwaitingApproval(waiting);
       },
-      ask: async (key, tool, reason, question) => {
+      ask: async (key, tool, reason, question, extra) => {
         log.info('approval requested', { thread: key, tool, reason });
         const choice = await telegram.offerApproval(
           randomUUID(),
           chatId,
           question ?? `¿Permito ${tool}?\n${reason}`,
           {
-            askScope: true,
+            // Un shell arriesgado no admite «Siempre» ni «Por ahora»: no se ofrecen.
+            askScope: extra?.conAlcance !== false,
           },
         );
         return choice;
