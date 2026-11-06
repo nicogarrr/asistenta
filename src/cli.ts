@@ -9679,6 +9679,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const { dedupKey } = started;
 
           // Altavoz: la nota suena sola en el PC/la tele, sin esperar al modelo.
+          // El «Sonando…» se edita con el resultado («✅ Sonó en el PC (0:17)» o por qué
+          // no sonó); si no se puede editar (o ya se editó, álbum), va como respuesta.
+          let sonandoReady: (id: string | null) => void = () => {};
+          const sonandoId = new Promise<string | null>((resolve) => {
+            sonandoReady = resolve;
+          });
+          let sonandoEdited = false;
           const altavozRes = routeInboundToAltavoz(inbound, {
             mode: altavoz.get(chatKey_),
             desktop,
@@ -9688,6 +9695,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             reply: (text) => {
               void say(inbound, text, { quote: true });
             },
+            done: (text) => {
+              void (async () => {
+                const id = await sonandoId;
+                if (id && !sonandoEdited && inbound.channel === 'telegram') {
+                  sonandoEdited = true;
+                  const ok = await telegram.editMessageText(inbound.chatId, id, text).then(
+                    () => true,
+                    () => false,
+                  );
+                  if (ok) return;
+                }
+                await say(inbound, text, { quote: true });
+              })().catch(() => {});
+            },
             key: chatKey_,
           });
           // Modo megáfono (Nico, 2 nov): con el altavoz encendido su nota SOLO suena;
@@ -9696,8 +9717,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             // «queued» implica modo pc/tele (altavozTarget ya filtró off/no dueño).
             const modoAltavoz = altavoz.get(chatKey_);
             if (modoAltavoz !== 'off') {
-              await say(inbound, altavozConfirmText(modoAltavoz), { quote: true });
+              sonandoReady(
+                await say(inbound, altavozConfirmText(modoAltavoz), { quote: true }).catch(
+                  () => null,
+                ),
+              );
             }
+            sonandoReady(null);
             return;
           }
           // Cola llena: ya avisó el altavoz; tampoco va al modelo.

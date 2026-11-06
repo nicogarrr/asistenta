@@ -141,6 +141,17 @@ export interface AltavozPlayerDeps {
   stopTv?: () => Promise<unknown>;
   /** Cuánto tiempo tras mandar una nota a la tele /stop todavía la para. Por defecto 2 min. */
   teleStopWindowMs?: number;
+  /**
+   * Cuánto espera a que la tele acepte una nota (conectar, abrir el visor). Por defecto
+   * 30 s. Sin tope, una tele que no contestaba dejaba la cola colgada para siempre: cada
+   * nota nueva decía «Sonando…» y no sonaba en ningún sitio (Nico, 5 nov).
+   */
+  teleCastTimeoutMs?: number;
+  /**
+   * Tope de una nota entera (descarga + conversión + sonar). Por defecto 4 min (el PC ya
+   * corta a los 2 min de sonar). Pasado, la nota falla con aviso y la cola sigue.
+   */
+  itemTimeoutMs?: number;
   /** Reloj (para pruebas). */
   now?: () => number;
   /** Borra la copia temporal del PC. */
@@ -162,6 +173,8 @@ export interface AltavozPlayer {
     key?: string,
     /** Aviso a quien la mandó cuando la tele la aceptó pero nunca la descargó. */
     onNotice?: (text: string) => void,
+    /** Al acabar bien (PC: terminó de sonar; tele: la aceptó). No se llama si falla o /stop. */
+    onDone?: () => void,
   ): boolean;
   /**
    * /stop: descarta las notas en cola de ese chat (o de todos sin `key`) y corta la que
@@ -194,8 +207,40 @@ export interface TeleCastHandle {
  * Cola en serie: dos notas seguidas suenan una detrás de otra, nunca a la vez, y un
  * fallo en una no para las siguientes.
  */
+/** `promise` o un error con `message` pasado `ms`; `late` recibe un resultado que llega tarde. */
+function withDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+  late?: (value: T) => void,
+): Promise<T> {
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(message));
+    }, ms);
+    timer.unref?.();
+  });
+  promise.then(
+    (value) => {
+      if (timedOut) late?.(value);
+    },
+    () => {},
+  );
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
-  let chain: Promise<void> = Promise.resolve();
+  /**
+   * Una cola por aparato: una nota colgada en la tele (que no contesta) no deja al PC
+   * esperando detrás; cada aparato suena en serie por su lado.
+   */
+  const chains: Record<'pc' | 'tele', Promise<void>> = {
+    pc: Promise.resolve(),
+    tele: Promise.resolve(),
+  };
   let waiting = 0;
   /** Notas aún sin terminar, para que /stop sepa cuáles son de su chat. */
   const live = new Set<{ key?: string; dropped: boolean; abort?: AbortController }>();
@@ -270,7 +315,20 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
         deps.remove(file);
         throw new Error('la tele no está activada para audio: actívala con «/altavoz tele»');
       }
-      const r = await deps.castToTv(file);
+      const castMs = deps.teleCastTimeoutMs ?? 30_000;
+      const r = await withDeadline(
+        deps.castToTv(file),
+        castMs,
+        `la tele no contestó en ${Math.round(castMs / 1000)} s (¿apagada o en otra red?)`,
+        (lateCast) => {
+          // Aceptó cuando ya habíamos dado la nota por perdida: se para y se cierra.
+          if (!lateCast.ok) return;
+          void Promise.resolve()
+            .then(() => (lateCast.stop ?? deps.stopTv)?.())
+            .catch((err) => deps.onError?.(err))
+            .finally(() => lateCast.close?.());
+        },
+      );
       if (!r.ok) throw new Error(r.message);
       if (item.dropped) {
         // /stop llegó mientras la tele abría la nota (conectar puede tardar segundos):
@@ -347,7 +405,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
     return 1;
   };
   return {
-    enqueue(mode, load, onFail, key, onNotice) {
+    enqueue(mode, load, onFail, key, onNotice, onDone) {
       if (waiting >= ALTAVOZ_MAX_QUEUE) return false;
       waiting++;
       const item: { key?: string; dropped: boolean; abort?: AbortController } = {
@@ -355,8 +413,26 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
         dropped: false,
       };
       live.add(item);
-      chain = chain
-        .then(() => playOne(mode, load, item, onNotice))
+      chains[mode] = chains[mode]
+        .then(() =>
+          withDeadline(
+            playOne(mode, load, item, onNotice),
+            deps.itemTimeoutMs ?? 240_000,
+            'la nota no ha terminado de sonar a tiempo y la he cortado',
+          ).catch((err) => {
+            // Cortada por tiempo: que no siga sonando detrás de la siguiente.
+            item.abort?.abort();
+            throw err;
+          }),
+        )
+        .then(() => {
+          if (item.dropped) return;
+          try {
+            onDone?.();
+          } catch {
+            // Un aviso que falla no puede parar la cola.
+          }
+        })
         .catch((err) => {
           if (item.dropped) return;
           deps.onError?.(err);
@@ -387,7 +463,7 @@ export function createAltavozPlayer(deps: AltavozPlayerDeps): AltavozPlayer {
       const cast = noteTeleCast(key, stop, close);
       return { stopped: () => cast.stopped };
     },
-    idle: () => chain,
+    idle: () => Promise.all([chains.pc, chains.tele]).then(() => {}),
     pending: () => waiting,
   };
 }
