@@ -1457,19 +1457,35 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   /**
-   * Answer the press so Telegram stops spinning the button, then stamp the
-   * verdict over the question and clear its keyboard.
+   * Answer the press with the verdict as a toast, then take the question out of
+   * the chat.
    *
-   * The buttons must not outlive the decision they produced: a second press would
-   * only find an expired request and confuse the user. An explicit empty keyboard
-   * is what clears them, and the verdict text (not the toast) is what stays in the
-   * chat afterwards so "what did I just approve?" has a permanent answer.
+   * Nico (6-nov-2026): «Quita lo de aprobado siempre que ensucia conversación».
+   * The verdict used to stay in the chat as a stamp («✅ Aprobado siempre») after
+   * every tap; now it only shows as the callback toast and the prompt is deleted.
+   * Telegram refuses to delete messages older than 48 h: then the fallback edits
+   * the question down to a short verdict and clears the keyboard, so the buttons
+   * never outlive the decision (a second press would only find an expired request).
    */
   async #announceDecision(ctx: Context, choice: ApprovalChoice): Promise<void> {
     const label = decisionLabel(choice);
     await ctx.answerCallbackQuery({ text: label }).catch(() => {});
     const message = ctx.callbackQuery?.message;
     if (!message) return;
+    const deleted = await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.deleteMessage(message.chat.id, message.message_id),
+        20_000,
+        'deleteMessage timed out',
+      ),
+    ).then(
+      () => true,
+      (err: unknown) => {
+        log.warn('approval prompt not deleted', { error: describeError(err) });
+        return false;
+      },
+    );
+    if (deleted) return;
     await this.#throttled(() =>
       withTimeout(
         this.#bot.api.editMessageText(message.chat.id, message.message_id, label, {
@@ -1479,7 +1495,7 @@ export class TelegramChannel implements ChannelAdapter {
         'editMessageText timed out',
       ),
     ).catch((err: unknown) => {
-      // The decision is already resolved and answered, so a failed stamp is a
+      // The decision is already resolved and answered, so a failed cleanup is a
       // cosmetic miss and must never fail the turn that was waiting on it.
       log.warn('approval stamp failed', { error: describeError(err), ...redact({ err }) });
     });
@@ -2370,7 +2386,7 @@ const DECISION_LABELS: Record<ApprovalScope, string> = {
 };
 
 /**
- * The verdict line, shared by the callback toast and the message stamp so the two
+ * The verdict line, shared by the callback toast and the fallback edit so the two
  * can never disagree about what was decided. Spanish because it is user-facing.
  */
 function decisionLabel(choice: ApprovalChoice): string {

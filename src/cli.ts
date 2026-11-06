@@ -3233,6 +3233,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * protects, and the approver only fires inside a tool call, which cannot happen
    * until the agent exists.
    */
+  // El dueño, como en el vigilante: allowlist de un solo usuario o `vigilante:ownerUserId`.
+  const gateOwnerConfigured = Number((await vaultGet('vigilante:ownerUserId'))?.trim());
+  const gateOwnerId = resolveOwnerUserId(
+    allowed,
+    Number.isSafeInteger(gateOwnerConfigured) && gateOwnerConfigured > 0
+      ? gateOwnerConfigured
+      : null,
+  );
   const gateFor = (
     threadKey: string,
     chatId: string,
@@ -3241,6 +3249,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     createDaemonGate({
       threadKey,
       dbPath: approvalsDb,
+      // Solo el DM del dueño verificado: allí lo de solo lectura no pregunta.
+      ownerChat: gateOwnerId !== null && chatId === String(gateOwnerId),
       // Full control is opt-in via the vault, never a command-line flag, so it cannot
       // be switched on by a stray script or a leftover shell history entry.
       fullControl,
