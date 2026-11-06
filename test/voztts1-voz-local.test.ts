@@ -237,7 +237,7 @@ describe('createTtsConVozLocal: nunca espera a la descarga', () => {
     writeFileSync(join(dir, '.ok'), v.sha256);
     const f = fetchFalso(() => new Response('x', { status: 500 }));
     const bien = createTtsConVozLocal(
-      {},
+      { PA_TTS_LOCAL: 'sharvard' },
       {
         respaldo: fake('sapi'),
         raiz: r,
@@ -254,7 +254,7 @@ describe('createTtsConVozLocal: nunca espera a la descarga', () => {
     const respaldo = fake('sapi');
     const onFallback = vi.fn();
     const mal = createTtsConVozLocal(
-      {},
+      { PA_TTS_LOCAL: 'sharvard' },
       { respaldo, raiz: r, plataforma: 'win32', crearLocal: () => roto, onFallback },
     );
     for (let i = 0; i < 4; i++) expect((await mal.speak('hola')).data.toString()).toBe('sapi');
@@ -280,10 +280,10 @@ describe('createTtsConVozLocal: nunca espera a la descarga', () => {
 });
 
 describe('vozLocalDesdeEnv', () => {
-  it('sharvard por defecto en Windows; davefx si se pide; desconocida = la de por defecto', () => {
-    expect(vozLocalDesdeEnv({}, 'win32')?.clave).toBe('sharvard');
+  it('kokoro por defecto en Windows; davefx si se pide; desconocida = la de por defecto', () => {
+    expect(vozLocalDesdeEnv({}, 'win32')?.clave).toBe('kokoro');
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'DaveFX' }, 'win32')?.clave).toBe('davefx');
-    expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'rara' }, 'win32')?.clave).toBe('sharvard');
+    expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'rara' }, 'win32')?.clave).toBe('kokoro');
     expect(vozLocalDesdeEnv({}, 'linux')).toBeNull();
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'sharvard' }, 'linux')?.clave).toBe('sharvard');
     expect(vozLocalDesdeEnv({ PA_TTS_LOCAL: 'off' }, 'win32')).toBeNull();
@@ -291,7 +291,13 @@ describe('vozLocalDesdeEnv', () => {
   });
 
   it('solo voces castellanas, fijadas a la release oficial con SHA-256, y el paquete a una versión exacta', () => {
-    expect(Object.keys(VOCES_LOCALES).sort()).toEqual(['davefx', 'sharvard']);
+    expect(Object.keys(VOCES_LOCALES).sort()).toEqual([
+      'davefx',
+      'kokoro',
+      'kokoro-alex',
+      'kokoro-santa',
+      'sharvard',
+    ]);
     for (const v of Object.values(VOCES_LOCALES)) {
       expect(v.url).toMatch(
         /^https:\/\/github\.com\/k2-fsa\/sherpa-onnx\/releases\/download\/tts-models\//,

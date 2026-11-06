@@ -51,12 +51,33 @@ export interface VozLocal {
   onnx: string;
   /** Hablante dentro del modelo (sharvard trae dos: 0 = hombre, 1 = mujer). */
   sid: number;
+  /** Kokoro (más natural, multivoz) en vez de VITS/Piper. */
+  motor?: 'kokoro';
 }
 
 const RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models';
 
+/**
+ * Kokoro-82M (Apache-2.0) en la release oficial de sherpa-onnx: suena mucho más natural
+ * que Piper (entonación de persona, no de GPS) y en CPU va de sobra: en voz2 una frase
+ * de 6 s salió en ~1 s con 4 hilos y faster-whisper la transcribió sin un fallo. Pesa
+ * 350 MB (se baja una vez). Castellano con fonemas de espeak-ng «es».
+ */
+const KOKORO = {
+  id: 'kokoro-multi-lang-v1_0',
+  url: `${RELEASE}/kokoro-multi-lang-v1_0.tar.bz2`,
+  sha256: '60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4',
+  bytes: 349_886_476,
+  onnx: 'model.onnx',
+  motor: 'kokoro',
+} as const;
+
 /** Modelos fijados (release oficial «tts-models» de k2-fsa/sherpa-onnx). */
 export const VOCES_LOCALES: Readonly<Record<string, VozLocal>> = {
+  // ef_dora (mujer), em_alex (hombre), em_santa (hombre).
+  kokoro: { clave: 'kokoro', ...KOKORO, sid: 28 },
+  'kokoro-alex': { clave: 'kokoro-alex', ...KOKORO, sid: 29 },
+  'kokoro-santa': { clave: 'kokoro-santa', ...KOKORO, sid: 53 },
   sharvard: {
     clave: 'sharvard',
     id: 'vits-piper-es_ES-sharvard-medium',
@@ -77,7 +98,10 @@ export const VOCES_LOCALES: Readonly<Record<string, VozLocal>> = {
   },
 };
 
-export const VOZ_LOCAL_POR_DEFECTO = 'sharvard';
+export const VOZ_LOCAL_POR_DEFECTO = 'kokoro';
+
+/** Mientras Kokoro se descarga, si ya está la voz anterior (sharvard), habla esa. */
+export const VOZ_LOCAL_PUENTE = 'sharvard';
 
 /** Tras un fallo de descarga (sin red, servidor caído) no se vuelve a probar antes. */
 export const REINTENTO_DESCARGA_MS = 10 * 60_000;
@@ -117,12 +141,20 @@ export function vozLocalLista(raiz: string, voz: VozLocal): VozLocalLista | null
   } catch {
     return null;
   }
-  const lista = {
+  const lista: VozLocalLista = {
     dir,
     onnx: join(dir, voz.onnx),
     tokens: join(dir, 'tokens.txt'),
     datos: join(dir, 'espeak-ng-data'),
   };
+  if (voz.motor === 'kokoro') {
+    lista.kokoro = {
+      voces: join(dir, 'voices.bin'),
+      lexicon: [join(dir, 'lexicon-us-en.txt'), join(dir, 'lexicon-zh.txt')].join(','),
+      dict: join(dir, 'dict'),
+    };
+    if (!existsSync(lista.kokoro.voces)) return null;
+  }
   return existsSync(lista.onnx) && existsSync(lista.tokens) && existsSync(lista.datos)
     ? lista
     : null;
@@ -289,7 +321,7 @@ export interface TtsConVozLocalDeps {
   raiz?: string;
   plataforma?: NodeJS.Platform;
   descarga?: DescargaVozDeps;
-  crearLocal?: (modelo: VozLocalLista) => Tts;
+  crearLocal?: (modelo: VozLocalLista, sid: number) => Tts;
   onFallback?: (err: unknown) => void;
   ahora?: () => number;
 }
@@ -322,9 +354,11 @@ export function createTtsConVozLocal(
   const raiz = deps.raiz ?? paths.models;
   const ahora = deps.ahora ?? Date.now;
   const crearLocal =
-    deps.crearLocal ?? ((modelo: VozLocalLista) => createSherpaTts({ modelo, sid: voz.sid }));
+    deps.crearLocal ?? ((modelo: VozLocalLista, sid: number) => createSherpaTts({ modelo, sid }));
+  const puente = voz.clave === VOZ_LOCAL_PUENTE ? null : (VOCES_LOCALES[VOZ_LOCAL_PUENTE] ?? null);
   let reintentarDesde = 0;
   let local: Tts | null = null;
+  let localPuente: Tts | null = null;
   let fallos = 0;
 
   const precargar = async (): Promise<boolean> => {
@@ -352,10 +386,21 @@ export function createTtsConVozLocal(
       const lista = vozLocalLista(raiz, voz);
       if (!lista) {
         void precargar();
+        // Al cambiar a Kokoro, mientras baja, la voz local anterior si ya estaba.
+        const listaPuente = puente ? vozLocalLista(raiz, puente) : null;
+        if (listaPuente && puente) {
+          localPuente ??= crearLocal(listaPuente, puente.sid);
+          try {
+            return await localPuente.speak(text, opts);
+          } catch (err) {
+            if (opts.signal?.aborted) throw err;
+            deps.onFallback?.(err);
+          }
+        }
         return respaldo.speak(text, opts);
       }
       if (fallos < FALLOS_PARA_DEJARLA) {
-        local ??= crearLocal(lista);
+        local ??= crearLocal(lista, voz.sid);
         try {
           const audio = await local.speak(text, opts);
           fallos = 0;
