@@ -196,7 +196,11 @@ export function parseListado(html: string): ItemListado[] {
     vistos.add(it.asin);
     out.push(it);
   };
-  const busqueda = trozos(html, /<div role="listitem" data-asin="([A-Z0-9]{10})"/g);
+  // `role` y `data-asin` en cualquier orden (la página real y la recortada en el navegador).
+  const busqueda = trozos(
+    html,
+    /<div (?=[^>]*role="listitem")[^>]*data-asin="([A-Z0-9]{10})"[^>]*>/g,
+  );
   if (busqueda.length) {
     for (const [b, asin] of busqueda) add(resultadoBusqueda(b, asin));
     return out;

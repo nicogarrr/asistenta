@@ -386,9 +386,22 @@ import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.
 import { ensureDirs, paths } from './paths.js';
 import { Gate, runPermisosCommand } from './permissions.js';
 import { PRECIOS_SOLO_DUENO, preciosAccion } from './precios/comando.js';
-import { configPrecios, conRespaldo, leerFichaNavegador, leerHttp } from './precios/red.js';
+import {
+  configPrecios,
+  conRespaldo,
+  leerFichaNavegador,
+  leerHttp,
+  leerListadoNavegador,
+  type NavegadorPrecios,
+} from './precios/red.js';
 import { CONFIG_REGLA } from './precios/regla.js';
-import { categoriasDesde, textoEstado, VigilantePrecios } from './precios/vigilante.js';
+import {
+  categoriasDesde,
+  type Respuesta,
+  rapidasDesde,
+  textoEstado,
+  VigilantePrecios,
+} from './precios/vigilante.js';
 import { migrateLocalPresetPin } from './preset-migration.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import {
@@ -6154,18 +6167,31 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // un navegador real. Encendido salvo PA_PRECIOS=0 o «/precios off»; nunca en horas de silencio.
   const preciosConf = configPrecios();
   const preciosCats = categoriasDesde(preciosConf.categorias);
+  const preciosRapidas = rapidasDesde(preciosConf.rapidas);
+  // Listados y fichas en el Chrome de Asistenta (perfil del dueño: menos captchas, y la ficha
+  // enseña el precio); si falla, petición normal y el Chrome descansa 6 h.
+  const preciosNav: NavegadorPrecios = {
+    execJs: (scope, code) => browserFor(scope).execJs(scope, code),
+  };
+  const conChrome = (
+    leer: (nav: NavegadorPrecios, scope: string) => (url: string) => Promise<Respuesta>,
+  ) =>
+    conRespaldo(async (url) => {
+      const owner = briefingOwner();
+      if (!owner) throw new Error('todavía no sé cuál es el chat del dueño');
+      return leer(preciosNav, `telegram:dm:${owner}#precios`)(url);
+    }, leerHttp());
+  const preciosListado = conChrome(leerListadoNavegador);
+  const preciosFicha = conChrome(leerFichaNavegador);
   const vigilantePrecios = new VigilantePrecios({
     archivo: join(paths.state, 'precios-amazon.json'),
     categorias: preciosCats.categorias,
     cfg: { ...CONFIG_REGLA, ratio: preciosConf.ratio },
     paginas: preciosConf.paginas,
-    leerListado: leerHttp(),
-    leerFicha: (url) => {
-      const owner = briefingOwner();
-      if (!owner) return leerHttp()(url);
-      const scope = `telegram:dm:${owner}#precios`;
-      return conRespaldo(leerFichaNavegador(browserFor(scope), scope), leerHttp())(url);
-    },
+    rapidas: preciosRapidas,
+    paginasRapido: preciosConf.paginasRapido,
+    leerListado: (url) => preciosListado(url),
+    leerFicha: (url) => preciosFicha(url),
     avisar: async (text) => {
       const owner = briefingOwner();
       if (!owner) throw new Error('no sé cuál es el chat del dueño');
@@ -6185,14 +6211,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       now: Date.now(),
       tz: localTimeZone(),
       ratio: preciosConf.ratio,
+      navegador: preciosFicha.fallo() ?? preciosListado.fallo(),
+      rapidas: preciosRapidas,
+      rapidoMin: preciosConf.rapidoMin,
     });
   };
-  const barridoPrecios = async (): Promise<void> => {
+  const barridoPrecios = async (rapido = false): Promise<void> => {
     if (!preciosEncendido() || !briefingOwner()) return;
     if (inQuietHours(Date.now(), ownerQuiet(), localTimeZone())) return;
-    const r = await vigilantePrecios.barrer();
+    const r = await vigilantePrecios.barrer({ rapido });
     if (r) {
       log.info('precios: barrido de Amazon.es', {
+        rapido,
         paginas: r.paginas,
         vistos: r.vistos,
         candidatos: r.candidatos,
@@ -6208,6 +6238,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       preciosConf.cadaMin * 60_000,
     ).unref();
   }, 2 * 60_000).unref();
+  // Barrido rápido de las búsquedas caras (ghd, Dyson, whisky…) cada ~12 min ±25 %: los
+  // errores de precio duran poco. Mismo freno ante captchas que el barrido normal.
+  if (preciosConf.rapidoMin > 0 && preciosRapidas.length) {
+    const siguienteRapido = (): void => {
+      const ms = preciosConf.rapidoMin * 60_000 * (0.75 + Math.random() * 0.5);
+      setTimeout(
+        () =>
+          void barridoPrecios(true)
+            .catch(() => null)
+            .finally(siguienteRapido),
+        ms,
+      ).unref();
+    };
+    siguienteRapido();
+  }
   /** /precios [on|off|ahora]: estado del vigilante de errores de precio de Amazon.es. */
   const cmdPrecios = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {

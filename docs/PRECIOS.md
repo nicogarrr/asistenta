@@ -19,11 +19,22 @@ Barrer ya: `/precios ahora`.
 ## Qué barre
 
 Por categoría (por defecto: informática, electrónica, grandes electrodomésticos, hogar y cocina,
-videojuegos, juguetes, deportes, bricolaje, belleza y bebé), tres listados: «Los más vendidos»,
+videojuegos, juguetes, deportes, bricolaje, belleza, bebé y bebidas/licores), tres listados: «Los más vendidos»,
 «Los que más suben» y las novedades de la búsqueda. Cada barrido lee 6 páginas (rotando), con
 6–12 s entre petición y petición. Elegir categorías:
 
     PA_PRECIOS_CATEGORIAS=cocina,informatica,https://www.amazon.es/s?k=robot+aspirador
+
+Además, un **barrido rápido** cada ~12 min (±25 %, `PA_PRECIOS_RAPIDO_MIN`) de búsquedas de
+marcas y productos caros, donde un error de precio dura poco: ghd, Dyson, planchas y secadores
+de pelo, perfumes, whisky, ginebra premium, ron añejo, Apple, portátiles, Bosch Professional y
+LEGO. Son 2 páginas por barrido. Cambiarlas: `PA_PRECIOS_RAPIDAS=ghd,chivas regal|grocery,dyson`
+(«no» = ninguna). Casos reales que tienen que salir: la plancha ghd Gold a 29,90 € (normal
+~250 €) y el Chivas Regal Mizunara a 12,50 € (normal ~69 €), los dos vendidos por Amazon.es.
+
+Los listados y las fichas se abren en el Chrome de Asistenta (con su sesión, Amazon pone menos
+captchas). Si ese Chrome falla, lee sin navegador y no lo vuelve a intentar en 6 h; `/precios`
+lo dice.
 
 ## Cuándo avisa
 

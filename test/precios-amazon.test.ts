@@ -9,7 +9,14 @@ import {
   parseListado,
 } from '../src/precios/amazon.js';
 import { preciosAccion } from '../src/precios/comando.js';
-import { codigoFicha, configPrecios, conRespaldo, leerFichaNavegador } from '../src/precios/red.js';
+import {
+  codigoFicha,
+  codigoListado,
+  configPrecios,
+  conRespaldo,
+  leerFichaNavegador,
+  leerListadoNavegador,
+} from '../src/precios/red.js';
 import {
   candidato,
   descarteListado,
@@ -17,7 +24,12 @@ import {
   mejorReferencia,
   verificar,
 } from '../src/precios/regla.js';
-import { categoriasDesde, textoEstado, VigilantePrecios } from '../src/precios/vigilante.js';
+import {
+  categoriasDesde,
+  rapidasDesde,
+  textoEstado,
+  VigilantePrecios,
+} from '../src/precios/vigilante.js';
 
 // Muestras reales recortadas (amazon.es, 6-nov-2026); ver la cabecera de cada fichero.
 const fx = (n: string) => readFileSync(join('test', 'fixtures', 'amazon', n), 'utf8');
@@ -276,7 +288,7 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
       'https://www.amazon.es/s?k=robot+aspirador',
     ]);
     expect(r.desconocidas).toEqual(['foo']);
-    expect(categoriasDesde('').categorias.length).toBe(10);
+    expect(categoriasDesde('').categorias.length).toBe(11);
   });
 });
 
@@ -344,5 +356,226 @@ describe('lectura en el Chrome de Asistenta y configuración', () => {
     expect(readFileSync(join('src', 'channels', 'telegram-commands.ts'), 'utf8')).toContain(
       "command: 'precios'",
     );
+  });
+});
+
+describe('listados en el Chrome de Asistenta (menos captchas)', () => {
+  it('el listado recortado en la página (atributos en otro orden) se lee igual', async () => {
+    // Lo que deja el recorte del navegador: data-asin antes que role, sin el resto de atributos.
+    const recortado = fx('busqueda-robot-aspirador.html').replace(
+      /<div role="listitem" data-asin="([A-Z0-9]{10})"[^>]*>/g,
+      '<div data-asin="$1" role="listitem">',
+    );
+    const nav = {
+      execJs: async (_s: string, code: string) => {
+        const m = code.includes('state.preciosPagina ||')
+          ? /slice\((\d+), (\d+)\)/.exec(code)
+          : null;
+        return { text: m ? recortado.slice(Number(m[1]), Number(m[2])) : String(recortado.length) };
+      },
+    };
+    const r = await leerListadoNavegador(nav, 's')('https://www.amazon.es/s?k=robot+aspirador');
+    const items = parseListado(r.html);
+    expect(items.map((i) => i.asin)).toEqual([
+      'B0HJMV4V5H',
+      'B0H642J8RN',
+      'B0HJMX5SSW',
+      'B0HJMVCMXL',
+    ]);
+    expect(items.find((i) => i.asin === 'B0HJMVCMXL')).toMatchObject({
+      cents: 879,
+      refCents: null,
+    });
+    expect(codigoListado('https://www.amazon.es/gp/bestsellers/kitchen/')).toContain(
+      'gridItemRoot',
+    );
+  });
+
+  it('si el Chrome falla, usa la petición normal y no lo reintenta en 6 h', async () => {
+    let t = 0;
+    let intentos = 0;
+    const leer = conRespaldo(
+      async () => {
+        intentos++;
+        throw new Error('no hay Chrome');
+      },
+      async () => ({ status: 200, html: 'http' }),
+      { now: () => t },
+    );
+    await leer('https://www.amazon.es/x');
+    await leer('https://www.amazon.es/x');
+    expect(intentos).toBe(1);
+    expect(leer.fallo()?.motivo).toBe('no hay Chrome');
+    t = 7 * 3600_000;
+    await leer('https://www.amazon.es/x');
+    expect(intentos).toBe(2);
+  });
+
+  it('un precio «desde» no entra en el historial', async () => {
+    const html = resultado('B0TEST0003', 'Producto', '10,00\u00a0€').replace(
+      '<span class="a-price"',
+      'Más opciones de compra desde <span class="a-price"',
+    );
+    expect(parseListado(html)[0]?.desde).toBe(true);
+    const v = new VigilantePrecios({
+      archivo: join(mkdtempSync(join(tmpdir(), 'precios-')), 'p.json'),
+      categorias: categoriasDesde('cocina').categorias,
+      leerListado: async () => ({ status: 200, html }),
+      leerFicha: async () => ({ status: 200, html: '' }),
+      avisar: async () => undefined,
+      esperar: async () => undefined,
+      paginas: 1,
+    });
+    await v.barrer();
+    expect(v.leer().asins.B0TEST0003).toBeUndefined();
+  });
+});
+
+// Los dos hallazgos reales de Quique (@Letscookvlc, 6-nov-2026, ~09:00), los dos vendidos por
+// Amazon.es: la plancha ghd Gold a 29,90 € (normal ~250 €) y el Chivas Regal Mizunara a
+// 12,50 € (normal ~69 €). Con el vigilante antiguo ninguno se habría visto sin pasar el enlace.
+function fichaDe(o: {
+  titulo: string;
+  entero: string;
+  dec: string;
+  tachado?: string;
+  etiqueta?: string;
+  vendedor?: string;
+}): string {
+  const marca = `a-price-fraction">${o.dec}</span>`;
+  let h = fx('ficha-dreo-navegador.html')
+    .replace(/(<span id="productTitle"[^>]*>)[\s\S]*?(<\/span>)/, `$1 ${o.titulo} $2`)
+    .replace('a-price-whole">41', `a-price-whole">${o.entero}`)
+    .replace('a-price-fraction">31', marca);
+  if (o.tachado) {
+    h = h.replace(
+      marca,
+      `${marca}<span class="a-size-small">${o.etiqueta ?? 'Recomendado:'} <span class="a-price a-text-price apex-basisprice-value" data-a-strike="true"><span class="a-offscreen">${o.tachado}</span></span></span>`,
+    );
+  }
+  const v = o.vendedor ?? 'Amazon.es';
+  return h.replace(/Remitente \/ Vendedor/g, `Envío desde: ${v} Vendido por: ${v} Detalles`);
+}
+
+describe('casos reales de Quique: ghd Gold y Chivas Regal Mizunara', () => {
+  const GHD = 'B0QUIQUE01';
+  const CHIVAS = 'B0QUIQUE02';
+  const LISTADO =
+    resultado(
+      GHD,
+      'ghd Gold Professional Plancha de pelo profesional',
+      '29,90\u00a0€',
+      '249,00\u00a0€',
+    ) +
+    resultado(CHIVAS, 'Chivas Regal Mizunara Blended Scotch Whisky 70 cl', '12,50\u00a0€') +
+    resultado(
+      'B0LOOKALK1',
+      'Placas de repuesto compatibles con ghd Gold',
+      '9,99\u00a0€',
+      '249,00\u00a0€',
+    ) +
+    resultado(
+      'B0LOOKALK2',
+      'ghd Gold plancha de pelo (vendedor externo)',
+      '24,90\u00a0€',
+      '249,00\u00a0€',
+    );
+  const FICHAS: Record<string, string> = {
+    [GHD]: fichaDe({
+      titulo: 'ghd Gold Professional Plancha de pelo',
+      entero: '29',
+      dec: '90',
+      tachado: '249,00\u00a0€',
+    }),
+    [CHIVAS]: fichaDe({
+      titulo: 'Chivas Regal Mizunara Blended Scotch Whisky 70 cl',
+      entero: '12',
+      dec: '50',
+    }),
+    B0LOOKALK1: fichaDe({
+      titulo: 'Placas de repuesto compatibles con ghd Gold',
+      entero: '9',
+      dec: '99',
+      tachado: '249,00\u00a0€',
+    }),
+    B0LOOKALK2: fichaDe({
+      titulo: 'ghd Gold plancha de pelo',
+      entero: '24',
+      dec: '90',
+      tachado: '249,00\u00a0€',
+      vendedor: 'BeautyOutletES',
+    }),
+  };
+
+  it('avisan el ghd (con su «Recomendado» de Amazon.es) y el Chivas (con su historial); los parecidos no', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'precios-quique-'));
+    const archivo = join(dir, 'precios-amazon.json');
+    // El Chivas ya se había visto a su precio normal (69 €) varias veces en dos días.
+    const d = 24 * 3600_000;
+    const now = 1_800_000_000_000;
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(
+      archivo,
+      JSON.stringify({
+        asins: {
+          [CHIVAS]: {
+            t: 'Chivas Regal Mizunara',
+            l: [
+              [now - 2 * d, 6900],
+              [now - d, 6890],
+              [now - d / 2, 6950],
+            ],
+          },
+        },
+      }),
+    );
+    const avisos: string[] = [];
+    const v = new VigilantePrecios({
+      archivo,
+      categorias: [],
+      rapidas: rapidasDesde('ghd|beauty, whisky|grocery'),
+      leerListado: async () => ({ status: 200, html: LISTADO }),
+      leerFicha: async (u) => ({ status: 200, html: FICHAS[u.slice(-10)] ?? '' }),
+      avisar: async (t) => void avisos.push(t),
+      esperar: async () => undefined,
+      now: () => now,
+      fichas: 5,
+    });
+    const r = await v.barrer({ rapido: true });
+    expect(r?.avisos).toBe(2);
+    const ghd = avisos.find((a) => a.includes('ghd Gold')) ?? '';
+    expect(ghd).toContain('29,90 €');
+    expect(ghd).toContain('249,00 €');
+    expect(ghd).toContain('−88 %');
+    expect(ghd).toContain(`https://www.amazon.es/dp/${GHD}`);
+    const chivas = avisos.find((a) => a.includes('Chivas')) ?? '';
+    expect(chivas).toContain('12,50 €');
+    expect(chivas).toMatch(/antes 69,\d\d €/);
+    expect(chivas).toContain('mediana de lo que he visto antes');
+    // El recambio ni se abre; el del vendedor externo se descarta al verificar.
+    expect(avisos.some((a) => a.includes('repuesto'))).toBe(false);
+    const pend = v.leer().pendientes;
+    expect(pend.find((p) => p.asin === 'B0LOOKALK2')?.motivo).toMatch(/BeautyOutletES/);
+    expect(pend.some((p) => p.asin === 'B0LOOKALK1')).toBe(false);
+  });
+
+  it('las búsquedas rápidas por defecto cubren pelo (ghd, Dyson, planchas) y licores (whisky, ginebra, ron)', () => {
+    const urls = rapidasDesde(undefined)
+      .flatMap((c) => c.urls)
+      .join(' ');
+    for (const q of [
+      'k=ghd',
+      'k=dyson',
+      'k=plancha+de+pelo',
+      'k=whisky',
+      'k=ginebra+premium',
+      'i=grocery',
+    ]) {
+      expect(urls).toContain(q);
+    }
+    expect(rapidasDesde('no')).toEqual([]);
+    expect(configPrecios({})).toMatchObject({ rapidoMin: 12, paginasRapido: 2 });
+    expect(configPrecios({ PA_PRECIOS_RAPIDO_MIN: '0' }).rapidoMin).toBe(0);
+    expect(categoriasDesde('licores').categorias[0]?.nombre).toBe('Bebidas y licores');
   });
 });
