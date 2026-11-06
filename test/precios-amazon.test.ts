@@ -376,7 +376,8 @@ describe('lectura en el Chrome de Asistenta y configuración', () => {
   it('el daemon programa el barrido y /precios está en la ayuda y en el menú', () => {
     const cli = readFileSync(join('src', 'cli.ts'), 'utf8');
     expect(cli).toContain("names: ['precios']");
-    expect(cli).toContain('preciosConf.cadaMin * 60_000');
+    expect(cli).toContain('cadaMin: preciosConf.cadaMin,');
+    expect(cli).toContain('}).arrancar();');
     expect(readFileSync(join('src', 'channels', 'telegram-help.ts'), 'utf8')).toContain(
       "command: 'precios'",
     );

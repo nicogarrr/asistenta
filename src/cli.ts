@@ -386,6 +386,7 @@ import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.
 import { ensureDirs, paths } from './paths.js';
 import { Gate, runPermisosCommand } from './permissions.js';
 import { PRECIOS_SOLO_DUENO, preciosAccion } from './precios/comando.js';
+import { PlanPrecios } from './precios/planificador.js';
 import {
   configPrecios,
   conRespaldo,
@@ -6227,7 +6228,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   ).unref();
   // Vigilante de errores de precio de Amazon.es (src/precios, docs/PRECIOS.md): listados por
   // HTTP; la ficha, en el Chrome de Asistenta, porque Amazon esconde el precio a quien no es
-  // un navegador real. Encendido salvo PA_PRECIOS=0 o «/precios off»; nunca en horas de silencio.
+  // un navegador real. Encendido salvo PA_PRECIOS=0 o «/precios off»; de noche, más despacio.
   const preciosConf = configPrecios();
   const preciosCats = categoriasDesde(preciosConf.categorias);
   const preciosRapidas = rapidasDesde(preciosConf.rapidas);
@@ -6289,7 +6290,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
   const barridoPrecios = async (rapido = false): Promise<void> => {
     if (!preciosEncendido() || !briefingOwner()) return;
-    if (inQuietHours(Date.now(), ownerQuiet(), localTimeZone())) return;
     const r = await vigilantePrecios.barrer({ rapido });
     if (r) {
       log.info('precios: barrido de Amazon.es', {
@@ -6302,28 +6302,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
     }
   };
-  setTimeout(() => {
-    void barridoPrecios().catch(() => null);
-    setInterval(
-      () => void barridoPrecios().catch(() => null),
-      preciosConf.cadaMin * 60_000,
-    ).unref();
-  }, 2 * 60_000).unref();
-  // Barrido rápido de las búsquedas caras (ghd, Dyson, whisky…) cada ~12 min ±25 %: los
-  // errores de precio duran poco. Mismo freno ante captchas que el barrido normal.
-  if (preciosConf.rapidoMin > 0 && preciosRapidas.length) {
-    const siguienteRapido = (): void => {
-      const ms = preciosConf.rapidoMin * 60_000 * (0.75 + Math.random() * 0.5);
-      setTimeout(
-        () =>
-          void barridoPrecios(true)
-            .catch(() => null)
-            .finally(siguienteRapido),
-        ms,
-      ).unref();
-    };
-    siguienteRapido();
-  }
+  // Barrido normal cada PA_PRECIOS_CADA_MIN y rápido de las búsquedas caras (ghd, Dyson,
+  // whisky…) cada ~PA_PRECIOS_RAPIDO_MIN ±25 %: los errores de precio duran poco. También de
+  // noche, al doble de intervalo; el aviso de error de precio sale aunque sea de madrugada.
+  new PlanPrecios({
+    barrer: (rapido) => barridoPrecios(rapido),
+    cadaMin: preciosConf.cadaMin,
+    rapidoMin: preciosRapidas.length ? preciosConf.rapidoMin : 0,
+    silencio: (now) => inQuietHours(now, ownerQuiet(), localTimeZone()),
+  }).arrancar();
   /** /precios [on|off|ahora]: estado del vigilante de errores de precio de Amazon.es. */
   const cmdPrecios = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
