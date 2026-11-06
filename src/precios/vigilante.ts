@@ -67,6 +67,8 @@ export const CATEGORIAS_POR_DEFECTO = [...Object.keys(CATALOGO), ...Object.keys(
  * Regal Mizunara a 12,50 €, vendidos por Amazon.es, 6-nov-2026). `texto|alias de búsqueda`.
  */
 export const RAPIDAS_POR_DEFECTO = [
+  // «Ofertas» (/deals): los productos vienen en JSON incrustado (parseOfertas).
+  'https://www.amazon.es/deals',
   // Relojes inteligentes (Nico, 6-nov-2026).
   'apple watch|electronics',
   'galaxy watch|electronics',
@@ -279,6 +281,7 @@ export function eurosTexto(cents: number): string {
 const FUENTE: Record<Referencia['fuente'], string> = {
   historial: 'mediana de lo que he visto antes',
   'mas-bajo-reciente': '«precio más bajo reciente» de Amazon',
+  mediana: '«precio mediano» de Amazon',
   recomendado: 'precio recomendado',
   antes: 'precio anterior',
 };

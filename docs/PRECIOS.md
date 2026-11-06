@@ -31,7 +31,8 @@ marcas y productos caros, donde un error de precio dura poco: relojes inteligent
 Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles
 gaming, MacBook, monitores, SSD NVMe, tarjetas RTX, procesadores Ryzen/Intel, iPad y tablets,
 auriculares Sony/Bose/AirPods, iPhone, Galaxy S, routers mesh), y belleza y licores (ghd, Dyson,
-planchas y secadores, perfumes, whisky, ginebra premium, ron añejo). Son 4 páginas por barrido
+planchas y secadores, perfumes, whisky, ginebra premium, ron añejo). Y la página de «Ofertas»
+(amazon.es/deals, sus productos vienen en un JSON dentro de la página). Son 4 páginas por barrido
 (rotando, `PA_PRECIOS_RAPIDO_PAGINAS`). Cambiarlas: `PA_PRECIOS_RAPIDAS=ghd,chivas regal|grocery,dyson`
 («no» = ninguna). Casos reales que tienen que salir: la plancha ghd Gold a 29,90 € (normal
 ~250 €) y el Chivas Regal Mizunara a 12,50 € (normal ~69 €), los dos vendidos por Amazon.es.
@@ -73,3 +74,14 @@ Pedida sin navegador real, la ficha de Amazon **esconde el precio** («Para ver 
 producto, añádelo a la cesta»), y la búsqueda mete dentro de cada resultado anuncios de otros
 productos con su propio tachado. Ahora la ficha se abre en el Chrome de Asistenta y el tachado
 solo cuenta si es del propio producto.
+
+## Lo que se aprendió cazando en amazon.es real (6-nov-2026, navegador en Madrid)
+
+- La ficha real pesa 2–3 MB; el vendedor («Vendido por», «Remitente / Vendedor») cae a 330–510 KB y
+  el tachado («El precio más bajo de los últimos 30 días») está en la columna central, no en la caja
+  de compra, que sale antes en la página. Antes se perdían los dos: un Huawei Watch vendido por
+  Amazon salía como «vendedor desconocido».
+- Las ofertas (/deals) no traen productos en HTML, sino un JSON con `priceToPay` y `basisPrice`
+  («Recomendado:», «Mediano:» —el precio mediano de Amazon— o «Más bajo:»).
+- Con el navegador en inglés Amazon.es enseña «Recommended: €249.00» y no se lee nada: el Chrome de
+  Asistenta tiene que estar en español.

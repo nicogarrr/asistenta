@@ -17,7 +17,7 @@ import { isBlockedPage, parseEuroCents } from '../watch/price-extract.js';
 
 export const AMAZON_ORIGIN = 'https://www.amazon.es';
 
-export type RefTipo = 'recomendado' | 'mas-bajo-reciente' | 'antes';
+export type RefTipo = 'recomendado' | 'mas-bajo-reciente' | 'mediana' | 'antes';
 
 export interface ItemListado {
   asin: string;
@@ -96,6 +96,8 @@ function importe(trozo: string): number | null {
 
 function refTipoDe(etiqueta: string): RefTipo {
   if (/m[aá]s bajo/i.test(etiqueta)) return 'mas-bajo-reciente';
+  // «Mediano:» de las ofertas: el precio mediano que calcula Amazon, no el recomendado.
+  if (/median[oa]/i.test(etiqueta)) return 'mediana';
   if (/antes|anterior/i.test(etiqueta)) return 'antes';
   return 'recomendado';
 }
@@ -206,6 +208,74 @@ export function parseListado(html: string): ItemListado[] {
     return out;
   }
   for (const [b] of trozos(html, /<div id="gridItemRoot"/g)) add(resultadoRejilla(b));
+  if (!out.length) for (const it of parseOfertas(html)) add(it);
+  return out;
+}
+
+/** El objeto JSON que empieza en `i` (llaves y cadenas con escapes), o null. */
+function objetoJson(s: string, i: number): unknown {
+  if (s[i] !== '{') return null;
+  let prof = 0;
+  let enCadena = false;
+  for (let j = i; j < s.length && j < i + 2_000_000; j++) {
+    const c = s[j];
+    if (enCadena) {
+      if (c === '\\') j++;
+      else if (c === '"') enCadena = false;
+    } else if (c === '"') enCadena = true;
+    else if (c === '{') prof++;
+    else if (c === '}' && --prof === 0) {
+      try {
+        return JSON.parse(s.slice(i, j + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+interface ProductoOferta {
+  asin?: unknown;
+  title?: unknown;
+  buyingOptionType?: unknown;
+  price?: {
+    priceToPay?: { price?: unknown };
+    basisPrice?: { label?: unknown; price?: unknown };
+  };
+}
+
+const centsDe = (v: unknown): number | null => {
+  const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+};
+
+/**
+ * «Ofertas» (amazon.es/deals, «Ofertas del día»): la página real (6-nov-2026, en un navegador)
+ * no trae los productos en HTML sino en un JSON incrustado `productSearchResponse.products`,
+ * con `priceToPay` y `basisPrice` («Recomendado:», «Mediano:» o «Más bajo:»).
+ */
+export function parseOfertas(html: string): ItemListado[] {
+  const at = html.indexOf('"productSearchResponse":');
+  if (at < 0) return [];
+  const r = objetoJson(html, html.indexOf('{', at)) as { products?: ProductoOferta[] } | null;
+  const out: ItemListado[] = [];
+  for (const p of r?.products ?? []) {
+    if (typeof p.asin !== 'string' || !/^[A-Z0-9]{10}$/.test(p.asin)) continue;
+    if (p.buyingOptionType !== undefined && p.buyingOptionType !== 'NEW') continue;
+    const base = p.price?.basisPrice;
+    const refCents = centsDe(base?.price);
+    out.push({
+      asin: p.asin,
+      titulo: typeof p.title === 'string' ? p.title : '',
+      cents: centsDe(p.price?.priceToPay?.price),
+      refCents,
+      refTipo: refCents ? refTipoDe(typeof base?.label === 'string' ? base.label : '') : null,
+      patrocinado: false,
+      desde: false,
+      porUnidad: false,
+    });
+  }
   return out;
 }
 
@@ -242,6 +312,24 @@ export function parseFicha(html: string): Ficha {
       refTipo = refTipoDe(textoPlano(tras.slice(Math.max(0, base.index - 250), base.index)));
     }
   }
+  // En el navegador hay dos bloques de precio: la caja de compra (corePrice_feature_div, sale
+  // primero y sin tachado) y la columna central (corePriceDisplay_desktop_feature_div /
+  // apex_desktop) con «El precio más bajo de los últimos 30 días». El tachado se toma de esta
+  // última si su precio es el mismo (6-nov-2026, 10 de 10 fichas reales).
+  if (cents !== null && refCents === null) {
+    const c = html.search(/id="(?:corePriceDisplay_desktop_feature_div|apex_desktop)"/);
+    const centro = c >= 0 && c !== at ? html.slice(c, c + 12_000) : '';
+    const p = /apex-pricetopay-value/.exec(centro) ?? /priceToPay/.exec(centro);
+    if (p?.index !== undefined && importe(centro.slice(p.index, p.index + 600)) === cents) {
+      const tras = centro.slice(p.index, p.index + 3000);
+      const base = /apex-basisprice-value|data-a-strike="true"/.exec(tras);
+      const otro = tras.slice(40).search(/apex-pricetopay-value|priceToPay/);
+      if (base?.index !== undefined && (otro < 0 || base.index < otro + 40)) {
+        refCents = importe(tras.slice(base.index, base.index + 600));
+        refTipo = refTipoDe(textoPlano(tras.slice(Math.max(0, base.index - 250), base.index)));
+      }
+    }
+  }
   const disp = textoPlano(/id="availability"[^>]*>([\s\S]{0,800})/.exec(html)?.[1] ?? '').slice(
     0,
     160,
@@ -250,15 +338,25 @@ export function parseFicha(html: string): Ficha {
     ? false
     : /en stock|disponible|quedan|recíbelo|envío/i.test(disp)
       ? true
-      : null;
-  const plano = textoPlano(html.slice(0, 400_000));
+      : // Ofertas flash: sin texto de disponibilidad, pero con el botón «Añadir a la cesta».
+        /id="add-to-cart-button"/.test(html)
+        ? true
+        : null;
+  // El vendedor se lee junto a la caja de compra: en el navegador la ficha pesa 2–3 MB y ese
+  // bloque cae a 330–510 KB (6-nov-2026); cortar en 400 KB lo perdía o lo partía a medias.
+  const caja = html.search(
+    /fulfillerInfoFeature_feature_div|offer-display-feature-name="desktop-(?:fulfiller|merchant)-info|id="merchant-info"/,
+  );
+  const plano = textoPlano(caja >= 0 ? html.slice(Math.max(0, caja - 2000), caja + 12_000) : html);
   // «Remitente / Vendedor Amazon» (envía y vende el mismo) o «Envío desde: X Vendido por: Y».
   const ambos = /Remitente \/ Vendedor\s+(\S+)/.exec(plano)?.[1] ?? null;
+  // La ficha real repite el nombre: «Vendido por RUIMEN RUIMEN Vendido por RUIMEN Devoluciones».
   const vendedor =
     ambos ??
-    /Vendido por:?\s+(.{1,40}?)(?=\s+(?:Segunda|Devoluciones|Pol[ií]ticas|Pago|Envío|Embalaje|Detalles|Ver)\b|\s*$|\.)/i
+    /Vendido por:?\s+(.{1,40}?)(?=\s+(?:Segunda|Devoluciones|Pol[ií]ticas|Pago|Envío|Embalaje|Detalles|Ver|Vendido)\b|\s*$|\.)/i
       .exec(plano)?.[1]
-      ?.trim() ??
+      ?.trim()
+      .replace(/^(.+?) \1$/, '$1') ??
     null;
   const envio = ambos ?? /Envío desde:?\s+(\S+)/i.exec(plano)?.[1] ?? null;
   const estadoTxt = `${titulo} ${textoPlano(bloque.slice(0, 4000))}`;
