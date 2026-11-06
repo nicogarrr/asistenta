@@ -30,7 +30,9 @@ Además, un **barrido rápido** cada ~12 min (±25 %, `PA_PRECIOS_RAPIDO_MIN`) d
 marcas y productos caros, donde un error de precio dura poco: relojes inteligentes (Apple Watch,
 Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles
 gaming, MacBook, monitores, SSD NVMe, tarjetas RTX, procesadores Ryzen/Intel, iPad y tablets,
-auriculares Sony/Bose/AirPods, iPhone, Galaxy S, routers mesh), y belleza y licores (ghd, Dyson,
+auriculares Sony/Bose/AirPods, iPhone, Galaxy S, routers mesh, RAM DDR5/DDR4 —Corsair, Kingston
+Fury, G.Skill, Crucial—, placas base, fuentes, refrigeración AIO, cajas, discos NAS, teclados y
+ratones gaming Logitech/Razer), y belleza y licores (ghd, Dyson,
 planchas y secadores, perfumes, whisky, ginebra premium, ron añejo). Y la página de «Ofertas»
 (amazon.es/deals, sus productos vienen en un JSON dentro de la página). Son 4 páginas por barrido
 (rotando, `PA_PRECIOS_RAPIDO_PAGINAS`). Cambiarlas: `PA_PRECIOS_RAPIDAS=ghd,chivas regal|grocery,dyson`
@@ -48,6 +50,17 @@ por qué, y dos botones: «🛒 Comprar ya» (mete ese producto en la cesta de u
 `https://www.amazon.es/gp/aws/cart/add.html?ASIN.1=<ASIN>&Quantity.1=1`; si Amazon no tiene la
 sesión iniciada en ese navegador, pide entrar y luego lo añade) y «🔗 Ver en Amazon» (la ficha).
 Los dos enlaces van también en el texto.
+
+## Sin marca, fuera
+
+Nico (6-nov-2026): «Quita productos sin marca». No avisa (ni abre la ficha) de productos con marca
+«Genérico», «Generic», «Sin marca»…, con el campo de marca vacío, o con un título que empieza por el
+tipo de producto sin una marca conocida («2026 Tablet 10 Pulgadas…», «Reloj Inteligente Mujer
+Hombre…»). Marcas extra que tratar igual: `PA_PRECIOS_SIN_MARCA=deertime,pinglang`.
+
+Y si lo vende un tercero (aunque lo envíe Amazon), su tachado o su «precio más bajo de los últimos
+30 días» no vale solo: lo fija el vendedor. Hace falta el historial propio de Asistenta. Caso real:
+una tablet sin marca en oferta flash a 82,99 € «antes» 299,99 €, vendida por PINGLANG Tech.
 
 ## Cuándo avisa
 

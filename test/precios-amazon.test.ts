@@ -643,6 +643,24 @@ describe('precios: qué barre (Nico, 6-nov-2026: relojes e informática sí, LEG
     ])
       expect(textos.some((t) => t?.includes(m))).toBe(true);
   });
+  it('busca RAM y componentes de marca (Nico, 11:18: «Ram también»)', () => {
+    for (const m of [
+      'ddr5',
+      'ddr4',
+      'corsair',
+      'kingston fury',
+      'g.skill',
+      'crucial',
+      'placa base',
+      'fuente de alimentación',
+      'aio',
+      'caja pc',
+      'nas',
+      'logitech',
+      'razer',
+    ])
+      expect(textos.some((t) => t?.includes(m))).toBe(true);
+  });
   it('el barrido de 30 min incluye «relojes inteligentes» (por búsqueda) e «informática»', () => {
     expect(CATEGORIAS_POR_DEFECTO).toEqual(expect.arrayContaining(['relojes', 'informatica']));
     const [r] = categoriasDesde('relojes').categorias;

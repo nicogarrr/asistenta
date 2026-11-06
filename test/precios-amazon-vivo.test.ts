@@ -1,8 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseFicha, parseListado, parseOfertas } from '../src/precios/amazon.js';
-import { mejorReferencia } from '../src/precios/regla.js';
+import { type ItemListado, parseFicha, parseListado, parseOfertas } from '../src/precios/amazon.js';
+import {
+  candidato,
+  descarteListado,
+  mejorReferencia,
+  sinMarca,
+  verificar,
+} from '../src/precios/regla.js';
 import { RAPIDAS_POR_DEFECTO } from '../src/precios/vigilante.js';
 
 // Fallos vistos al cazar en amazon.es real desde un navegador en Madrid (6-nov-2026).
@@ -54,7 +60,7 @@ describe('amazon.es real en navegador: «Ofertas» (/deals)', () => {
   it('«Mediano:» es el precio mediano de Amazon, no el recomendado, y vale como referencia', () => {
     const [p] = parseOfertas(html);
     expect(p).toMatchObject({ cents: 5893, refCents: 8167, refTipo: 'mediana' });
-    expect(mejorReferencia([], { cents: 8167, tipo: 'mediana' }, false)).toEqual({
+    expect(mejorReferencia([], { cents: 8167, tipo: 'mediana' }, true)).toEqual({
       cents: 8167,
       fuente: 'mediana',
     });
@@ -64,5 +70,53 @@ describe('amazon.es real en navegador: «Ofertas» (/deals)', () => {
   });
   it('las ofertas entran en el barrido rápido', () => {
     expect(RAPIDAS_POR_DEFECTO).toContain('https://www.amazon.es/deals');
+  });
+});
+
+describe('sin marca fuera y tachado de vendedor externo (Nico, 6-nov-2026: «Quita productos sin marca»)', () => {
+  // La tablet que saltó en vivo: 82,99 € «antes» 299,99 € (oferta flash), vende PINGLANG Tech.
+  const tablet: ItemListado = {
+    asin: 'B0GXF786XL',
+    titulo:
+      '2026 Tablet 10 Pulgadas Android AI ,12GB RAM+128GB ROM/TF 1TB, 5G WiFi, Bluetooth 5.0, 8000mAh Batería',
+    cents: 8299,
+    refCents: 29_999,
+    refTipo: 'mas-bajo-reciente',
+    patrocinado: true,
+    desde: false,
+    porUnidad: false,
+  };
+  const ficha = parseFicha(fx('ficha-tablet-oferta-flash.html'));
+  it('la tablet sin marca de la oferta flash NO avisa (ni en el listado ni en la ficha)', () => {
+    expect(descarteListado(tablet)).toMatch(/sin marca/);
+    expect(candidato(tablet, [])).toBeNull();
+    expect(verificar(tablet, ficha, [])).toMatchObject({ ok: false });
+  });
+  it('vendedor externo: su «más bajo de 30 días» no vale solo; con historial propio sí', () => {
+    expect(mejorReferencia([], { cents: 29_999, tipo: 'mas-bajo-reciente' }, false)).toBeNull();
+    const dia = 24 * 3600 * 1000;
+    const h = [0, 1, 2].map((i) => ({ at: i * dia, cents: 29_000 }));
+    expect(mejorReferencia(h, { cents: 29_999, tipo: 'mas-bajo-reciente' }, false)).toMatchObject({
+      fuente: 'historial',
+    });
+  });
+  it('lee la marca de la ficha real', () => {
+    expect(ficha.marca).toBe('DEERTiME');
+    expect(parseFicha(fx('ficha-huawei-caja-lejos.html')).marca ?? 'HUAWEI').toBe('HUAWEI');
+  });
+  it('Genérico, Sin marca, marca vacía y la lista configurable', () => {
+    expect(sinMarca('Tablet Android', 'Genérico')).toMatch(/sin marca/);
+    expect(sinMarca('Reloj', 'Sin marca')).toMatch(/sin marca/);
+    expect(sinMarca('Algo', '')).toMatch(/marca vacía/);
+    expect(sinMarca('DEERTiME Tablet A9', 'DEERTiME', ['deertime'])).toMatch(/DEERTiME/);
+    expect(sinMarca('HUAWEI Watch GT Runner 2 Smartwatch', 'HUAWEI')).toBeNull();
+    expect(sinMarca('ghd Gold Professional Plancha de pelo', null)).toBeNull();
+    expect(sinMarca('Chivas Regal Mizunara Blended Scotch Whisky 70 cl', null)).toBeNull();
+    expect(
+      sinMarca('Reloj Inteligente Mujer Hombre, 1.85" Smartwatch con Llamadas', 'FURUID'),
+    ).toMatch(/título genérico/);
+    expect(sinMarca('Portátil HP 15s-fq5000ns', 'HP')).toBeNull();
+    expect(sinMarca('Memoria RAM G.Skill Trident Z5 DDR5 32GB', 'G.SKILL')).toBeNull();
+    expect(sinMarca('Memoria RAM DDR5 32GB 6000MHz para PC', '')).toMatch(/sin marca/);
   });
 });
