@@ -179,7 +179,8 @@ function categoriaDe(id: string): Categoria | null {
     nombre,
     urls: [
       `${AMAZON_ORIGIN}/gp/bestsellers/${bs}/`,
-      `${AMAZON_ORIGIN}/gp/movers-and-shakers/${bs}/`,
+      // Sin «más vendidos en alza» (movers-and-shakers): en el Chrome de Asistenta llegan siempre
+      // vacíos (data-client-recs-list="[]", 3 de 3 el 6-nov); eran peticiones perdidas.
       // Novedades con su tachado: los productos nuevos sin historial también cuentan.
       `${AMAZON_ORIGIN}/s?i=${alias}&s=date-desc-rank`,
     ],
