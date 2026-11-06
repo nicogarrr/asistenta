@@ -661,6 +661,25 @@ describe('precios: qué barre (Nico, 6-nov-2026: relojes e informática sí, LEG
     ])
       expect(textos.some((t) => t?.includes(m))).toBe(true);
   });
+  it('busca portátiles, sobremesa, torres, mini PC y todo en uno de marca (Nico, 11:27)', () => {
+    for (const m of [
+      'portátil lenovo',
+      'portátil hp',
+      'portátil asus',
+      'portátil acer',
+      'portátil msi',
+      'portátil dell',
+      'macbook',
+      'sobremesa',
+      'pccom',
+      'omen',
+      'legion',
+      'mac mini',
+      'nuc',
+      'imac',
+    ])
+      expect(textos.some((t) => t?.includes(m))).toBe(true);
+  });
   it('el barrido de 30 min incluye «relojes inteligentes» (por búsqueda) e «informática»', () => {
     expect(CATEGORIAS_POR_DEFECTO).toEqual(expect.arrayContaining(['relojes', 'informatica']));
     const [r] = categoriasDesde('relojes').categorias;

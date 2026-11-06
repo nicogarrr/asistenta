@@ -28,8 +28,8 @@ búsqueda—), tres listados: «Los más vendidos»,
 
 Además, un **barrido rápido** cada ~12 min (±25 %, `PA_PRECIOS_RAPIDO_MIN`) de búsquedas de
 marcas y productos caros, donde un error de precio dura poco: relojes inteligentes (Apple Watch,
-Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles
-gaming, MacBook, monitores, SSD NVMe, tarjetas RTX, procesadores Ryzen/Intel, iPad y tablets,
+Galaxy Watch, Garmin, Amazfit, Huawei Watch, Pixel Watch), sobre todo informática (portátiles de marca —Lenovo, HP, ASUS, Acer, MSI, Dell— y
+gaming, sobremesa y torres gaming —PcCom, MSI, HP Omen, Lenovo Legion—, Mac mini, NUC, iMac, MacBook, monitores, SSD NVMe, tarjetas RTX, procesadores Ryzen/Intel, iPad y tablets,
 auriculares Sony/Bose/AirPods, iPhone, Galaxy S, routers mesh, RAM DDR5/DDR4 —Corsair, Kingston
 Fury, G.Skill, Crucial—, placas base, fuentes, refrigeración AIO, cajas, discos NAS, teclados y
 ratones gaming Logitech/Razer), y belleza y licores (ghd, Dyson,
