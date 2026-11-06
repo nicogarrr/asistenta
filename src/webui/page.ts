@@ -879,15 +879,23 @@ ${renderMiniAppScript()}
         }
         var cabeceras = { Authorization: 'Bearer ' + token };
         if (opciones.cuerpo !== undefined) cabeceras['Content-Type'] = 'application/json';
-        // Solo las lecturas tienen tope: una orden (POST) puede tardar lo que tarde.
-        var corte =
-          opciones.metodo === 'GET' && typeof AbortController === 'function'
-            ? new AbortController()
-            : null;
+        // Las lecturas tienen tope de 30 s; una orden (POST) solo si trae el suyo (el chat,
+        // 90 s): «hola» se quedó 2 min en «Pensando…» en el iPhone (6 nov).
+        var tope = opciones.tope || (opciones.metodo === 'GET' ? 30000 : 0);
+        function errorTope() {
+          var lento = new Error(
+            'Asistenta lleva más de ' +
+              Math.round(tope / 1000) +
+              ' s sin contestar: puede que siga pensando o que se haya colgado. Pulsa «Reintentar».'
+          );
+          lento.tiempoAgotado = true;
+          return lento;
+        }
+        var corte = tope && typeof AbortController === 'function' ? new AbortController() : null;
         var reloj = corte
           ? setTimeout(function () {
               corte.abort();
-            }, 30000)
+            }, tope)
           : null;
         var respuesta;
         try {
@@ -901,6 +909,7 @@ ${renderMiniAppScript()}
           });
         } catch (error) {
           if (reloj) clearTimeout(reloj);
+          if (opciones.tope && corte && corte.signal.aborted) throw errorTope();
           throw errorNoEnMarcha();
         }
         var datos = null;
@@ -911,7 +920,7 @@ ${renderMiniAppScript()}
           esJson = false;
         }
         if (reloj) clearTimeout(reloj);
-        if (corte && corte.signal.aborted) throw errorNoEnMarcha();
+        if (corte && corte.signal.aborted) throw opciones.tope ? errorTope() : errorNoEnMarcha();
         if (respuesta.status === 401) {
           pedirToken('Token rechazado: pega el token correcto (PA_WEB_TOKEN).');
           var rechazo = new Error(formato.mensajeDeError(401, datos));
@@ -931,8 +940,8 @@ ${renderMiniAppScript()}
         return llamar(ruta, { metodo: 'GET' });
       }
 
-      function enviar(ruta, cuerpo) {
-        return llamar(ruta, { metodo: 'POST', cuerpo: cuerpo });
+      function enviar(ruta, cuerpo, tope) {
+        return llamar(ruta, { metodo: 'POST', cuerpo: cuerpo, tope: tope });
       }
 
       function listaDeSesiones(datos) {
@@ -1313,7 +1322,7 @@ ${renderMiniAppScript()}
           segundos.textContent = formato.textoEspera(Date.now() - inicio).replace('Pensando…', '');
         }, 1000);
         try {
-          var datos = await enviar('/api/chat', { text: texto });
+          var datos = await enviar('/api/chat', { text: texto }, 90000 /* tope: error claro y «Reintentar» */);
           var respuesta =
             datos && typeof datos === 'object' && typeof datos.text === 'string'
               ? datos.text
@@ -1416,7 +1425,7 @@ ${renderMiniAppScript()}
         espera.setAttribute('data-reintento', 'true');
         var cuerpo = espera.querySelector('.texto');
         try {
-          var datos = await enviar('/api/chat/retry', {});
+          var datos = await enviar('/api/chat/retry', {}, 90000);
           var respuesta = datos && typeof datos.text === 'string' ? datos.text : '';
           espera.className = 'turno asistente';
           cuerpo.textContent = respuesta.trim() ? respuesta : '(Sin respuesta de texto.)';

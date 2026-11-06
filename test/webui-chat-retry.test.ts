@@ -52,7 +52,7 @@ describe('panel: «Reintentar» repite el último turno (POST /api/chat/retry)',
 
   it('el botón Reintentar de un turno fallido repite sin la respuesta anterior; sin conexión reenvía', () => {
     const html = renderPage();
-    expect(html).toContain("enviar('/api/chat/retry', {})");
+    expect(html).toContain("enviar('/api/chat/retry', {}, 90000)");
     expect(html).toMatch(
       /if \(error && error\.sinConexion\) enviarChat\(null, texto\);\s*else repetirUltimo\(\);/,
     );

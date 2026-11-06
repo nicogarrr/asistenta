@@ -498,7 +498,16 @@ async function respondApi(
           throw new HttpError(400, 'Falta el texto del mensaje');
         }
         if (!deps.chat) throw new HttpError(503, 'Chat no disponible');
-        const answer = await deps.chat(text);
+        // Cuánto tarda cada turno del panel: un «Pensando…» de 2 min se ve en el log.
+        const tChat = Date.now();
+        let answer: Awaited<ReturnType<NonNullable<WebUiDeps['chat']>>>;
+        try {
+          answer = await deps.chat(text);
+        } catch (error) {
+          log.warn('panel chat: falló', { ms: Date.now() - tChat });
+          throw error;
+        }
+        log.info('panel chat: tiempos', { ms: Date.now() - tChat });
         if (!isRecord(answer) || typeof answer.text !== 'string') {
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
