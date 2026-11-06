@@ -50,6 +50,8 @@ export interface ModeloSherpa {
   tokens: string;
   /** Carpeta espeak-ng-data que trae el propio archivo del modelo. */
   datos: string;
+  /** Solo Kokoro: tabla de voces, léxicos y diccionario que trae su archivo. */
+  kokoro?: { voces: string; lexicon: string; dict: string };
 }
 
 export interface SherpaOptions {
@@ -76,11 +78,26 @@ export function createSherpaTts(opts: SherpaOptions): Tts {
       const nuevo = Promise.resolve().then(() =>
         cargar().OfflineTts.createAsync({
           model: {
-            vits: {
-              model: opts.modelo.onnx,
-              tokens: opts.modelo.tokens,
-              dataDir: opts.modelo.datos,
-            },
+            ...(opts.modelo.kokoro
+              ? {
+                  kokoro: {
+                    model: opts.modelo.onnx,
+                    voices: opts.modelo.kokoro.voces,
+                    tokens: opts.modelo.tokens,
+                    dataDir: opts.modelo.datos,
+                    lexicon: opts.modelo.kokoro.lexicon,
+                    dictDir: opts.modelo.kokoro.dict,
+                    // Fonemas castellanos de espeak-ng (con «z» y «c» de España).
+                    lang: 'es',
+                  },
+                }
+              : {
+                  vits: {
+                    model: opts.modelo.onnx,
+                    tokens: opts.modelo.tokens,
+                    dataDir: opts.modelo.datos,
+                  },
+                }),
             numThreads: hilos,
             provider: 'cpu',
             debug: 0,
