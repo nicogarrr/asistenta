@@ -19,6 +19,7 @@ import { normalizeHostname } from './text.js';
 /** Herramientas cuyo resultado NO trae contenido privado al turno. Todo lo demás sí. */
 export const NON_TAINTING_TOOLS: ReadonlySet<string> = new Set([
   'fetch',
+  'resumen_video',
   'web',
   'browser',
   'download',
@@ -149,7 +150,7 @@ export function egressUrlOf(tool: string, args: Record<string, unknown>): string
   }
   const url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) return null;
-  if (tool === 'fetch' || tool === 'download') return url;
+  if (tool === 'fetch' || tool === 'download' || tool === 'resumen_video') return url;
   if (tool === 'browser' && (args.action === 'open' || args.action === undefined)) return url;
   // Una vigilancia hace peticiones periódicas a esa URL: misma salida que un fetch.
   if (tool === 'vigilar_precio' && args.action === 'add') return url;
