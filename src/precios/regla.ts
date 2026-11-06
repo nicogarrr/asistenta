@@ -154,6 +154,47 @@ export function descarteListado(it: ItemListado): string | null {
   return null;
 }
 
+/**
+ * Marca + modelo de un título: las dos primeras palabras y las que llevan cifras entre las seis
+ * primeras («ghd Gold Professional…» → «ghd gold»; «Apple iPhone 15 128 GB» → «apple iphone 15 128»).
+ */
+export function claveModelo(titulo: string): string {
+  const p = titulo
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  if (p.length < 2) return '';
+  return [...p.slice(0, 2), ...p.slice(2, 6).filter((w) => /\d/.test(w))].join(' ');
+}
+
+/**
+ * Listado SIN tachado (Nico, 6-nov: «la ghd Gold a 29,90 € sin precio tachado ni la ve»): se
+ * compara con 3 o más iguales (misma marca y modelo) de la misma página. Si cuesta ≤ ratio de su
+ * mediana, devuelve esa mediana como PISTA para abrir la ficha; el aviso sigue necesitando un
+ * histórico real (el propio o camelcamelcamel), como un «Recomendado».
+ */
+export function referenciaPares(
+  it: ItemListado,
+  pagina: readonly ItemListado[],
+  cfg: ConfigRegla = CONFIG_REGLA,
+): number | null {
+  if (it.cents === null || it.refCents !== null || descarteListado(it)) return null;
+  const k = claveModelo(it.titulo);
+  if (!k) return null;
+  const vistos = new Set([it.asin]);
+  const precios: number[] = [];
+  for (const o of pagina) {
+    if (vistos.has(o.asin) || o.cents === null || descarteListado(o)) continue;
+    if (claveModelo(o.titulo) !== k) continue;
+    vistos.add(o.asin);
+    precios.push(o.cents);
+  }
+  if (precios.length < 3) return null;
+  const m = mediana(precios);
+  if (m < cfg.minRefCents) return null;
+  return it.cents <= m * cfg.ratio ? m : null;
+}
+
 /** ¿Es candidato? Devuelve la referencia que lo hace candidato. */
 export function candidato(
   it: ItemListado,

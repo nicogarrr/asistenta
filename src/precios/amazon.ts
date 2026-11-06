@@ -17,7 +17,8 @@ import { isBlockedPage, parseEuroCents } from '../watch/price-extract.js';
 
 export const AMAZON_ORIGIN = 'https://www.amazon.es';
 
-export type RefTipo = 'recomendado' | 'mas-bajo-reciente' | 'mediana' | 'antes';
+/** `pares`: sin tachado; mediana de 3+ iguales (marca y modelo) en la misma página. Solo pista. */
+export type RefTipo = 'recomendado' | 'mas-bajo-reciente' | 'mediana' | 'antes' | 'pares';
 
 export interface ItemListado {
   asin: string;
