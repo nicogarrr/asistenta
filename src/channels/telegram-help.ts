@@ -185,6 +185,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'vigilancias', description: 'todo lo que vigilo: páginas, precios, rutinas' },
       { command: 'dejar_de_vigilar', args: '<id>', description: 'deja de vigilar una página' },
       { command: 'precio', description: 'histórico de precio de algo vigilado' },
+      { command: 'precios', args: '[on|off]', description: 'errores de precio en Amazon.es' },
       { command: 'compara', args: '<enlace>', description: 'el mismo producto en 7 tiendas' },
       {
         command: 'ocr',

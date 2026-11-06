@@ -385,6 +385,10 @@ import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
 import { Gate, runPermisosCommand } from './permissions.js';
+import { PRECIOS_SOLO_DUENO, preciosAccion } from './precios/comando.js';
+import { configPrecios, conRespaldo, leerFichaNavegador, leerHttp } from './precios/red.js';
+import { CONFIG_REGLA } from './precios/regla.js';
+import { categoriasDesde, textoEstado, VigilantePrecios } from './precios/vigilante.js';
 import { migrateLocalPresetPin } from './preset-migration.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import {
@@ -6145,6 +6149,81 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       })().catch(() => null),
     10 * 60 * 1000,
   ).unref();
+  // Vigilante de errores de precio de Amazon.es (src/precios, docs/PRECIOS.md): listados por
+  // HTTP; la ficha, en el Chrome de Asistenta, porque Amazon esconde el precio a quien no es
+  // un navegador real. Encendido salvo PA_PRECIOS=0 o «/precios off»; nunca en horas de silencio.
+  const preciosConf = configPrecios();
+  const preciosCats = categoriasDesde(preciosConf.categorias);
+  const vigilantePrecios = new VigilantePrecios({
+    archivo: join(paths.state, 'precios-amazon.json'),
+    categorias: preciosCats.categorias,
+    cfg: { ...CONFIG_REGLA, ratio: preciosConf.ratio },
+    paginas: preciosConf.paginas,
+    leerListado: leerHttp(),
+    leerFicha: (url) => {
+      const owner = briefingOwner();
+      if (!owner) return leerHttp()(url);
+      const scope = `telegram:dm:${owner}#precios`;
+      return conRespaldo(leerFichaNavegador(browserFor(scope), scope), leerHttp())(url);
+    },
+    avisar: async (text) => {
+      const owner = briefingOwner();
+      if (!owner) throw new Error('no sé cuál es el chat del dueño');
+      await telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text });
+    },
+  });
+  const preciosEncendido = (): boolean => vigilantePrecios.leer().encendido ?? preciosConf.activo;
+  const preciosEstado = (): string => {
+    const guardado = vigilantePrecios.leer();
+    return textoEstado(guardado, {
+      activo: preciosEncendido(),
+      motivoApagado:
+        guardado.encendido === false ? 'lo apagaste con /precios off' : preciosConf.motivoApagado,
+      categorias: preciosCats.categorias,
+      desconocidas: preciosCats.desconocidas,
+      cadaMin: preciosConf.cadaMin,
+      now: Date.now(),
+      tz: localTimeZone(),
+      ratio: preciosConf.ratio,
+    });
+  };
+  const barridoPrecios = async (): Promise<void> => {
+    if (!preciosEncendido() || !briefingOwner()) return;
+    if (inQuietHours(Date.now(), ownerQuiet(), localTimeZone())) return;
+    const r = await vigilantePrecios.barrer();
+    if (r) {
+      log.info('precios: barrido de Amazon.es', {
+        paginas: r.paginas,
+        vistos: r.vistos,
+        candidatos: r.candidatos,
+        avisos: r.avisos,
+        errores: r.errores.slice(0, 3),
+      });
+    }
+  };
+  setTimeout(() => {
+    void barridoPrecios().catch(() => null);
+    setInterval(
+      () => void barridoPrecios().catch(() => null),
+      preciosConf.cadaMin * 60_000,
+    ).unref();
+  }, 2 * 60_000).unref();
+  /** /precios [on|off|ahora]: estado del vigilante de errores de precio de Amazon.es. */
+  const cmdPrecios = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      return void (await say(inbound, PRECIOS_SOLO_DUENO, { quote: true }));
+    }
+    const a = preciosAccion(args);
+    if (a === 'on') vigilantePrecios.encender(true);
+    if (a === 'off') vigilantePrecios.encender(false);
+    if (a === 'ahora') {
+      await say(inbound, '🔎 Barriendo Amazon.es ahora (tarda un par de minutos)…', {
+        quote: true,
+      });
+      await vigilantePrecios.barrer().catch(() => null);
+    }
+    await say(inbound, preciosEstado(), { quote: true });
+  };
   // Avisos de GitHub (CI en rojo en main, PR/issue/comentario nuevos): apagado salvo
   // PA_GITHUB_AVISOS=dueño/repo o «avísame de dueño/repo» en el chat (herramienta github_avisos).
   // Sin modelo; sondeo con ETag y espera larga (github-avisos.ts). Sin repos no arranca.
@@ -9580,6 +9659,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['vigilancias'], run: (inbound) => cmdVigilancias(inbound) },
     { names: ['dejar_de_vigilar'], run: (inbound, args) => cmdDejarDeVigilar(inbound, args) },
     { names: ['precio'], run: (inbound, args) => cmdPrecio(inbound, args) },
+    { names: ['precios'], run: (inbound, args) => cmdPrecios(inbound, args) },
     { names: ['compara'], run: (inbound, args) => cmdCompara(inbound, args) },
     { names: ['investiga'], run: (inbound, args) => cmdInvestiga(inbound, args) },
     { names: ['resolver', 'resolve'], run: (inbound, args) => cmdResolve(inbound, args) },

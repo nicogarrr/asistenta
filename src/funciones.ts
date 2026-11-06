@@ -161,6 +161,7 @@ const COMMAND_AREA: Readonly<Record<string, FuncionAreaId>> = {
  * esté aquí.
  */
 export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+  'precios',
   'spotify',
   'google',
   'tailscale',

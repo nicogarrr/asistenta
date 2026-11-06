@@ -155,6 +155,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'precios-amazon.json',
+    what: 'vigilante de errores de precio de Amazon.es: historial por ASIN, avisos enviados y último barrido',
+    backup: 'file',
+  },
+  {
     name: 'mercadona.json',
     what: 'pedido semanal de Mercadona: día del aviso, productos elegidos antes y el pedido en curso',
     backup: 'file',
