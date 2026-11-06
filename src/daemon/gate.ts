@@ -92,6 +92,8 @@ export interface DaemonGateOptions {
     tool: string,
     reason: string,
     question?: string,
+    /** `conAlcance: false`: solo «Permitir»/«Denegar» (ver `ofreceAlcance`). */
+    extra?: { conAlcance: boolean },
   ) => Promise<ApprovalChoice>;
   /**
    * Told while a human is being asked, because the idle watchdog has to know that
@@ -189,7 +191,9 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
           });
           return false;
         }
-        const choice = await options.ask(options.threadKey, call.tool, reason, approval.question);
+        const choice = await options.ask(options.threadKey, call.tool, reason, approval.question, {
+          conAlcance: ofreceAlcance(call),
+        });
         if (choice.approved && choice.scope !== 'once') {
           try {
             gate.setScope(options.threadKey, approvalScopeKey(call), choice.scope);
@@ -212,6 +216,15 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     },
   });
   return gate;
+}
+
+/**
+ * Si la pregunta ofrece «Por ahora» y «Siempre». Un shell arriesgado (borrar, instalar,
+ * código en línea…) nunca guarda un permiso reutilizable: los dos botones no hacían
+ * nada y Nico creía haberlo dejado permitido. Ahí solo «Permitir» y «Denegar».
+ */
+export function ofreceAlcance(call: { tool: string; args: Record<string, unknown> }): boolean {
+  return approvalScopeKey(call) !== 'shell';
 }
 
 /**
