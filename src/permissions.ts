@@ -305,9 +305,9 @@ function argString(args: Record<string, unknown>, key: string): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** `fetch` (siempre GET) y `web` search/fetch/stats: leen, no pagan ni envían. */
+/** `fetch` (siempre GET), `resumen_video` y `web` search/fetch/stats: leen, no pagan ni envían. */
 function isReadLookup(c: ToolCall): boolean {
-  if (c.tool === 'fetch') return true;
+  if (c.tool === 'fetch' || c.tool === 'resumen_video') return true;
   return c.tool === 'web' && ['search', 'fetch', 'stats'].includes(argString(c.args, 'action'));
 }
 

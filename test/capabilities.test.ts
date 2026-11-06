@@ -22,6 +22,7 @@ const BEFORE = {
     'read',
     'list',
     'fetch',
+    'resumen_video',
     'done',
     'preguntar',
     'memory',

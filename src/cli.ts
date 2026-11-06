@@ -713,6 +713,7 @@ import {
   snoozeReminder,
   snoozeWhen,
 } from './tools/reminder.js';
+import { createResumenVideoTool } from './tools/resumen-video.js';
 import { createServiceTool } from './tools/service.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
 // report a booking it never made, which is the exact failure this project exists to
@@ -2669,6 +2670,31 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** thread.key -> live sync of installed factory tools (see factory/loader.ts). */
   const factorySyncs = new Map<string, () => Promise<void>>();
 
+  /** El aviso «🎧 Transcribiendo…» de resumen_video: un mensaje que se edita y se borra al acabar. */
+  const resumenProgress = (thread: Thread) => {
+    let id: string | null = null;
+    return {
+      show: async (text: string) => {
+        const inbound = inboundFor(thread);
+        if (inbound.channel !== 'telegram') return;
+        if (id) return telegram.editMessageText(inbound.chatId, id, text);
+        id = await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: inbound.chatId,
+          text,
+          ...(inbound.threadId ? { threadId: inbound.threadId } : {}),
+        });
+      },
+      clear: async () => {
+        if (!id) return;
+        const done = id;
+        id = null;
+        await telegram.deleteMessage(inboundFor(thread).chatId, done);
+      },
+    };
+  };
+
   const threadTools = (thread: Thread): AgentTool[] => {
     const scope = () => thread.key;
     const computerGate: ActionGate = (call) =>
@@ -2680,6 +2706,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const all: AgentTool[] = [
       ...fsTools,
       createFetchTool(),
+      // «Resume este vídeo» de YouTube o X: solo lee, el modelo normal del agente resume
+      // y un aviso «🎧 Transcribiendo…» en el chat mientras se transcribe el audio.
+      createResumenVideoTool({
+        cookiesFromBrowser: config.downloadCookiesBrowser,
+        complete: async () => {
+          const handle = await createProviderHandle(config);
+          const model = handle.modelFor('pa-resumen-video');
+          return async (systemPrompt, user, opts) => {
+            const reply = await handle.models.completeSimple(
+              model,
+              {
+                systemPrompt,
+                messages: [
+                  { role: 'user', content: [{ type: 'text', text: user }], timestamp: Date.now() },
+                ],
+              },
+              { maxTokens: opts.maxTokens, sessionId: 'pa-resumen-video', signal: opts.signal },
+            );
+            return reply.content
+              .map((b) => (b.type === 'text' ? b.text : ''))
+              .join('')
+              .trim();
+          };
+        },
+        progress: resumenProgress(thread),
+      }),
       createTemasTool({ store: temasStore, temas: temasDeNico, news: noticiasDeTemas }),
       createWebTool(config),
       createDoneTool(),

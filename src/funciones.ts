@@ -322,6 +322,10 @@ export const TOOL_ABILITIES: Readonly<
   },
   web: { area: 'investigar', text: 'busco en internet' },
   fetch: { area: 'investigar', text: 'leo la página que me pases' },
+  resumen_video: {
+    area: 'investigar',
+    text: 'te resumo un vídeo de YouTube o X: TL;DR, puntos clave con minuto, cifras y nombres',
+  },
   boe: { area: 'investigar', text: 'miro el BOE y te aviso si sale algo de un tema' },
   browser: { area: 'investigar', text: 'navego por webs y relleno formularios' },
   delegate: {
