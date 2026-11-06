@@ -9,6 +9,7 @@
  *   recorta dentro de la página a lo que importa y se lee aquí con `parseFicha`.
  */
 
+import { SIN_MARCA_POR_DEFECTO } from './regla.js';
 import type { Respuesta } from './vigilante.js';
 
 export const CABECERAS: Record<string, string> = {
@@ -189,6 +190,8 @@ export interface ConfigPrecios {
   rapidoMin: number;
   paginasRapido: number;
   rapidas: string | undefined;
+  /** Marcas que cuentan como «sin marca» (las de por defecto + `PA_PRECIOS_SIN_MARCA`). */
+  sinMarca: string[];
 }
 
 /**
@@ -196,6 +199,8 @@ export interface ConfigPrecios {
  * %); PA_PRECIOS_CADA_MIN=30; PA_PRECIOS_PAGINAS=6 (listados por barrido);
  * PA_PRECIOS_CATEGORIAS=cocina,informatica,… (vacío = todas); PA_PRECIOS_RAPIDO_MIN=12 (búsquedas
  * caras: ghd, Dyson, whisky…; 0 = no), PA_PRECIOS_RAPIDO_PAGINAS=4, PA_PRECIOS_RAPIDAS=ghd,chivas…
+ * PA_PRECIOS_SIN_MARCA=deertime,pinglang (marcas que se tratan como «sin marca», además de
+ * Genérico, Generic, Sin marca…).
  */
 export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPrecios {
   const off = /^(0|no|off|false|apagado)$/i.test((env.PA_PRECIOS ?? '').trim());
@@ -217,5 +222,12 @@ export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPreci
     })(),
     paginasRapido: Math.round(num(env.PA_PRECIOS_RAPIDO_PAGINAS, 4, 1, 10)),
     rapidas: env.PA_PRECIOS_RAPIDAS,
+    sinMarca: [
+      ...SIN_MARCA_POR_DEFECTO,
+      ...(env.PA_PRECIOS_SIN_MARCA ?? '')
+        .split(',')
+        .map((m) => m.trim().toLowerCase())
+        .filter(Boolean),
+    ],
   };
 }

@@ -6186,7 +6186,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const vigilantePrecios = new VigilantePrecios({
     archivo: join(paths.state, 'precios-amazon.json'),
     categorias: preciosCats.categorias,
-    cfg: { ...CONFIG_REGLA, ratio: preciosConf.ratio },
+    cfg: { ...CONFIG_REGLA, ratio: preciosConf.ratio, sinMarca: preciosConf.sinMarca },
     paginas: preciosConf.paginas,
     rapidas: preciosRapidas,
     paginasRapido: preciosConf.paginasRapido,

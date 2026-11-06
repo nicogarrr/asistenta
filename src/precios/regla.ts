@@ -19,6 +19,34 @@ export interface ConfigRegla {
   minRefCents: number;
   /** Diferencia máxima entre el precio del listado y el de la ficha. */
   tolerancia: number;
+  /** Marcas que cuentan como «sin marca» (`PA_PRECIOS_SIN_MARCA`, en minúsculas). */
+  sinMarca?: readonly string[];
+}
+
+export const SIN_MARCA_POR_DEFECTO = [
+  'genérico',
+  'generico',
+  'generic',
+  'genéricos',
+  'sin marca',
+  'unbranded',
+  'no brand',
+  'sin definir',
+];
+
+/** Por qué es «sin marca» (o null): marca de la lista, campo de marca vacío o título genérico. */
+export function sinMarca(
+  titulo: string,
+  marca: string | null | undefined,
+  lista: readonly string[] = SIN_MARCA_POR_DEFECTO,
+): string | null {
+  if (marca !== null && marca !== undefined) {
+    const m = marca.trim().toLowerCase();
+    if (!m) return 'producto sin marca (marca vacía)';
+    if (lista.includes(m)) return `producto sin marca («${marca.trim()}»)`;
+  }
+  if (esGenerico(titulo)) return 'producto sin marca (título genérico)';
+  return null;
 }
 
 export const CONFIG_REGLA: ConfigRegla = { ratio: 0.3, minRefCents: 4000, tolerancia: 0.05 };
@@ -61,10 +89,12 @@ export function mejorReferencia(
   const refs: Referencia[] = [];
   const h = referenciaHistorial(lecturas);
   if (h) refs.push(h);
-  if (tachado.cents && tachado.tipo) {
-    const fiable =
-      tachado.tipo === 'mas-bajo-reciente' || tachado.tipo === 'mediana' || vendeAmazon !== false;
-    if (fiable) refs.push({ cents: tachado.cents, fuente: tachado.tipo });
+  // El tachado de un vendedor externo (también su «precio más bajo de los últimos 30 días»: lo
+  // fija él) no vale solo: una tablet sin marca a 82,99 € «antes» 299,99 € en oferta flash
+  // (PINGLANG Tech, 6-nov-2026) no es un error de precio. Con vendedor externo hace falta historial
+  // propio. `null` = todavía no se sabe (listado): se abre la ficha para comprobarlo.
+  if (tachado.cents && tachado.tipo && vendeAmazon !== false) {
+    refs.push({ cents: tachado.cents, fuente: tachado.tipo });
   }
   if (!refs.length) return null;
   return refs.reduce((a, b) => (b.cents < a.cents ? b : a));
@@ -77,6 +107,18 @@ const ACCESORIO_EN =
 // El título EMPIEZA por la pieza («Cepillo lateral para Conga…», «Funda iPhone…»).
 const ACCESORIO_INICIO =
   /^\s*(?:\S+\s+)??(?:pack de \d+ |\d+ (?:x |uds?\.? )?)?(cepillos?|filtros?|bolsas?|mopas?|pa[ñn]os?|fundas?|carcasas?|protectores? de pantalla|cristal(?:es)? templados?|cables?|cargador(?:es)?|adaptador(?:es)?|correas?|soportes?|bater[ií]as? (?:de repuesto|para)|mandos? para)\b/i;
+
+// Productos sin marca: fuera (Nico, 6-nov-2026: «Quita productos sin marca»). Un título que
+// empieza por el tipo de producto («2026 Tablet 10 Pulgadas…», «Reloj Inteligente Mujer
+// Hombre…», «PC Gaming Portátil…») sin una marca conocida al principio es genérico.
+const GENERICO_INICIO =
+  /^\s*(?:(?:19|20)\d{2}\s+)?(?:nuevo\s+|new\s+)?(?:tablets?|tabletas?|reloj(?:es)? inteligentes?|reloj(?:es)?|smart ?watch(?:es)?|pulseras?(?: de actividad)?|pc(?: gaming)?|mini pc|port[aá]til(?:es)?|ordenador(?:es)?|auriculares|cascos|altavoz|altavoces|proyector(?:es)?|m[oó]vil(?:es)?|smartphones?|tel[eé]fonos? m[oó]vil(?:es)?|teclados?|ratones|rat[oó]n|c[aá]maras?|monitor(?:es)?|robots? aspirador(?:es)?|aspirador(?:as?)?|power ?banks?|barras? de sonido|router(?:es)?|discos? duros?|memorias?|gafas)\b/i;
+const MARCA_CONOCIDA =
+  /\b(?:apple|ipad|iphone|macbook|airpods|samsung|galaxy|xiaomi|redmi|poco|huawei|honor|oppo|realme|oneplus|google|pixel|lenovo|hp|asus|acer|dell|msi|microsoft|surface|sony|bose|jbl|sennheiser|garmin|amazfit|fitbit|polar|suunto|lg|philips|dyson|roborock|dreame|ecovacs|cecotec|rowenta|logitech|razer|corsair|kingston|crucial|western digital|wd|seagate|sandisk|tp-link|netgear|nintendo|playstation|xbox|canon|nikon|gopro|dji|amazon|kindle|echo|fire tv|g\.skill|gigabyte|asrock|nzxt|noctua|cooler master|thermaltake|lian li|synology|qnap|adata|teamgroup|patriot|benq|aoc|iiyama|viewsonic|steelseries|hyperx|nvidia|geforce|rtx|amd|ryzen|radeon|intel|ironwolf)\b/i;
+
+export function esGenerico(titulo: string): boolean {
+  return GENERICO_INICIO.test(titulo) && !MARCA_CONOCIDA.test(titulo.slice(0, 80));
+}
 
 export function esAccesorio(titulo: string): boolean {
   return ACCESORIO_EN.test(titulo) || ACCESORIO_INICIO.test(titulo);
@@ -91,6 +133,7 @@ export function descarteListado(it: ItemListado): string | null {
   if (it.porUnidad) return 'precio por unidad o por kilo';
   if (NO_NUEVO.test(it.titulo)) return 'reacondicionado o de segunda mano';
   if (esAccesorio(it.titulo)) return 'recambio o accesorio';
+  if (esGenerico(it.titulo)) return 'producto sin marca (título genérico)';
   return null;
 }
 
@@ -128,6 +171,8 @@ export function verificar(
     return { ok: false, motivo: `la oferta principal es ${ficha.estado}` };
   if (ficha.enStock === false) return { ok: false, motivo: 'agotado' };
   if (esAccesorio(ficha.titulo)) return { ok: false, motivo: 'recambio o accesorio' };
+  const sm = sinMarca(ficha.titulo || it.titulo, ficha.marca, cfg.sinMarca);
+  if (sm) return { ok: false, motivo: sm };
   const visto = it.cents ?? ficha.cents;
   if (Math.abs(ficha.cents - visto) > visto * cfg.tolerancia) {
     return { ok: false, motivo: 'el precio del listado y el de la ficha no coinciden' };

@@ -45,6 +45,8 @@ export interface Ficha {
   vendedor: string | null;
   envio: string | null;
   estado: 'nuevo' | 'segunda mano' | 'reacondicionado';
+  /** Marca de la ficha («Marca» de la tabla o «Visita la tienda de X»); '' = campo vacío; null = no hay. */
+  marca?: string | null;
 }
 
 /** Captcha, «¿eres un robot?» o 503/429: hay que parar y esperar, nunca insistir. */
@@ -367,6 +369,7 @@ export function parseFicha(html: string): Ficha {
       : 'nuevo';
   return {
     titulo,
+    marca: marcaFicha(html),
     cents,
     precioOculto: oculto || cents === null,
     refCents,
@@ -376,6 +379,20 @@ export function parseFicha(html: string): Ficha {
     envio,
     estado,
   };
+}
+
+/** «Marca» de la tabla de la ficha (po-brand) o el enlace de marca bajo el título (bylineInfo). */
+export function marcaFicha(html: string): string | null {
+  const po =
+    /class="a-spacing-small po-brand"[\s\S]{0,600}?<td class="a-span9"[^>]*>\s*<span[^>]*>([^<]*)</.exec(
+      html,
+    );
+  if (po) return textoPlano(po[1] ?? '');
+  const by = /id="bylineInfo"[^>]*>([^<]*)</.exec(html)?.[1];
+  if (by === undefined) return null;
+  const t = textoPlano(by);
+  const m = /^(?:Visita la tienda de|Marca:)\s*(.*)$/i.exec(t);
+  return m ? (m[1] ?? '').trim() : t ? t : null;
 }
 
 export function urlFicha(asin: string): string {
