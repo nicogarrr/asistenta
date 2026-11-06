@@ -109,6 +109,16 @@ export interface GateOptions {
   taintGate?: boolean;
   /** How long a taint lasts without a new owner message (ms). Default 30 min. */
   taintTtlMs?: number;
+  /**
+   * Nico (6-nov-2026): «estas cosas permítelas siempre sin pedir permiso». En el
+   * chat del dueño, una orden de shell de SOLO LECTURA (mirar procesos, ficheros,
+   * red, estado de git, versiones) o el mantenimiento de la propia Asistenta
+   * (`git pull`, `npm run build`, `pa doctor`) corre sin preguntar. Lo que borra,
+   * instala, esconde código, toca credenciales o dinero sigue preguntando, y tras
+   * leer contenido de fuera las reglas sensibles mandan igual. Default off aquí;
+   * el daemon lo enciende con `PA_APROBAR_SIEMPRE` (por defecto activo).
+   */
+  autoApproveReads?: boolean;
   /** Tools that never need approval. */
   allow?: string[];
   /**
@@ -295,6 +305,51 @@ function argString(args: Record<string, unknown>, key: string): string {
   return typeof v === 'string' ? v : '';
 }
 
+/** `fetch` (siempre GET) y `web` search/fetch/stats: leen, no pagan ni envían. */
+function isReadLookup(c: ToolCall): boolean {
+  if (c.tool === 'fetch') return true;
+  return c.tool === 'web' && ['search', 'fetch', 'stats'].includes(argString(c.args, 'action'));
+}
+
+/** Luhn: separa un número de tarjeta de un id de post o de pedido de las mismas cifras. */
+function luhnValid(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Una lectura que lleva una tarjeta (para sacarla fuera): se mira la consulta y el
+ * fragmento de cada URL y el texto buscado, nunca la ruta (ids de X, YouTube, Amazon).
+ */
+function lookupCarriesCard(c: ToolCall): boolean {
+  const parts: string[] = [];
+  for (const value of Object.values(c.args)) {
+    if (typeof value !== 'string') continue;
+    for (const piece of value.split(/\s+/)) {
+      if (/^https?:\/\//i.test(piece)) {
+        try {
+          const u = new URL(piece);
+          parts.push(decodeURIComponent(u.search), decodeURIComponent(u.hash));
+          continue;
+        } catch {
+          // No es una URL válida: se mira entera, como cualquier texto.
+        }
+      }
+      parts.push(piece);
+    }
+  }
+  const digits = parts.join(' ').replace(/(?<=\d)[ -]+(?=\d)/g, '');
+  return (digits.match(/\b\d{13,19}\b/g) ?? []).some(luhnValid);
+}
+
 /**
  * Clave de alcance por ACCIÓN, no por herramienta.
  *
@@ -315,8 +370,22 @@ export function scopeKey(tool: string, action: string, args: Record<string, unkn
  */
 export const ACTION_SCOPED_TOOLS: ReadonlySet<string> = new Set(['browser', 'servicio', 'windows']);
 
+/**
+ * Clave del «Siempre» de las órdenes de shell no arriesgadas (ni borrar, ni instalar,
+ * ni código en línea): se revoca con `/permisos revocar shell-seguro`.
+ */
+export const SHELL_SAFE_SCOPE = 'shell-seguro';
+
 /** La clave con la que se guarda un «Siempre»/«Sesión» aprobado por el humano. */
 export function approvalScopeKey(call: { tool: string; args: Record<string, unknown> }): string {
+  // «Siempre» en un shell que no borra, no instala ni esconde código vale para esa
+  // CLASE de órdenes, no para la orden exacta: antes `shell` no guardaba ningún
+  // «Siempre» y cada comando volvía a preguntar (Nico pulsó «Siempre» tres veces
+  // en tres minutos el 6-nov-2026). Uno arriesgado se queda en `shell`, que no
+  // admite permiso reutilizable.
+  if (call.tool === 'shell') {
+    return isRiskyShell(argString(call.args, 'command')) ? 'shell' : SHELL_SAFE_SCOPE;
+  }
   if (!ACTION_SCOPED_TOOLS.has(call.tool)) return call.tool;
   const action = typeof call.args.action === 'string' ? call.args.action : '';
   return scopeKey(call.tool, action, call.args);
@@ -991,6 +1060,7 @@ export class Gate {
   readonly #contactedHosts = new Map<string, Set<string>>();
   /** SQLite file for `always` scopes; undefined means memory only. */
   readonly #dbPath: string | undefined;
+  readonly #autoApproveReads: boolean;
   /** Tools with a standing `always` grant. Persisted when `dbPath` is set. */
   readonly #alwaysAllow = new Set<string>();
   readonly #approvalChat: string;
@@ -1041,6 +1111,7 @@ export class Gate {
     this.#grantWindowMs = options.grantWindowMs ?? COMPUTER_GRANT_WINDOW_MS;
     this.#egressTaint = options.egressTaint ?? process.env.PA_TAINT_GATE !== '0';
     this.#dbPath = options.dbPath;
+    this.#autoApproveReads = options.autoApproveReads ?? false;
     // Standing grants from an earlier run are part of the policy, so they are
     // loaded before anything can be checked against them.
     this.#loadPersistedAlways();
@@ -1278,6 +1349,12 @@ export class Gate {
 
   #isPaymentish(c: ToolCall): boolean {
     if (c.tool === 'purchase') return true;
+    // Leer una página o buscar en la web no mueve dinero. Antes, el id de 19 cifras
+    // de un post de X (`/status/1985…`) pasaba por número de tarjeta y un `fetch` de
+    // xcancel.com preguntaba «afecta a dinero o credenciales» aunque ya hubiera un
+    // «Siempre». Para estas lecturas solo cuenta una tarjeta de verdad (Luhn) en la
+    // consulta o en lo buscado; la ruta de una URL y las palabras de pago, no.
+    if (isReadLookup(c)) return lookupCarriesCard(c);
     const blob = blobOf(c);
     // Card-shaped numbers, with spaces and dashes removed from *inside* a digit run
     // first, so `4111 1111 1111 1111` is the same number as `4111111111111111`.
@@ -1385,6 +1462,12 @@ export class Gate {
    * prohibida, el resultado es `unset` aunque exista un `always` antiguo.
    */
   #scopeLevelForCall(sessionId: string, c: ToolCall): ApprovalScope | 'unset' {
+    // Un shell solo puede caer en la clase «shell-seguro», y únicamente si la orden
+    // no es arriesgada; un `always` sobre `shell` entero nunca vale.
+    if (c.tool === 'shell') {
+      if (isRiskyShell(argString(c.args, 'command'))) return 'unset';
+      return this.scopeFor(sessionId, SHELL_SAFE_SCOPE);
+    }
     if (this.#isScopeBlockedForCall(c)) return 'unset';
     const action = argString(c.args, 'action');
     const actionScope = this.scopeFor(sessionId, scopeKey(c.tool, action, c.args));
@@ -2668,6 +2751,21 @@ export class Gate {
         });
     const askReason = tainted ? `${tainted}: ${askRule.reason}` : askRule.reason;
 
+    // Solo `ask-shell` (la regla genérica): si otra regla de pregunta casó antes
+    // (destructivo, credenciales, dinero), esa manda y se pregunta.
+    if (
+      this.#autoApproveReads &&
+      !forced &&
+      !tainted &&
+      askRule.id === 'ask-shell' &&
+      isReadOnlyShell(argString(call.args, 'command'))
+    ) {
+      return this.#record(call, {
+        verdict: 'allow',
+        reason: 'orden de solo lectura o mantenimiento de Asistenta (PA_APROBAR_SIEMPRE)',
+      });
+    }
+
     for (const rule of this.#rules) {
       if (
         rule.verdict === 'allow' &&
@@ -2750,6 +2848,149 @@ const SHELL_INSTALL =
  */
 function isRiskyShell(command: string): boolean {
   return DESTRUCTIVE.test(command) || SHELL_INSTALL.test(command) || SHELL_NO_WINDOW.test(command);
+}
+
+/** Primeras palabras de una orden que solo mira (PowerShell, cmd y Unix). */
+const SHELL_READ_COMMANDS = new Set(
+  [
+    'get-childitem',
+    'get-content',
+    'get-item',
+    'get-itemproperty',
+    'get-process',
+    'get-service',
+    'get-date',
+    'get-location',
+    'get-command',
+    'get-computerinfo',
+    'get-ciminstance',
+    'get-wmiobject',
+    'get-psdrive',
+    'get-volume',
+    'get-disk',
+    'get-netipaddress',
+    'get-netadapter',
+    'get-nettcpconnection',
+    'get-hotfix',
+    'get-filehash',
+    'get-host',
+    'get-history',
+    'get-uptime',
+    'get-scheduledtask',
+    'get-printer',
+    'get-culture',
+    'get-timezone',
+    'test-path',
+    'select-string',
+    'select-object',
+    'where-object',
+    'sort-object',
+    'measure-object',
+    'group-object',
+    'format-table',
+    'format-list',
+    'out-string',
+    'convertto-json',
+    'convertfrom-json',
+    'write-output',
+    'write-host',
+    'resolve-path',
+    'split-path',
+    'join-path',
+    'ls',
+    'dir',
+    'gci',
+    'cat',
+    'type',
+    'gc',
+    'echo',
+    'pwd',
+    'whoami',
+    'hostname',
+    'ipconfig',
+    'tasklist',
+    'systeminfo',
+    'where',
+    'where.exe',
+    'which',
+    'findstr',
+    'grep',
+    'head',
+    'tail',
+    'wc',
+    'sort',
+    'uniq',
+    'df',
+    'du',
+    'free',
+    'uptime',
+    'date',
+    'ver',
+    'vol',
+    'tree',
+    'nvidia-smi',
+    'netstat',
+    'wmic',
+    'sc',
+    'query',
+    'file',
+    'stat',
+    'ps',
+    'env',
+    'printenv',
+    'id',
+    'uname',
+  ].map((w) => w.toLowerCase()),
+);
+
+/** Subórdenes que solo leen o que son el mantenimiento normal de Asistenta. */
+const SHELL_READ_SUBCOMMANDS: Record<string, RegExp> = {
+  git: /^git\s+(status|log|diff|show|rev-parse|describe|remote\s+-v|branch(\s+(-a|-r|-v|-vv|--show-current|--list))*\s*$|fetch|pull(\s+--ff-only)?\s*$|tag\s*$|stash\s+list|ls-files|blame)\b/i,
+  npm: /^npm\s+(-v|--version|ls|list|outdated|view|run\s+(build|typecheck|lint|lint:check|test)\b)/i,
+  node: /^node\s+(-v|--version)\s*$/i,
+  python: /^python3?\s+(-v|--version|-V)\s*$/i,
+  pa: /^pa\s+(doctor|status|estado|version|--version|help|--help|logs?|diagnose|diagnostico)\b/i,
+  tailscale: /^tailscale\s+(status|ip|version|netcheck)\b/i,
+  winget: /^winget\s+(list|search|show)\b/i,
+  sc: /^sc(\.exe)?\s+(query|qc)\b/i,
+  wmic: /^wmic\s+\S+\s+(get|list)\b/i,
+  netstat: /^netstat\b/i,
+};
+
+/**
+ * Una orden de shell que solo mira o es mantenimiento de Asistenta. Conservadora:
+ * cada trozo (separado por `|`, `;`, `&&`, `||`) tiene que empezar por una orden
+ * conocida de lectura; nada de redirigir a fichero, sustituir órdenes, variables
+ * de entorno con secretos ni rutas de credenciales. Lo arriesgado (borrar,
+ * instalar, código en línea) nunca lo es.
+ */
+export function isReadOnlyShell(command: string): boolean {
+  // `2>&1` y tirar los errores (`2>$null`) no escriben nada: se quitan antes de mirar.
+  const cmd = command
+    .replace(/\s2>&1\b/g, '')
+    .replace(/\s2>\s*(\$null|nul|\/dev\/null)/gi, '')
+    .trim();
+  if (!cmd || cmd.length > 400) return false;
+  if (isRiskyShell(cmd) || CREDENTIAL_PATH.test(cmd)) return false;
+  // Escribir a fichero, sustituir órdenes o leer secretos del entorno no es mirar.
+  if (/[<>]|`|\$\(|\$env:|%[A-Za-z_]+%|\bvault\b|approvals\.db|secret/i.test(cmd)) {
+    return false;
+  }
+  if (
+    /\b(-delete|-exec|--output|-o\s|-OutFile|Invoke-|Start-Process|Set-|New-|Remove-|Stop-|Move-|Copy-|Rename-|Out-File|Add-Content|Tee-Object)\b/i.test(
+      cmd,
+    )
+  ) {
+    return false;
+  }
+  const segments = cmd.split(/\|\||&&|[|;&]/).map((x) => x.trim());
+  return segments.every((seg) => {
+    if (!seg) return false;
+    const first = (seg.split(/\s+/)[0] ?? '').toLowerCase().replace(/\.exe$/, '');
+    const sub = SHELL_READ_SUBCOMMANDS[first];
+    if (sub) return sub.test(seg);
+    return SHELL_READ_COMMANDS.has(first);
+  });
 }
 
 /** Servicios de defensa de Windows: antivirus, cortafuegos, centro de seguridad, eventos. */

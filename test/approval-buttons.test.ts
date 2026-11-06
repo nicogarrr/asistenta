@@ -29,6 +29,8 @@ const harness = vi.hoisted(() => {
     keyboard: Array<Array<{ text: string; callback_data: string }>>;
   }> = [];
   const answers: string[] = [];
+  const deletes: Array<{ chatId: number; messageId: number }> = [];
+  const deleteControl = { fail: false };
   const handlers = new Map<string, (ctx: unknown) => unknown>();
 
   /** Mirrors gramY's InlineKeyboard: one row by default, text() fills the last row. */
@@ -100,6 +102,13 @@ const harness = vi.hoisted(() => {
         });
         return true;
       },
+      deleteMessage: async (chatId: number, messageId: number) => {
+        if (deleteControl.fail) {
+          throw new FakeGrammyError(400, "Bad Request: message can't be deleted");
+        }
+        deletes.push({ chatId, messageId });
+        return true;
+      },
       setMyCommands: async () => true,
     };
 
@@ -122,6 +131,8 @@ const harness = vi.hoisted(() => {
     sent,
     edits,
     answers,
+    deletes,
+    deleteControl,
     handlers,
     FakeBot,
     FakeInlineKeyboard,
@@ -142,6 +153,8 @@ vi.mock('grammy', () => ({
 beforeEach(() => {
   harness.sent.length = 0;
   harness.edits.length = 0;
+  harness.deletes.length = 0;
+  harness.deleteControl.fail = false;
   harness.answers.length = 0;
 });
 
@@ -284,16 +297,36 @@ describe('offerApproval con askScope', () => {
     expect(harness.answers).toContain('❌ Denegado');
   });
 
-  it('edita el mensaje con el veredicto y quita los botones', async () => {
+  // Nico (6-nov-2026): «Quita lo de aprobado siempre que ensucia conversación».
+  it('borra la pregunta del chat y deja el veredicto solo en el aviso fugaz', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const channel = await makeChannel();
+      const pending = channel.offerApproval('req-1', '42', '¿Permito shell?', { askScope: true });
+      const messageId = press('approve:always:req-1');
+      await expect(pending).resolves.toEqual({ approved: true, scope: 'always' });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(harness.answers).toContain('✅ Aprobado siempre');
+      expect(harness.deletes).toEqual([{ chatId: 42, messageId }]);
+      // Nada se queda escrito en el chat: ni «✅ Aprobado siempre» ni otro sello.
+      expect(harness.edits.find((e) => e.messageId === messageId)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('si Telegram no deja borrar (más de 48 h), edita al veredicto y quita los botones', async () => {
     // La edición espera el espaciado de ~1,1 s del canal: con reloj falso no se duerme de verdad.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const t0 = performance.now();
+    harness.deleteControl.fail = true;
     try {
       const channel = await makeChannel();
       const pending = channel.offerApproval('req-1', '42', '¿Permito shell?', { askScope: true });
       const messageId = press('approve:session:req-1');
       await expect(pending).resolves.toEqual({ approved: true, scope: 'session' });
       await vi.advanceTimersByTimeAsync(5_000);
+      expect(harness.deletes).toEqual([]);
       const edit = harness.edits.find((e) => e.messageId === messageId);
       expect(edit?.text).toBe('✅ Aprobado por ahora');
       expect(edit?.keyboard).toEqual([]);

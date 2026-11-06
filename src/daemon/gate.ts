@@ -75,6 +75,12 @@ export interface DaemonGateOptions {
   /** Vault opt-in (`agent:fullControl`): unattended, except money and credentials. */
   fullControl?: boolean;
   /**
+   * The verified owner's own DM. Only there do read-only shell commands and
+   * Asistenta's own maintenance run without asking (`PA_APROBAR_SIEMPRE`, on by
+   * default; `PA_APROBAR_SIEMPRE=0` asks again as before). Never in groups.
+   */
+  ownerChat?: boolean;
+  /**
    * Publish the question and wait for the human.
    *
    * The answer carries the scope, so the choice is applied here, where it arrives:
@@ -144,6 +150,11 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
       ...SPOTIFY_FREE_ACTIONS,
       // Google: buscar eventos, contactos y Drive es leer su cuenta; los cambios preguntan.
       ...GOOGLE_READ_ACTIONS,
+      // Buscar en la web o leer una URL con el enrutador propio es leer, como `fetch`:
+      // preguntaba «not on the allow list» en cada búsqueda.
+      'web:search',
+      'web:fetch',
+      'web:stats',
     ],
     // Autonomous up to the last click. A purchase is a chain of ordinary browsing
     // actions, and asking about each of them is what stopped the Renfe flow before it
@@ -154,6 +165,7 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     allowUntilPayment: true,
     stageOf: checkoutStageOf,
     fullControl: options.fullControl ?? false,
+    autoApproveReads: (options.ownerChat ?? false) && aprobarSiempreOn(),
     protectedPaths: protectedPaths(),
     secretPaths: secretStatePaths(),
     maxAmountCents: 30_000,
@@ -200,4 +212,14 @@ export function createDaemonGate(options: DaemonGateOptions): Gate {
     },
   });
   return gate;
+}
+
+/**
+ * `PA_APROBAR_SIEMPRE` (por defecto activo): en el chat del dueño, las órdenes de
+ * solo lectura y el mantenimiento de Asistenta no piden permiso. `0`, `off`, `no`
+ * o `false` lo apagan.
+ */
+export function aprobarSiempreOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.PA_APROBAR_SIEMPRE ?? '').trim().toLowerCase();
+  return !['0', 'off', 'no', 'false'].includes(raw);
 }
