@@ -60,14 +60,17 @@ const SYNTHESIS_TIMEOUT_MS = 60_000;
 /**
  * Bitrate for the outgoing mp3.
  *
- * 32kbps mono is the knee of the curve for speech: measured here at ~4KB per
- * second of audio, so a 30-second reply is roughly 120KB. Below ~24kbps the
- * artefacts land in the 4-8kHz band where sibilants live and become audible.
+ * Era 32 kbps a 16 kHz: a Kokoro (24 kHz) le quitaba los agudos y el remuestreo
+ * lineal sin filtro metía ruido, y Nico la oía «con muy poca calidad» (voz4, 6 nov).
+ * 64 kbps a la frecuencia del propio motor suena igual que el WAV y pesa ~8 KB/s
+ * (una respuesta de 30 s, ~240 KB).
  */
-const MP3_KBPS = 32;
+const MP3_KBPS = 64;
 
-/** SAPI writes 22050Hz mono by default; resampled down to this before encoding. */
-const MP3_SAMPLE_RATE = 16_000;
+/** Frecuencias que mp3 admite sin remuestrear, hasta 24 kHz (de sobra para la voz). */
+const MP3_NATIVAS = new Set([16_000, 22_050, 24_000]);
+/** Lo que no sea una de esas (44,1 kHz, 48 kHz…) se baja a esta. */
+const MP3_SAMPLE_RATE = 24_000;
 
 /**
  * Truncate at a word boundary near the limit.
@@ -83,16 +86,21 @@ function truncate(text: string): string {
 }
 
 /**
- * WAV de cualquier motor local -> el mp3 de 16 kHz que sale por Telegram. Compartido
+ * WAV de cualquier motor local -> el mp3 (a la frecuencia del motor, 64 kbps) que sale por Telegram. Compartido
  * por SAPI y Piper para que las dos voces suenen y pesen igual.
  */
 export function encodeSpeech(wav: Buffer, spoken: string, original: string): TtsAudio {
   const decoded = wavToPcm(wav);
   const durationSeconds = decoded.samples.length / decoded.sampleRate;
-  const pcm = resampleLinear(decoded.samples, decoded.sampleRate, MP3_SAMPLE_RATE);
+  // Sin remuestrear si el motor ya da una frecuencia de mp3 (Kokoro 24 kHz, Piper/SAPI 22 050).
+  const hz = MP3_NATIVAS.has(decoded.sampleRate) ? decoded.sampleRate : MP3_SAMPLE_RATE;
+  const pcm =
+    hz === decoded.sampleRate
+      ? decoded.samples
+      : resampleLinear(decoded.samples, decoded.sampleRate, hz);
   return {
     durationSeconds,
-    data: encodeMp3(pcm, MP3_SAMPLE_RATE, MP3_KBPS),
+    data: encodeMp3(pcm, hz, MP3_KBPS),
     mimeType: 'audio/mpeg',
     format: 'mp3',
     text: spoken,
