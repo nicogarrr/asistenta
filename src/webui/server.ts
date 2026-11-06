@@ -99,6 +99,12 @@ export interface WebUiDeps {
    * el mismo hilo que el chat del panel. Si falta, /api/voz responde 503.
    */
   transcribe?(audio: Buffer, mime: string): Promise<string>;
+  /**
+   * /voz: la respuesta en audio hecha en el PC con la voz local (sherpa-onnx, la misma
+   * de las notas de voz de Telegram). Si falta, falla o devuelve null, el móvil la lee
+   * con su propia voz.
+   */
+  speak?(text: string): Promise<{ data: Buffer; mimeType: string } | null>;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -146,6 +152,8 @@ const PAGE_CSP = [
   "script-src 'unsafe-inline'",
   "style-src 'unsafe-inline'",
   "img-src 'self' data:",
+  // /voz reproduce la voz del PC desde un blob (y un silencio en data: para iOS).
+  "media-src 'self' blob: data:",
   "connect-src 'self'",
   "manifest-src 'self'",
   "worker-src 'self'",
@@ -517,7 +525,15 @@ async function respondApi(
         if (!isRecord(answer) || typeof answer.text !== 'string') {
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
-        payload = { oido, ...panelReply(answer) };
+        const respuesta: Record<string, unknown> = { oido, ...panelReply(answer) };
+        if (deps.speak && answer.text.trim()) {
+          // La voz del PC; si no sale, el texto llega igual y el móvil la lee con la suya.
+          const voz = await deps.speak(answer.text).catch(() => null);
+          if (voz && voz.data.length > 0) {
+            respuesta.audio = { mime: voz.mimeType, data: voz.data.toString('base64') };
+          }
+        }
+        payload = respuesta;
         break;
       }
       case 'miniapp': {

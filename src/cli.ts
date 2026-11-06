@@ -2471,6 +2471,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // /voz desde el móvil: la nota se transcribe aquí con el whisper local.
           transcribe: async (audio: Buffer, mime: string) =>
             (await transcribeVoiceNote(audio, { mimeType: mime })).text,
+          // …y la respuesta vuelve con la voz local del PC, no con la robótica del móvil.
+          speak: (text: string) =>
+            speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
+              log.warn('voz movil: sin audio del PC', { reason }),
+            ),
           // Mini App (/panel desde Telegram): entra sin token si Telegram firma que es el dueño.
           miniApp: async (initData: string) => {
             const { verifyInitData } = await import('./webui/miniapp.js');
