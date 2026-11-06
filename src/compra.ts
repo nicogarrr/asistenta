@@ -318,6 +318,27 @@ export function compraIntent(text: string | undefined): CompraIntent | null {
     const items = itemsFromText(listaDelante[1]);
     return items.length ? { kind: 'add', items } : null;
   }
+  // «faltan huevos», «falta leche y tomate», «se ha acabado el aceite», «no queda pan»:
+  // como se dice en casa durante la semana. Solo frases cortas de cosas; «falta poco»,
+  // «faltan 5 minutos» o «falta que me llames» no son compra.
+  const falta =
+    /^(?:(?:oye|ah|ya|y)\s*,?\s+)?(?:(?:me|nos|te)\s+)?(?:falta|faltan|se (?:me |nos )?(?:ha |han )?(?:acabado|acab[oó]|acabaron|terminado|termin[oó]|terminaron)|no (?:me |nos )?queda(?:n)?(?: nada de)?)\s+(.+?)\s*[.!]?$/i.exec(
+      t,
+    );
+  if (falta?.[1] && t.length <= 120) {
+    const resto = fold(falta[1]);
+    if (
+      !/\d|\b(?:que|para|poco|mucho|muchos?|algo|nada|tiempo|dias?|horas?|minutos?|semanas?|meses|rato|gente|alguien|uno|una|eso|esto|aqui|tu|usted|el examen)\b/.test(
+        resto,
+      )
+    ) {
+      const items = itemsFromText(falta[1]).map((i) =>
+        i.replace(/^(?:el|la|los|las|de|del)\s+/i, ''),
+      );
+      if (items.length && items.every((i) => i.split(/\s+/).length <= 4))
+        return { kind: 'add', items };
+    }
+  }
   const add = new RegExp(`^${ADD_VERB}\\s+(.+?)\\s+${LISTA}\\s*[.!]?$`, 'i').exec(t);
   if (add?.[1]) {
     const items = itemsFromText(add[1]);
