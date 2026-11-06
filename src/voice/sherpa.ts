@@ -41,8 +41,28 @@ export interface SherpaModulo {
 
 export type CargarSherpa = () => SherpaModulo;
 
-const cargarPorDefecto: CargarSherpa = () =>
-  createRequire(import.meta.url)('sherpa-onnx-node') as SherpaModulo;
+/**
+ * En Windows sherpa-onnx (onnxruntime 1.28) y whisper (onnxruntime-node 1.30) traen cada uno
+ * su `onnxruntime.dll`, y Windows usa para los dos la que se cargó primero. Si la voz se carga
+ * antes (al abrir /voz se precargan las dos a la vez), whisper se queda con la 1.28, que no
+ * tiene la API que pide, y cada nota falla. La 1.30 sí sirve a sherpa (la API de onnxruntime
+ * solo crece), así que en Windows se carga onnxruntime-node antes que sherpa.
+ */
+export function cargarSherpaCon(
+  requerir: (id: string) => unknown,
+  plataforma: NodeJS.Platform = process.platform,
+): SherpaModulo {
+  if (plataforma === 'win32') {
+    try {
+      requerir('onnxruntime-node');
+    } catch {
+      // Sin onnxruntime-node no hay whisper con el que chocar.
+    }
+  }
+  return requerir('sherpa-onnx-node') as SherpaModulo;
+}
+
+const cargarPorDefecto: CargarSherpa = () => cargarSherpaCon(createRequire(import.meta.url));
 
 /** Rutas de un modelo VITS/Piper ya descargado y comprobado. */
 export interface ModeloSherpa {

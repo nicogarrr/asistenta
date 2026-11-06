@@ -43,7 +43,7 @@ describe('nota de voz: errores en castellano claro', () => {
     const caught = await transcribeVoiceNote(nota).catch((e: unknown) => e);
     const reply = failedReply('No he entendido la nota de voz', caught);
     expect(reply).toBe(
-      'No he entendido la nota de voz: no pude transcribir la nota de voz. Prueba otra vez en un momento',
+      'No he entendido la nota de voz: no pude transcribir la nota de voz (fallo de whisper: Protobuf parsing failed). Prueba otra vez en un momento',
     );
   });
 

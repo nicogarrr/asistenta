@@ -29,7 +29,7 @@ import { join } from 'node:path';
 import ffmpegStatic from 'ffmpeg-static';
 import { childEnv } from '../child-env.js';
 import type { DecodedPcm } from './audio.js';
-import { decodeOggOpusToPcm } from './audio.js';
+import { decodeOggOpusToPcm, resampleLinear, wavToPcm } from './audio.js';
 
 /** Same narrowing as screen/recorder.ts: typed as a module, a string at runtime. */
 const FFMPEG: string | null =
@@ -62,6 +62,9 @@ export function ffmpegDecoderAvailable(): boolean {
  */
 export async function decodeForWhisper(input: Buffer, mimeType?: string): Promise<FfmpegDecoded> {
   const mime = mimeType?.toLowerCase() ?? '';
+  // WAV mono (lo que manda /voz desde el iPhone): se lee aquí mismo, sin ffmpeg.
+  const wav = decodeMonoWav(input);
+  if (wav) return wav;
   if (mime && !mime.includes('ogg') && !mime.includes('opus')) {
     return await decodeAudioWithFfmpeg(input);
   }
@@ -75,6 +78,35 @@ export async function decodeForWhisper(input: Buffer, mimeType?: string): Promis
     if (!ffmpegDecoderAvailable()) throw err;
     return await decodeAudioWithFfmpeg(input);
   }
+}
+
+/**
+ * WAV PCM mono leído en JavaScript, remuestreado a 16 kHz y con el mismo tope que ffmpeg.
+ * null si no es un WAV mono que se pueda leer así (estéreo, códec raro…): eso va a ffmpeg.
+ */
+export function decodeMonoWav(
+  input: Buffer,
+  maxSeconds: number = DEFAULT_MAX_SECONDS,
+): FfmpegDecoded | null {
+  if (input.length < 44 || input.toString('ascii', 0, 4) !== 'RIFF') return null;
+  if (input.toString('ascii', 8, 12) !== 'WAVE' || input.toString('ascii', 12, 16) !== 'fmt ') {
+    return null;
+  }
+  if (input.readUInt16LE(22) !== 1) return null;
+  let pcm: { samples: Float32Array; sampleRate: number };
+  try {
+    pcm = wavToPcm(input);
+  } catch {
+    return null;
+  }
+  let samples =
+    pcm.sampleRate === DECODE_SAMPLE_RATE
+      ? pcm.samples
+      : resampleLinear(pcm.samples, pcm.sampleRate, DECODE_SAMPLE_RATE);
+  const max = Math.max(1, Math.trunc(maxSeconds)) * DECODE_SAMPLE_RATE;
+  const capped = samples.length >= max;
+  if (capped) samples = samples.subarray(0, max);
+  return { samples, sampleRate: DECODE_SAMPLE_RATE, capped };
 }
 
 /**
