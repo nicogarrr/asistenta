@@ -45,9 +45,57 @@ const CATALOGO: Record<string, [string, string, string]> = {
   bricolaje: ['Bricolaje', 'diy', 'diy'],
   belleza: ['Belleza', 'beauty', 'beauty'],
   bebe: ['Bebé', 'baby', 'baby'],
+  licores: ['Bebidas y licores', 'grocery', 'grocery'],
 };
 
 export const CATEGORIAS_POR_DEFECTO = Object.keys(CATALOGO);
+
+/**
+ * Búsquedas de marcas y productos caros que se barren más a menudo (cada 10–15 min): ahí es
+ * donde un error de precio vale la pena y dura poco (la plancha ghd a 29,90 € y el Chivas
+ * Regal Mizunara a 12,50 €, vendidos por Amazon.es, 6-nov-2026). `texto|alias de búsqueda`.
+ */
+export const RAPIDAS_POR_DEFECTO = [
+  'ghd|beauty',
+  'dyson|beauty',
+  'plancha de pelo|beauty',
+  'secador de pelo|beauty',
+  'perfume|beauty',
+  'whisky|grocery',
+  'ginebra premium|grocery',
+  'ron añejo|grocery',
+  'apple|electronics',
+  'portátil|computers',
+  'bosch professional|diy',
+  'lego|toys',
+];
+
+function busqueda(texto: string, alias?: string): string {
+  const q = new URLSearchParams({ k: texto });
+  if (alias) q.set('i', alias);
+  return `${AMAZON_ORIGIN}/s?${q.toString()}`;
+}
+
+/**
+ * `PA_PRECIOS_RAPIDAS`: vacío = las de por defecto; «no» = ninguna; si no, búsquedas separadas
+ * por comas («ghd, chivas regal|grocery») y/o enlaces de amazon.es.
+ */
+export function rapidasDesde(valor: string | undefined): Categoria[] {
+  const v = (valor ?? '').trim();
+  if (/^(no|0|off|ninguna)$/i.test(v)) return [];
+  const partes = v
+    ? v
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)
+    : RAPIDAS_POR_DEFECTO;
+  return partes.map((p) => {
+    if (/^https:\/\/www\.amazon\.es\//.test(p))
+      return { id: p, nombre: p.replace(AMAZON_ORIGIN, ''), urls: [p] };
+    const [texto = p, alias] = p.split('|').map((x) => x.trim());
+    return { id: `rapida:${texto}`, nombre: texto, urls: [busqueda(texto, alias)] };
+  });
+}
 
 function categoriaDe(id: string): Categoria | null {
   const c = CATALOGO[id];
@@ -116,6 +164,10 @@ export interface DepsVigilante {
   cfg?: ConfigRegla;
   /** Páginas de listado por barrido (por defecto 6). */
   paginas?: number;
+  /** Búsquedas del barrido rápido (`barrer({ rapido: true })`). */
+  rapidas?: Categoria[];
+  /** Páginas por barrido rápido (por defecto 2). */
+  paginasRapido?: number;
   /** Fichas que se abren como mucho por barrido para verificar (por defecto 3). */
   fichas?: number;
   /** Pausa entre peticiones [mín, máx] en ms (por defecto 6–12 s). */
@@ -147,6 +199,8 @@ export interface Resumen {
 }
 
 export interface Estado {
+  cursorRapido?: number;
+  ultimoRapido?: Resumen | null;
   /** null = lo que diga PA_PRECIOS (encendido por defecto). */
   encendido: boolean | null;
   cursor: number;
@@ -261,22 +315,24 @@ export class VigilantePrecios {
   }
 
   /** Un barrido. No lanza: los fallos quedan en el resumen y en /precios. */
-  async barrer(): Promise<Resumen | null> {
+  async barrer(o: { rapido?: boolean } = {}): Promise<Resumen | null> {
     if (this.#corriendo) return null;
     this.#corriendo = true;
     try {
-      return await this.#barrer();
+      return await this.#barrer(o.rapido === true);
     } finally {
       this.#corriendo = false;
     }
   }
 
-  async #barrer(): Promise<Resumen | null> {
+  async #barrer(rapido: boolean): Promise<Resumen | null> {
     const e = this.leer();
     const inicio = this.#now();
     if (e.bloqueo && inicio < e.bloqueo.hasta) return null;
     const cfg = this.#d.cfg ?? CONFIG_REGLA;
-    const urls = this.#d.categorias.flatMap((c) => c.urls);
+    const urls = (rapido ? (this.#d.rapidas ?? []) : this.#d.categorias).flatMap((c) => c.urls);
+    if (!urls.length) return null;
+    const cursor = (rapido ? e.cursorRapido : e.cursor) ?? 0;
     const r: Resumen = {
       inicio,
       fin: inicio,
@@ -288,9 +344,9 @@ export class VigilantePrecios {
     };
     const porVerificar: { it: ItemListado; lecturas: Lectura[] }[] = [];
     let bloqueado = false;
-    const n = Math.min(this.#d.paginas ?? 6, urls.length);
+    const n = Math.min(rapido ? (this.#d.paginasRapido ?? 2) : (this.#d.paginas ?? 6), urls.length);
     for (let i = 0; i < n && !bloqueado; i++) {
-      const url = urls[(e.cursor + i) % urls.length] as string;
+      const url = urls[(cursor + i) % urls.length] as string;
       if (i > 0) await this.#pausa();
       let res: Respuesta;
       try {
@@ -319,6 +375,8 @@ export class VigilantePrecios {
       for (const it of items) {
         if (it.cents === null) continue;
         r.vistos++;
+        // Un precio «desde» o por kilo no es el del producto: ni candidato ni historial.
+        if (it.desde || it.porUnidad) continue;
         const a = e.asins[it.asin] ?? { t: it.titulo, l: [] };
         const lecturas = a.l.map(([at, cents]) => ({ at, cents }));
         if (candidato(it, lecturas, cfg) && !porVerificar.some((p) => p.it.asin === it.asin)) {
@@ -331,7 +389,8 @@ export class VigilantePrecios {
         e.asins[it.asin] = a;
       }
     }
-    e.cursor = (e.cursor + n) % Math.max(1, urls.length);
+    if (rapido) e.cursorRapido = (cursor + n) % urls.length;
+    else e.cursor = (cursor + n) % urls.length;
     r.candidatos = porVerificar.length;
     // Lo más jugoso primero; como mucho `fichas` por barrido.
     porVerificar.sort(
@@ -387,7 +446,8 @@ export class VigilantePrecios {
     }
     if (!bloqueado && r.paginas > 0) e.bloqueo = null;
     r.fin = this.#now();
-    e.ultimo = r;
+    if (rapido) e.ultimoRapido = r;
+    else e.ultimo = r;
     this.#guardar(e);
     return r;
   }
@@ -435,6 +495,9 @@ export function textoEstado(
     now: number;
     tz?: string;
     ratio: number;
+    navegador?: { at: number; motivo: string } | null;
+    rapidas?: Categoria[];
+    rapidoMin?: number;
   },
 ): string {
   const l: string[] = [];
@@ -447,6 +510,14 @@ export function textoEstado(
     `Avisa si el precio es ≤ ${Math.round(o.ratio * 100)} % de una referencia fiable y la ficha lo confirma.`,
   );
   l.push(`Categorías: ${o.categorias.map((c) => c.nombre).join(', ') || 'ninguna'}`);
+  if (o.rapidas?.length && o.rapidoMin) {
+    l.push(`⚡ Cada ~${o.rapidoMin} min: ${o.rapidas.map((c) => c.nombre).join(', ')}`);
+  }
+  if (o.navegador) {
+    l.push(
+      `🌐 El Chrome de Asistenta falló a las ${hora(o.navegador.at, o.tz)} (${o.navegador.motivo.slice(0, 90)}); mientras, leo Amazon sin navegador (más captchas y fichas sin precio).`,
+    );
+  }
   if (o.desconocidas?.length)
     l.push(`⚠️ No entiendo estas categorías: ${o.desconocidas.join(', ')}`);
   if (e.bloqueo && o.now < e.bloqueo.hasta) {

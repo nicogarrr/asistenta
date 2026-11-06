@@ -68,6 +68,62 @@ export function codigoFicha(url: string): string {
   ].join('\n');
 }
 
+/** Código que corre en la pestaña: abre un listado y deja en `state` sus resultados recortados. */
+export function codigoListado(url: string): string {
+  return [
+    `await page.goto(${JSON.stringify(url)}, { waitUntil: 'domcontentloaded', timeout: 30000 });`,
+    'await page.waitForTimeout(2000);',
+    'const html = await page.evaluate(() => {',
+    "  const texto = (document.body && document.body.innerText) || '';",
+    '  if (document.querySelector(\'form[action*="validateCaptcha"]\') || /Introduce los caracteres|Escribe los caracteres/.test(texto)) {',
+    '    return \'<form action="/errors/validateCaptcha"></form>\';',
+    '  }',
+    "  const deja = ['id', 'class', 'role', 'data-asin', 'data-a-strike', 'aria-label', 'href'];",
+    '  const limpia = (el) => {',
+    '    const c = el.cloneNode(true);',
+    "    for (const n of c.querySelectorAll('script,style,svg,img,noscript,iframe')) n.remove();",
+    "    for (const n of [c, ...c.querySelectorAll('*')]) {",
+    '      for (const a of [...n.attributes]) {',
+    "        if (!deja.includes(a.name) || (a.name === 'href' && !/\\/dp\\//.test(a.value))) n.removeAttribute(a.name);",
+    '      }',
+    '    }',
+    "    return c.outerHTML.replace(/\\s+/g, ' ').slice(0, 3000);",
+    '  };',
+    '  const items = [...document.querySelectorAll(\'div[role="listitem"][data-asin], #gridItemRoot, [id="gridItemRoot"]\')];',
+    "  return '<html><body>' + items.slice(0, 60).map(limpia).join('') + '</body></html>';",
+    '});',
+    'state.preciosPagina = html;',
+    'return String(html.length);',
+  ].join('\n');
+}
+
+async function trozos(
+  nav: NavegadorPrecios,
+  scope: string,
+  clave: string,
+  n: number,
+): Promise<string> {
+  let html = '';
+  for (let i = 0; i < n && i < TROZO * 30; i += TROZO) {
+    html += (
+      await nav.execJs(scope, `return String(state.${clave} || '').slice(${i}, ${i + TROZO});`)
+    ).text;
+  }
+  return html;
+}
+
+/** Lee un listado en el navegador real (Amazon da menos captchas a un Chrome con su sesión). */
+export function leerListadoNavegador(nav: NavegadorPrecios, scope: string) {
+  return async (url: string): Promise<Respuesta> => {
+    if (!/^https:\/\/www\.amazon\.es\//.test(url)) throw new Error('solo leo páginas de amazon.es');
+    const r = await nav.execJs(scope, codigoListado(url));
+    const n = Number(r.text);
+    if (!Number.isFinite(n) || n <= 0)
+      throw new Error(`el navegador no pudo abrir el listado: ${r.text.slice(0, 160)}`);
+    return { status: 200, html: await trozos(nav, scope, 'preciosPagina', n) };
+  };
+}
+
 /** Lee la ficha en el navegador real; el HTML recortado vuelve en trozos (el canal corta a 8000). */
 export function leerFichaNavegador(nav: NavegadorPrecios, scope: string) {
   return async (url: string): Promise<Respuesta> => {
@@ -90,18 +146,36 @@ export function leerFichaNavegador(nav: NavegadorPrecios, scope: string) {
   };
 }
 
-/** Navegador primero; si no hay (Chrome cerrado, sin permiso), la petición normal. */
+export interface Respaldo {
+  (url: string): Promise<Respuesta>;
+  /** Por qué no se usó el navegador la última vez (null si funcionó). */
+  fallo(): { at: number; motivo: string } | null;
+}
+
+/**
+ * Navegador primero; si falla (Chrome cerrado, sin permiso para amazon.es), la petición
+ * normal, y el navegador no se vuelve a intentar en `pausaMs` (así no se acumulan preguntas
+ * de «¿Abro amazon.es?» si nadie contesta).
+ */
 export function conRespaldo(
   primero: (url: string) => Promise<Respuesta>,
   respaldo: (url: string) => Promise<Respuesta>,
-) {
-  return async (url: string): Promise<Respuesta> => {
+  o: { pausaMs?: number; now?: () => number } = {},
+): Respaldo {
+  let ultimo: { at: number; motivo: string } | null = null;
+  const now = o.now ?? Date.now;
+  const leer = async (url: string): Promise<Respuesta> => {
+    if (ultimo && now() - ultimo.at < (o.pausaMs ?? 6 * 3600_000)) return respaldo(url);
     try {
-      return await primero(url);
-    } catch {
+      const r = await primero(url);
+      ultimo = null;
+      return r;
+    } catch (err) {
+      ultimo = { at: now(), motivo: err instanceof Error ? err.message : String(err) };
       return respaldo(url);
     }
   };
+  return Object.assign(leer, { fallo: () => ultimo });
 }
 
 export interface ConfigPrecios {
@@ -111,12 +185,17 @@ export interface ConfigPrecios {
   ratio: number;
   paginas: number;
   categorias: string | undefined;
+  /** Minutos entre barridos rápidos de las búsquedas caras (0 = sin barrido rápido). */
+  rapidoMin: number;
+  paginasRapido: number;
+  rapidas: string | undefined;
 }
 
 /**
  * .env: PA_PRECIOS=0 lo apaga (encendido por defecto); PA_PRECIOS_UMBRAL=70 (descuento mínimo,
  * %); PA_PRECIOS_CADA_MIN=30; PA_PRECIOS_PAGINAS=6 (listados por barrido);
- * PA_PRECIOS_CATEGORIAS=cocina,informatica,… (vacío = todas).
+ * PA_PRECIOS_CATEGORIAS=cocina,informatica,… (vacío = todas); PA_PRECIOS_RAPIDO_MIN=12 (búsquedas
+ * caras: ghd, Dyson, whisky…; 0 = no), PA_PRECIOS_RAPIDO_PAGINAS=2, PA_PRECIOS_RAPIDAS=ghd,chivas…
  */
 export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPrecios {
   const off = /^(0|no|off|false|apagado)$/i.test((env.PA_PRECIOS ?? '').trim());
@@ -132,5 +211,11 @@ export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPreci
     ratio: Math.round((1 - descuento / 100) * 100) / 100,
     paginas: Math.round(num(env.PA_PRECIOS_PAGINAS, 6, 1, 20)),
     categorias: env.PA_PRECIOS_CATEGORIAS,
+    rapidoMin: (() => {
+      const m = num(env.PA_PRECIOS_RAPIDO_MIN, 12, 0, 24 * 60);
+      return m <= 0 ? 0 : Math.max(5, Math.round(m));
+    })(),
+    paginasRapido: Math.round(num(env.PA_PRECIOS_RAPIDO_PAGINAS, 2, 1, 10)),
+    rapidas: env.PA_PRECIOS_RAPIDAS,
   };
 }
