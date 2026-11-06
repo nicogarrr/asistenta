@@ -78,6 +78,10 @@ export const TELEGRAM_COMMANDS = [
     description: 'Todo lo que vigilo: páginas, precios, rutinas y avisos',
   },
   {
+    command: 'precios',
+    description: 'Errores de precio en Amazon.es: estado',
+  },
+  {
     command: 'dejar_de_vigilar',
     description: 'Dejar de vigilar una página',
   },
