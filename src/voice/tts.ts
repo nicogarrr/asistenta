@@ -67,9 +67,9 @@ const SYNTHESIS_TIMEOUT_MS = 60_000;
  */
 const MP3_KBPS = 64;
 
-/** Frecuencias que mp3 admite sin remuestrear, hasta 24 kHz (de sobra para la voz). */
-const MP3_NATIVAS = new Set([16_000, 22_050, 24_000]);
-/** Lo que no sea una de esas (44,1 kHz, 48 kHz…) se baja a esta. */
+/** Frecuencias que mp3 admite sin remuestrear: hasta 24 kHz, y 44,1 kHz (Supertonic 3). */
+const MP3_NATIVAS = new Set([16_000, 22_050, 24_000, 44_100]);
+/** Lo que no sea una de esas (48 kHz, 32 kHz…) se baja a esta. */
 const MP3_SAMPLE_RATE = 24_000;
 
 /**
@@ -92,7 +92,7 @@ function truncate(text: string): string {
 export function encodeSpeech(wav: Buffer, spoken: string, original: string): TtsAudio {
   const decoded = wavToPcm(wav);
   const durationSeconds = decoded.samples.length / decoded.sampleRate;
-  // Sin remuestrear si el motor ya da una frecuencia de mp3 (Kokoro 24 kHz, Piper/SAPI 22 050).
+  // Sin remuestrear si el motor ya da una frecuencia de mp3 (Supertonic 44,1 kHz, Kokoro 24 kHz, Piper/SAPI 22 050).
   const hz = MP3_NATIVAS.has(decoded.sampleRate) ? decoded.sampleRate : MP3_SAMPLE_RATE;
   const pcm =
     hz === decoded.sampleRate

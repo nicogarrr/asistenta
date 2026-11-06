@@ -4,14 +4,16 @@
 
 Las respuestas habladas usan una voz neuronal local con [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): gratis, sin red una vez descargada y dentro del propio proceso. Empieza a sonar en ~0,1 s (Piper, ~0,3 s), no satura el audio y, en una prueba con 15 frases (fechas, euros, nombres, palabras en inglés), se le entendió mejor que a Piper: 6,2 % de palabras mal frente a 9,0 %, con la voz castellana «sharvard».
 
-- **Primer arranque** (y tras una actualización que cambie el modelo): la consola muestra `Voz local «kokoro»: descargando 350 MB en segundo plano…`, luego el porcentaje cada 10 %, y al acabar `Voz local «sharvard» lista`. Mientras tanto Asistenta habla con la voz de siempre (SAPI o Piper); nada espera a la descarga.
+- **Primer arranque** (y tras una actualización que cambie el modelo): la consola muestra `Voz local «supertonic-f2»: descargando 129 MB en segundo plano…`, luego el porcentaje cada 10 %, y al acabar `Voz local «supertonic-f2» lista`. Mientras tanto Asistenta habla con la voz de siempre (SAPI o Piper); nada espera a la descarga.
 - La descarga viene de la release oficial `tts-models` de sherpa-onnx, con URL y SHA-256 fijados en `src/voice/voz-local.ts`. Si el SHA-256 no coincide, se descarta. Si se corta, sigue donde se quedó. Se descomprime con el `tar` de Windows y se coloca de golpe en `state/models/tts/`.
 - Sin red, se reintenta pasados 10 minutos, sin molestar.
 - Detrás de un proxy, arranca Asistenta con `NODE_USE_ENV_PROXY=1` y `HTTPS_PROXY=…` (el `fetch` de Node lo respeta así).
 
 En `.env`:
 
-- `PA_TTS_LOCAL=kokoro` (por defecto): Kokoro-82M, la voz más natural (mujer, «ef_dora»). Son 350 MB que se bajan solos una vez; mientras bajan, si ya tenías sharvard, habla sharvard. En CPU va de sobra (~1 s por frase de 6 s con 4 hilos).
+- `PA_TTS_LOCAL=supertonic-f2` (por defecto): Supertonic 3, voz de mujer F2 (la elegida por Nico). Castellano natural, 0,6-0,9 s por frase en CPU con 4 hilos, 129 MB que se bajan solos una vez. Suena a 44,1 kHz (el mp3 no se remuestrea). Mientras baja, o si fallara, habla Kokoro (si ya estaba en el PC).
+- `PA_TTS_LOCAL=supertonic` (voz F3) o `supertonic-f5` (voz F5): Supertonic 3 con otra voz de mujer.
+- `PA_TTS_LOCAL=kokoro`: Kokoro-82M (mujer, «ef_dora»), la de antes. 350 MB; mientras bajan, si ya tenías sharvard, habla sharvard.
 - `PA_TTS_LOCAL=kokoro-alex` o `kokoro-santa`: Kokoro con voz de hombre.
 - `PA_TTS_LOCAL=sharvard`: la voz Piper castellana de antes (hombre), 80 MB.
 - `PA_TTS_LOCAL=davefx`: la misma voz que Piper davefx, pero más rápida.
@@ -44,4 +46,4 @@ Con `PA_PIPER_MODEL` puesto: si SAPI tiene voz española, SAPI va primero y Pipe
 
 /voz ya no lee con la voz del iPhone: el PC sintetiza la respuesta con esta voz local y el móvil reproduce ese audio. Si el PC no puede (voz sin bajar y sin SAPI), el móvil vuelve a su propia voz.
 
-No hay que bajar nada a mano: al arrancar, Asistenta descarga Kokoro sola (verás `Voz local «kokoro»: descargando 350 MB…` y luego `… lista`). Queda en la carpeta de modelos de Asistenta (`models/tts/kokoro-multi-lang-v1_0-…`, junto a los logs). Para volver a la voz anterior: `PA_TTS_LOCAL=sharvard` en `.env`.
+No hay que bajar nada a mano: al arrancar, Asistenta descarga Supertonic sola (verás `Voz local «supertonic-f2»: descargando 129 MB…` y luego `… lista`). Queda en la carpeta de modelos de Asistenta (`models/tts/sherpa-onnx-supertonic-3-tts-int8-…`, junto a los logs). Para volver a la voz anterior: `PA_TTS_LOCAL=kokoro` en `.env`.

@@ -31,6 +31,13 @@ export interface SherpaMotor {
     text: string;
     sid: number;
     speed: number;
+    /** Supertonic: idioma y pasos van aquí (API nueva de sherpa-onnx-node). */
+    generationConfig?: {
+      sid: number;
+      speed: number;
+      numSteps: number;
+      extra: Record<string, string>;
+    };
     onProgress?: (info: { samples: Float32Array; progress: number }) => number;
   }): Promise<SherpaAudio>;
 }
@@ -72,7 +79,20 @@ export interface ModeloSherpa {
   datos: string;
   /** Solo Kokoro: tabla de voces, léxicos y diccionario que trae su archivo. */
   kokoro?: { voces: string; lexicon: string; dict: string };
+  /** Solo Supertonic 3: sus cuatro onnx, su config, su índice de letras y sus voces. */
+  supertonic?: {
+    durationPredictor: string;
+    textEncoder: string;
+    vectorEstimator: string;
+    vocoder: string;
+    ttsJson: string;
+    unicodeIndexer: string;
+    voiceStyle: string;
+  };
 }
+
+/** Pasos de Supertonic: 8 es su valor por defecto (con 2-5 suena áspera). */
+export const SUPERTONIC_PASOS = 8;
 
 export interface SherpaOptions {
   modelo: ModeloSherpa;
@@ -98,26 +118,28 @@ export function createSherpaTts(opts: SherpaOptions): Tts {
       const nuevo = Promise.resolve().then(() =>
         cargar().OfflineTts.createAsync({
           model: {
-            ...(opts.modelo.kokoro
-              ? {
-                  kokoro: {
-                    model: opts.modelo.onnx,
-                    voices: opts.modelo.kokoro.voces,
-                    tokens: opts.modelo.tokens,
-                    dataDir: opts.modelo.datos,
-                    lexicon: opts.modelo.kokoro.lexicon,
-                    dictDir: opts.modelo.kokoro.dict,
-                    // Fonemas castellanos de espeak-ng (con «z» y «c» de España).
-                    lang: 'es',
-                  },
-                }
-              : {
-                  vits: {
-                    model: opts.modelo.onnx,
-                    tokens: opts.modelo.tokens,
-                    dataDir: opts.modelo.datos,
-                  },
-                }),
+            ...(opts.modelo.supertonic
+              ? { supertonic: { ...opts.modelo.supertonic } }
+              : opts.modelo.kokoro
+                ? {
+                    kokoro: {
+                      model: opts.modelo.onnx,
+                      voices: opts.modelo.kokoro.voces,
+                      tokens: opts.modelo.tokens,
+                      dataDir: opts.modelo.datos,
+                      lexicon: opts.modelo.kokoro.lexicon,
+                      dictDir: opts.modelo.kokoro.dict,
+                      // Fonemas castellanos de espeak-ng (con «z» y «c» de España).
+                      lang: 'es',
+                    },
+                  }
+                : {
+                    vits: {
+                      model: opts.modelo.onnx,
+                      tokens: opts.modelo.tokens,
+                      dataDir: opts.modelo.datos,
+                    },
+                  }),
             numThreads: hilos,
             provider: 'cpu',
             debug: 0,
@@ -144,10 +166,22 @@ export function createSherpaTts(opts: SherpaOptions): Tts {
       try {
         const tts = await obtener();
         if (signal?.aborted) throw cancelada();
+        const sid = opts.sid ?? 0;
         const audio = await tts.generateAsync({
           text: spoken.replace(/\s+/g, ' '),
-          sid: opts.sid ?? 0,
+          sid,
           speed: 1,
+          // Supertonic lee varios idiomas: sin «es» no lo dice en castellano.
+          ...(opts.modelo.supertonic
+            ? {
+                generationConfig: {
+                  sid,
+                  speed: 1.05,
+                  numSteps: SUPERTONIC_PASOS,
+                  extra: { lang: 'es' },
+                },
+              }
+            : {}),
           // Devolver 0 corta la síntesis en curso al cancelar.
           onProgress: () => (signal?.aborted ? 0 : 1),
         });
