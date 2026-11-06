@@ -37,6 +37,7 @@ export function renderVozPage(): string {
   <div id="estado">Pulsa el botón y habla.</div>
   <div id="tiempos"></div>
   <button id="boton" type="button">🎙️ Hablar</button>
+  <button id="reintentar" type="button" hidden>Reintentar</button>
   <label><input id="manos" type="checkbox"> Manos libres</label>
   <label><input id="leer" type="checkbox" checked> Leer respuestas en voz alta</label>
 </footer>
@@ -54,6 +55,9 @@ ${renderMiniAppReadyScript()}
   var boton = document.getElementById('boton');
   var manos = document.getElementById('manos');
   var leer = document.getElementById('leer');
+  var otraVez = document.getElementById('reintentar');
+  // Tope de /api/voz: pasado esto, error claro y «Reintentar» (antes esperaba sin fin).
+  var TOPE_VOZ_MS = 60000;
   var grabador = null, trozos = [], flujo = null, vigia = null;
 
   function decir(t) { estado.textContent = t; }
@@ -187,18 +191,33 @@ ${renderMiniAppReadyScript()}
   }
 
   function mandar(audio, mime) {
-    fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': mime, Authorization: 'Bearer ' + token }, body: audio })
+    otraVez.hidden = true;
+    otraVez.onclick = null;
+    var corte = typeof AbortController === 'function' ? new AbortController() : null;
+    var reloj = corte ? setTimeout(function () { corte.abort(); }, TOPE_VOZ_MS) : null;
+    function fallo(texto) {
+      boton.disabled = false;
+      decir(texto);
+      otraVez.hidden = false;
+      otraVez.onclick = function () { decir('Reintentando…'); boton.disabled = true; mandar(audio, mime); };
+    }
+    fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': mime, Authorization: 'Bearer ' + token }, body: audio, signal: corte ? corte.signal : undefined })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
       .then(function (x) {
+        if (reloj) clearTimeout(reloj);
         boton.disabled = false;
-        if (!x.ok) { decir((x.d && x.d.error) || 'No ha salido bien.'); return; }
+        if (!x.ok) { fallo((x.d && x.d.error) || 'No ha salido bien.'); return; }
         if (x.d.oido) linea('yo', x.d.oido);
         linea('ella', x.d.text || '');
         var tm = x.d.tiempos;
         if (tm) tiempos.textContent = 'oír ' + seg(tm.oirMs) + ' · pensar ' + seg(tm.pensarMs) + ' · voz ' + seg(tm.vozMs);
         hablar(x.d.text || '', x.d.audio, pedirResto(x.d.audioResto));
       })
-      .catch(function () { boton.disabled = false; decir('No llego al PC. ¿Tailscale está conectado?'); });
+      .catch(function () {
+        if (reloj) clearTimeout(reloj);
+        if (corte && corte.signal.aborted) fallo('Asistenta lleva más de ' + Math.round(TOPE_VOZ_MS / 1000) + ' s sin contestar: puede que siga pensando o que se haya colgado. Pulsa «Reintentar».');
+        else fallo('No llego al PC. ¿Tailscale está conectado?');
+      });
   }
 
   boton.addEventListener('click', function () {
