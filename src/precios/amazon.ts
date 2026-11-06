@@ -351,7 +351,12 @@ export function parseFicha(html: string): Ficha {
   );
   const plano = textoPlano(caja >= 0 ? html.slice(Math.max(0, caja - 2000), caja + 12_000) : html);
   // «Remitente / Vendedor Amazon» (envía y vende el mismo) o «Envío desde: X Vendido por: Y».
-  const ambos = /Remitente \/ Vendedor\s+(\S+)/.exec(plano)?.[1] ?? null;
+  // «Remitente / Vendedor Productos Profesionales AMP Productos Profesionales AMP …»: el nombre entero, una vez.
+  const ambos =
+    /Remitente \/ Vendedor:?\s+(.{1,60}?)(?=\s+(?:Remitente|Devoluciones|Pol[ií]ticas|Pago|Embalaje|Detalles|Ver)\b|\s*$|\.)/
+      .exec(plano)?.[1]
+      ?.trim()
+      .replace(/^(.+?) \1$/, '$1') ?? null;
   // La ficha real repite el nombre: «Vendido por RUIMEN RUIMEN Vendido por RUIMEN Devoluciones».
   const vendedor =
     ambos ??

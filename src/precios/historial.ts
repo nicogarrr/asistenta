@@ -17,6 +17,11 @@ export interface HistorialExterno {
   media: number | null;
 }
 
+/** Precio real de referencia: la media; si no hay, el último precio que vio camelcamelcamel. */
+export function precioRealExterno(h: HistorialExterno | null | undefined): number | null {
+  return h ? (h.media ?? h.actual) : null;
+}
+
 export function urlCamel(asin: string): string {
   return `https://es.camelcamelcamel.com/product/${encodeURIComponent(asin)}`;
 }
@@ -37,7 +42,8 @@ export function parseCamel(html: string): HistorialExterno | null {
     const m = new RegExp(`<tr[^>]*data-field="${campo}"[^>]*>([\\s\\S]*?)<\\/tr>`).exec(html);
     if (!m) continue;
     const [minimo = null, maximo = null, actual = null, media = null] = eurosEnCeldas(m[1] ?? '');
-    if (media === null && minimo === null) continue;
+    // Producto nuevo en camelcamelcamel: a veces solo hay «Current» (último precio visto), sin media.
+    if (media === null && minimo === null && actual === null) continue;
     return { fuente: 'camelcamelcamel', campo, minimo, maximo, actual, media };
   }
   return null;
