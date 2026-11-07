@@ -268,6 +268,7 @@ import { AudioRecall } from './media/recall.js';
 import {
   archivarEpisodios,
   asegurarCarpetaMemoria,
+  diaLocal,
   episodioPermitido,
   escribirIndiceMemoria,
   notaEpisodiosRecientes,
@@ -534,6 +535,7 @@ import {
   agendaTodayLines,
   answerBriefingOnDemand,
   briefingSpeaker,
+  composeDailyBriefing,
   type DailyBriefingDeps,
   followupsDue,
   pickImportantMail,
@@ -600,9 +602,11 @@ import {
   funcionesText,
   TOOL_ABILITIES,
 } from './funciones.js';
+import { guardarDatosIphone, leerDatos, paraVoz } from './iphone/atajos.js';
 import { OrdenesStore, recetasOrdenes, registrarResultado } from './iphone/ordenes.js';
 import { diagnosticoWda, WdaClient, wdaActivo, wdaUrl } from './iphone/wda.js';
 import {
+  atajoLugar,
   crearLlegada,
   createLlegadaTool,
   guardarSitio,
@@ -854,6 +858,7 @@ import {
   watchValueText,
 } from './watch/pages.js';
 import { WebRouter } from './web/router.js';
+import { textoPlano } from './webui/atajo.js';
 import { panelContextoDeHilos } from './webui/contexto.js';
 import { createOwnerGoalsReader } from './webui/goals.js';
 import { mapaMemoria } from './webui/mapa-memoria.js';
@@ -2590,6 +2595,34 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             const r = registrarResultado(iphoneOrdenes, body);
             if (r.telegram) await avisarDueno(r.telegram).catch(() => {});
             return { status: r.status, texto: r.respuesta };
+          },
+          // Automatizaciones del iPhone (/api/atajo/lugar): al llegar o salir de casa saltan
+          // los avisos de llegada sin compartir la ubicación; también van a Telegram.
+          atajoLugar: async (evento, sitio) => {
+            const chatId = resolveOwnerDmChatId(
+              [...threads.values()].map((t) => t.chatKey),
+              vigilanteOwnerId,
+            );
+            if (!chatId) return 'Aún no sé cuál es tu chat de Telegram; escríbeme allí una vez.';
+            const r = await atajoLugar(llegadaDeps(), chatId, evento, sitio);
+            for (const aviso of r.avisos) await sendToChat(chatId, llegadaFiredText(aviso));
+            return paraVoz(r.texto);
+          },
+          // «A las 8:00, léeme el resumen» (/api/atajo/resumen): el de /resumen hoy, sin
+          // tocar el ritmo del de la mañana.
+          atajoResumen: async () =>
+            paraVoz(textoPlano((await composeDailyBriefing(briefingDeps)).text)),
+          // Salud y calendario del iPhone a la memoria (/api/atajo/datos): solo lo que manda.
+          atajoDatos: async (body) => {
+            if (vigilanteOwnerId === undefined || vigilanteOwnerId === null)
+              return 'Aún no sé quién es el dueño; escríbeme por Telegram una vez.';
+            const datos = leerDatos(body, diaLocal(new Date()));
+            if ('error' in datos) return datos.error;
+            return guardarDatosIphone(
+              memory,
+              `telegram:dm:${String(vigilanteOwnerId)}#main`,
+              datos,
+            );
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
           // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram
@@ -7145,6 +7178,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     await say(inbound, atajosInstrucciones(url), { quote: true });
+    const { recetasAutomatizaciones, recetasPagoYSinPc } = await import('./iphone/recetas.js');
+    await say(inbound, recetasAutomatizaciones(url), { quote: false });
+    await say(inbound, recetasPagoYSinPc(), { quote: false });
     // El token solo, para copiarlo con una pulsación larga; se borra solo del chat.
     const id = await telegram.send({
       channel: 'telegram',
