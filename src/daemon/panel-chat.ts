@@ -174,6 +174,8 @@ export interface PanelChatDeps<T extends PanelChatThread> {
   command?(thread: T, text: string): string | null;
   /** El texto según lo escribe el modelo (/voz lo va diciendo frase a frase). */
   onDelta?(delta: string): void;
+  /** El hilo ya tiene un turno en marcha: este espera en la cola (/voz lo dice). */
+  onOcupado?(): void;
 }
 
 export async function runPanelChat<T extends PanelChatThread>(
@@ -181,6 +183,7 @@ export async function runPanelChat<T extends PanelChatThread>(
   text: string,
   deps: PanelChatDeps<T>,
 ): Promise<PanelChatReply> {
+  if (thread.active) deps.onOcupado?.();
   const out = await queueThreadTurn(thread, async () => {
     let answer = '';
     const notes: string[] = [];

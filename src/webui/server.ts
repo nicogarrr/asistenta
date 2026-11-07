@@ -67,7 +67,7 @@ export interface WebUiDeps {
   chat?(
     text: string,
     /** Desde /voz: respuesta corta para decirla y el texto según se escribe (`onDelta`). */
-    opts?: { voz?: boolean; onDelta?: (delta: string) => void },
+    opts?: { voz?: boolean; onDelta?: (delta: string) => void; onOcupado?: () => void },
   ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
   /**
    * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
