@@ -66,7 +66,7 @@ describe('/voz: hablar con Asistenta desde el móvil', () => {
     expect((await nota(url, Buffer.alloc(10), 'text/plain')).status).toBe(415);
   });
 
-  it('si el whisper falla dice por qué en castellano (no «Error interno»)', async () => {
+  it('si el whisper falla dice por qué en castellano, y no se queda callada (voz7)', async () => {
     const url = await panel({
       transcribe: async () => {
         throw new Error('la nota de voz está vacía o en silencio');
@@ -74,10 +74,12 @@ describe('/voz: hablar con Asistenta desde el móvil', () => {
       chat: async () => ({ text: 'x' }),
     });
     const r = await nota(url, Buffer.alloc(10));
-    expect(r.status).toBe(422);
-    expect((await r.json()).error).toBe(
-      'No te he podido entender: la nota de voz está vacía o en silencio. Prueba otra vez.',
+    expect(r.status).toBe(200);
+    const d = await r.json();
+    expect(d.text).toBe(
+      'Perdona, no te he oído bien: la nota de voz está vacía o en silencio. Prueba otra vez.',
     );
+    expect(d.fallo).toBe('oir');
   });
 
   it('sin voz configurada responde 503 en castellano', async () => {

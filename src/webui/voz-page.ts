@@ -35,11 +35,12 @@ export function renderVozPage(): string {
 <main id="chat" aria-live="polite"></main>
 <footer>
   <div id="estado">Pulsa el botón y habla.</div>
-  <div id="tiempos"></div>
+  <div id="tiempos" hidden></div>
   <button id="boton" type="button">🎙️ Hablar</button>
   <button id="reintentar" type="button" hidden>Reintentar</button>
   <label><input id="manos" type="checkbox"> Manos libres</label>
   <label><input id="leer" type="checkbox" checked> Leer respuestas en voz alta</label>
+  <label><input id="vertiempos" type="checkbox"> Ver tiempos</label>
 </footer>
 <script>
 ${renderMiniAppReadyScript()}
@@ -89,10 +90,12 @@ ${renderMiniAppReadyScript()}
     desbloqueado = true;
     try { reproductor.src = SILENCIO; var p = reproductor.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
   }
-  function vozSistema(t) {
-    if (!window.speechSynthesis) { siguiente(); return; }
+  // La voz del móvil para lo que el PC no pudo decir, o si no llega al PC: nunca callada.
+  function vozSistema(t, fin) {
+    fin = fin || siguiente;
+    if (!window.speechSynthesis || !t) { fin(); return; }
     var u = new SpeechSynthesisUtterance(t); u.lang = 'es-ES';
-    u.onend = siguiente; u.onerror = siguiente;
+    u.onend = fin; u.onerror = fin;
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   }
   function sonar(audio, fin, falla) {
@@ -104,8 +107,27 @@ ${renderMiniAppReadyScript()}
       var p = reproductor.play(); if (p && p.catch) p.catch(falla);
     } catch (e) { falla(); }
   }
+  // Cola de frases del flujo: suenan en orden según llegan, mientras el PC sigue pensando;
+  // cada una con la voz del PC si llegó con audio, si no con la del móvil.
+  var cola = [], sonando = false, alCallar = null;
+  function encolar(texto, audio) {
+    if (!leer.checked || !texto) return;
+    cola.push({ t: texto, a: audio });
+    if (!sonando) tocar();
+  }
+  function tocar() {
+    var f = cola.shift();
+    if (!f) { sonando = false; if (alCallar) { var fn = alCallar; alCallar = null; fn(); } return; }
+    sonando = true; decir('Hablando…');
+    var hecho = false;
+    function fin() { if (!hecho) { hecho = true; tocar(); } }
+    function falla() { if (!hecho) { hecho = true; vozSistema(f.t, tocar); } }
+    if (f.a && f.a.data) sonar(f.a, fin, falla); else vozSistema(f.t, fin);
+  }
+  /** Cuando acabe lo que suena (o ya, si no suena nada). */
+  function cuandoCalle(fn) { if (sonando || cola.length) alCallar = fn; else fn(); }
   // resto: promesa con el audio del resto de la respuesta (o null), pedida en cuanto llega
-  // la primera frase para que suene seguido.
+  // la primera frase para que suene seguido. (Respuesta JSON: PC sin flujo.)
   function hablar(t, audio, resto) {
     if (!leer.checked) { siguiente(); return; }
     if (!audio || !audio.data) { vozSistema(t); return; }
@@ -122,6 +144,32 @@ ${renderMiniAppReadyScript()}
     return fetch('/api/voz/resto?id=' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + token } })
       .then(function (r) { return r.ok ? r.json() : null; })
       .catch(function () { return null; });
+  }
+  // La respuesta que el PC sigue pensando tras su tope: se pide y se dice al llegar.
+  function esperarPendiente(id) {
+    boton.disabled = true;
+    cuandoCalle(function () { decir('Sigo pensando…'); });
+    pedirResto(id).then(function (d) {
+      boton.disabled = false;
+      if (!d || !d.text) { decir('Se me ha perdido la respuesta. Pregúntamelo otra vez.'); vozSistema('Perdona, se me ha perdido la respuesta.', function () {}); return; }
+      linea('ella', d.text);
+      encolar(d.decir || d.text, d.audio);
+      cuandoCalle(siguiente);
+    });
+  }
+  // Tiempos de cada etapa, en una línea, solo con «Ver tiempos».
+  var verTiempos = document.getElementById('vertiempos');
+  try { verTiempos.checked = localStorage.getItem('asistenta.voz.tiempos') === '1'; } catch (e) {}
+  function mostrarTiempos() {
+    tiempos.hidden = !verTiempos.checked;
+    try { localStorage.setItem('asistenta.voz.tiempos', verTiempos.checked ? '1' : '0'); } catch (e) {}
+  }
+  verTiempos.addEventListener('change', mostrarTiempos);
+  mostrarTiempos();
+  function pintarTiempos(tm) {
+    if (!tm) return;
+    tiempos.textContent = 'recibir ' + seg(tm.recibirMs) + ' · oír ' + seg(tm.oirMs) + ' · pensar ' + seg(tm.pensarMs) +
+      ' · 1.ª voz ' + seg(tm.primeraVozMs) + ' · voz ' + seg(tm.vozMs) + ' · total ' + seg(tm.totalMs);
   }
   function seg(ms) { return (Math.round((ms || 0) / 100) / 10).toString().replace('.', ',') + ' s'; }
   function siguiente() { if (manos.checked) empezar(); else decir('Pulsa el botón y habla.'); }
@@ -153,7 +201,7 @@ ${renderMiniAppReadyScript()}
       grabador.onstop = enviar;
       grabador.start();
       boton.classList.add('grabando'); boton.textContent = '⏹ Enviar';
-      decir(manos.checked ? 'Te escucho… (corto solo al callarte)' : 'Te escucho… pulsa para enviar.');
+      decir(manos.checked ? 'Escuchando… (corto solo al callarte)' : 'Escuchando… pulsa para enviar.');
       if (manos.checked) vigilarSilencio();
     }).catch(function () { decir('Sin permiso para el micrófono. Actívalo para Telegram o el navegador en los ajustes del móvil.'); });
   }
@@ -190,33 +238,89 @@ ${renderMiniAppReadyScript()}
     });
   }
 
+  /** Lee la respuesta en flujo: una línea JSON por evento. */
+  function leerFlujo(r, alEvento) {
+    var lector = r.body.getReader(), dec = new TextDecoder(), buf = '';
+    function trozo(l) { if (l.trim()) { try { alEvento(JSON.parse(l)); } catch (e) {} } }
+    function paso() {
+      return lector.read().then(function (x) {
+        if (x.done) { trozo(buf); return; }
+        buf += dec.decode(x.value, { stream: true });
+        var i;
+        while ((i = buf.indexOf('\\n')) >= 0) { var l = buf.slice(0, i); buf = buf.slice(i + 1); trozo(l); }
+        return paso();
+      });
+    }
+    return paso();
+  }
+
   function mandar(audio, mime) {
     otraVez.hidden = true;
     otraVez.onclick = null;
     var corte = typeof AbortController === 'function' ? new AbortController() : null;
-    var reloj = corte ? setTimeout(function () { corte.abort(); }, TOPE_VOZ_MS) : null;
-    function fallo(texto) {
-      boton.disabled = false;
-      decir(texto);
+    var reloj = null, acabado = false;
+    // El tope cuenta desde la última noticia del PC: mientras va diciendo frases, no corta.
+    function vigilar() {
+      if (!corte) return;
+      if (reloj) clearTimeout(reloj);
+      reloj = setTimeout(function () { corte.abort(); }, TOPE_VOZ_MS);
+    }
+    vigilar();
+    function reintentable() {
       otraVez.hidden = false;
       otraVez.onclick = function () { decir('Reintentando…'); boton.disabled = true; mandar(audio, mime); };
     }
-    fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': mime, Authorization: 'Bearer ' + token }, body: audio, signal: corte ? corte.signal : undefined })
-      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
-      .then(function (x) {
+    // Nunca callada: el motivo se ve y se oye (con la voz del móvil: el PC no ha contestado).
+    function fallo(texto, hablado) {
+      acabado = true;
+      if (reloj) clearTimeout(reloj);
+      boton.disabled = false;
+      decir(texto);
+      linea('ella', texto);
+      reintentable();
+      if (leer.checked) vozSistema(hablado || texto, function () {});
+    }
+    function alEvento(e) {
+      vigilar();
+      if (e.tipo === 'estado') {
+        if (e.estado === 'pensando' && !sonando) decir('Pensando…');
+        else if (e.estado === 'oyendo') decir('Oyendo lo que has dicho…');
+      } else if (e.tipo === 'oido') linea('yo', e.oido);
+      else if (e.tipo === 'frase') encolar(e.texto, e.audio);
+      else if (e.tipo === 'fin') {
+        acabado = true;
         if (reloj) clearTimeout(reloj);
         boton.disabled = false;
-        if (!x.ok) { fallo((x.d && x.d.error) || 'No ha salido bien.'); return; }
-        if (x.d.oido) linea('yo', x.d.oido);
-        linea('ella', x.d.text || '');
-        var tm = x.d.tiempos;
-        if (tm) tiempos.textContent = 'oír ' + seg(tm.oirMs) + ' · pensar ' + seg(tm.pensarMs) + ' · voz ' + seg(tm.vozMs);
-        hablar(x.d.text || '', x.d.audio, pedirResto(x.d.audioResto));
+        linea('ella', e.text || '');
+        pintarTiempos(e.tiempos);
+        if (e.pendiente) { esperarPendiente(e.pendiente); return; }
+        if (e.fallo) { reintentable(); cuandoCalle(function () { decir('Pulsa el botón y habla.'); }); return; }
+        cuandoCalle(siguiente);
+      }
+    }
+    fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': mime, Accept: 'application/x-ndjson', Authorization: 'Bearer ' + token }, body: audio, signal: corte ? corte.signal : undefined })
+      .then(function (r) {
+        var tipo = r.headers.get('content-type') || '';
+        if (r.ok && tipo.indexOf('ndjson') >= 0 && r.body && r.body.getReader && window.TextDecoder) {
+          return leerFlujo(r, alEvento).then(function () {
+            if (!acabado) fallo('Se ha cortado la respuesta a medias. Pulsa «Reintentar».', 'Perdona, se ha cortado.');
+          });
+        }
+        return r.json().then(function (d) { return { ok: r.ok, d: d }; }).then(function (x) {
+          if (reloj) clearTimeout(reloj);
+          boton.disabled = false;
+          if (!x.ok) { fallo((x.d && x.d.error) || 'No ha salido bien.'); return; }
+          acabado = true;
+          if (x.d.oido) linea('yo', x.d.oido);
+          linea('ella', x.d.text || '');
+          pintarTiempos(x.d.tiempos);
+          hablar(x.d.text || '', x.d.audio, pedirResto(x.d.audioResto));
+        });
       })
       .catch(function () {
-        if (reloj) clearTimeout(reloj);
-        if (corte && corte.signal.aborted) fallo('Asistenta lleva más de ' + Math.round(TOPE_VOZ_MS / 1000) + ' s sin contestar: puede que siga pensando o que se haya colgado. Pulsa «Reintentar».');
-        else fallo('No llego al PC. ¿Tailscale está conectado?');
+        if (acabado) return;
+        if (corte && corte.signal.aborted) fallo('Asistenta lleva más de ' + Math.round(TOPE_VOZ_MS / 1000) + ' s sin contestar: puede que siga pensando o que se haya colgado. Pulsa «Reintentar».', 'Perdona, estoy tardando demasiado. Pulsa reintentar.');
+        else fallo('No llego al PC. ¿Tailscale está conectado?', 'Perdona, no llego al ordenador.');
       });
   }
 

@@ -58,19 +58,22 @@ export interface AudioVoz {
   data: string;
 }
 
-const pendientes = new Map<string, Promise<AudioVoz | null>>();
+const pendientes = new Map<string, Promise<unknown>>();
 const CADUCA_MS = 2 * 60_000;
 
-/** Guarda la síntesis del resto en marcha y devuelve con qué id pedirla. */
-export function guardarResto(audio: Promise<AudioVoz | null>): string {
+/**
+ * Guarda algo en marcha (la síntesis del resto, o la respuesta que aún se piensa) y
+ * devuelve con qué id pedirlo.
+ */
+export function guardarResto(audio: Promise<unknown>, caducaMs = CADUCA_MS): string {
   const id = randomUUID();
   pendientes.set(id, audio);
-  setTimeout(() => pendientes.delete(id), CADUCA_MS).unref?.();
+  setTimeout(() => pendientes.delete(id), caducaMs).unref?.();
   return id;
 }
 
 /** El resto (una sola vez); null si no existe o ya caducó. */
-export async function tomarResto(id: string): Promise<AudioVoz | null> {
+export async function tomarResto(id: string): Promise<unknown> {
   const p = pendientes.get(id);
   if (!p) return null;
   pendientes.delete(id);

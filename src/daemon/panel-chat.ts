@@ -45,6 +45,8 @@ export interface TurnOutput {
    * no tiene la cola de reintentos de Telegram: lo reintenta él solo (page.ts).
    */
   outage?(): void;
+  /** El texto de la respuesta según lo escribe el modelo (para /voz: hablar antes). */
+  delta?(text: string): void;
 }
 
 /** Un archivo enviado por un turno: los bytes y el nombre con que se descarga. */
@@ -170,6 +172,8 @@ export interface PanelChatDeps<T extends PanelChatThread> {
    * respuesta, o null para el turno normal. No se apunta para /reintentar.
    */
   command?(thread: T, text: string): string | null;
+  /** El texto según lo escribe el modelo (/voz lo va diciendo frase a frase). */
+  onDelta?(delta: string): void;
 }
 
 export async function runPanelChat<T extends PanelChatThread>(
@@ -215,6 +219,7 @@ export async function runPanelChat<T extends PanelChatThread>(
       outage: () => {
         outage = true;
       },
+      ...(deps.onDelta ? { delta: deps.onDelta } : {}),
     });
     const worked = specialistNote(specialists, deniedSpecialists);
     if (worked) notes.push(worked);
