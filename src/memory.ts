@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  appendFileSync,
   closeSync,
   copyFileSync,
   existsSync,
@@ -684,6 +685,9 @@ export function cabeceraTema(tema: string): string {
 
 /** Carpeta (dentro de notas/) donde quedan los ficheros por chat ya repartidos. */
 export const CARPETA_COPIA_TEMAS = '_copia-por-chat';
+
+/** Carpeta (dentro de notas/) donde va lo que ya no cabe en la memoria de un chat. */
+export const CARPETA_ARCHIVO = 'archivo';
 
 export interface MigracionTemas {
   chats: number;
@@ -1411,8 +1415,78 @@ export class MemoryStore {
     return doc;
   }
 
+  /**
+   * Lo que no cabe ya en la memoria (tope de 64 KB por chat) no se pierde: se
+   * apunta, entero y con su id, en `archivo/<tema>.md` (o `archivo/<chat>.md` en
+   * la memoria por chat). No vuelve al contexto, pero sigue en un fichero que Nico
+   * abre en Obsidian o con el Bloc de notas.
+   */
+  #archivar(scope: string, fuera: readonly MemoryEntry[]): void {
+    if (fuera.length === 0) return;
+    const dirArchivo = join(this.dir, CARPETA_ARCHIVO);
+    mkdirSync(dirArchivo, { recursive: true });
+    const porFichero = new Map<string, { titulo: string; lineas: string[] }>();
+    for (const e of fuera) {
+      const tema = this.porTema ? (normalizarTema(e.tema) ?? clasificarTema(e.text, e.tags)) : null;
+      const file = tema
+        ? join(dirArchivo, `${tema}${SUFFIX}`)
+        : join(dirArchivo, scopeToFilename(scope));
+      const grupo = porFichero.get(file) ?? {
+        titulo: tema ? `# Archivo: ${tema}` : `# Archivo de ${scope}`,
+        lineas: [],
+      };
+      grupo.lineas.push(this.porTema ? serializeEntry(e, scope) : serializeEntry(e));
+      porFichero.set(file, grupo);
+    }
+    for (const [file, { titulo, lineas }] of porFichero) {
+      const antes = existsSync(file) ? readFileSync(file, 'utf8') : null;
+      const nuevas = lineas.filter((l) => !antes?.includes(l));
+      if (nuevas.length === 0) continue;
+      const cabecera =
+        antes === null
+          ? `${this.obsidian ? `---\ntags:\n  - ${ETIQUETA_ASISTENTA}\n  - memoria/archivo\n---\n` : ''}${titulo}\n\nLo que ya no cabía en la memoria (tope de ${MAX_MEMORY_BYTES / 1024} KB por chat). No entra en el contexto; nada se ha borrado.\n\n`
+          : antes.endsWith('\n') || antes === ''
+            ? ''
+            : '\n';
+      appendFileSync(file, `${cabecera}${nuevas.join('\n')}\n`, 'utf8');
+    }
+    log.info('memoria: lo que no cabía va al archivo', { scope, hechos: fuera.length });
+  }
+
+  /**
+   * Busca en el archivo (lo que ya no cabía): solo hechos de estos chats, mejor
+   * puntuados primero. No vuelven al contexto; sirven cuando recall no encuentra.
+   */
+  buscarArchivo(scopes: readonly string[], query: string, limit = 5): MemoryEntry[] {
+    const dirArchivo = join(this.dir, CARPETA_ARCHIVO);
+    if (!query.trim() || !existsSync(dirArchivo)) return [];
+    const legacy = new Set(scopes.map((s) => scopeToFilename(s)));
+    const hits: Array<{ e: MemoryEntry; score: number }> = [];
+    const vistos = new Set<string>();
+    for (const name of readdirSync(dirArchivo).sort()) {
+      if (!name.endsWith(SUFFIX)) continue;
+      const text = readFileSync(join(dirArchivo, name), 'utf8');
+      for (const line of text.split(/\r?\n/)) {
+        const hit = parseTemaLine(line);
+        if (!hit) continue;
+        const chat = hit.chat ?? (legacy.has(name) ? scopes[0] : this.#sinChat);
+        if (!chat || !scopes.includes(chat) || hit.entry.supersededBy !== null) continue;
+        if (vistos.has(hit.entry.id)) continue;
+        const score = scoreEntry(hit.entry, query);
+        if (score <= 0) continue;
+        vistos.add(hit.entry.id);
+        hits.push({ e: hit.entry, score });
+      }
+    }
+    return hits
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(1, limit))
+      .map((h) => h.e);
+  }
+
   #save(scope: string, doc: MemoryDoc): void {
     let evicted = 0;
+    const fuera: MemoryEntry[] = [];
     let droppedNotes = false;
     let text = serializeMemory(doc);
     const over = (): boolean => Buffer.byteLength(text, 'utf8') > MAX_MEMORY_BYTES;
@@ -1423,7 +1497,7 @@ export class MemoryStore {
     while (over()) {
       const idx = doc.entries.findIndex((e) => e.supersededBy !== null);
       if (idx < 0 || doc.entries.length <= 1) break;
-      doc.entries.splice(idx, 1);
+      fuera.push(...doc.entries.splice(idx, 1));
       evicted++;
       text = serializeMemory(doc);
     }
@@ -1438,7 +1512,7 @@ export class MemoryStore {
     // tienen su propio tope pequeño: se echan los hechos normales antes que ellas.
     while (over() && doc.entries.length > 1) {
       const idx = doc.entries.findIndex((e) => !e.tags.some((t) => PINNED_MEMORY_TAGS.includes(t)));
-      doc.entries.splice(idx < 0 ? 0 : idx, 1);
+      fuera.push(...doc.entries.splice(idx < 0 ? 0 : idx, 1));
       evicted++;
       text = serializeMemory(doc);
     }
@@ -1455,6 +1529,8 @@ export class MemoryStore {
         capBytes: MAX_MEMORY_BYTES,
       });
     }
+    // Primero al archivo: si la escritura de después falla, el hecho sigue a salvo.
+    this.#archivar(scope, fuera);
     if (this.porTema) {
       this.#saveTemas(scope, doc);
       log.debug('memory written (temas)', { scope, entries: doc.entries.length });
