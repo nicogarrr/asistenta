@@ -27,6 +27,11 @@ export interface RunStep {
   /** The `action` argument when the tool has one and it is a plain label, else ''. */
   action: string;
   ok: boolean;
+  /**
+   * Aviso que dejó el resultado aunque no fuera un error («el último clic no cambió la
+   * página»…), para el revisor del «hecho» (core/hecho.ts). Sin texto del resultado.
+   */
+  warn?: string;
 }
 
 export interface Recovery {

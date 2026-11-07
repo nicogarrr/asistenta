@@ -8,6 +8,7 @@ import {
   STOP_USAGE,
   WATCHDOG_USAGE,
 } from './cli-uso.js';
+import { doneCheckLine } from './core/hecho.js';
 import { resolveModelCaps } from './core/models.js';
 import { CreadosStore } from './creados.js';
 import {
@@ -9104,6 +9105,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // Cortado con «⏹ Pararlo» del aviso de cola: no sale su respuesta a medias; lo que
       // esperaba en la cola va ahora (daemon/busy-note.ts).
       if (thread.busyStopped === turnSince) return;
+
+      // Revisor del «hecho» (core/hecho.ts, idea de POKI): si dice que está hecho pero la
+      // última acción falló o dejó un aviso que nadie miró, la respuesta lo dice.
+      const doneNote = doneCheckLine(result);
+      if (doneNote) {
+        log.info('done claim not verified', { thread: thread.name });
+        result = { ...result, text: `${result.text}\n\n${doneNote}`.trim() };
+      }
 
       // Lo que contó de sí mismo ya está en su perfil (se apuntó al llegar): que lo sepa.
       const saidNow = recentFacts.peek(chatKey(inbound));
