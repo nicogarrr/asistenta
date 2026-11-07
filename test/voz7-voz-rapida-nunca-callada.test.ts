@@ -138,7 +138,14 @@ describe('/voz mide cada etapa y la apunta en el registro (voz7)', () => {
     });
     const linea = info.mock.calls.find((c) => c[0] === 'voz movil: tiempos');
     expect(linea).toBeTruthy();
-    const t = linea?.[1] as Record<string, number>;
+    const t = linea?.[1] as {
+      recibirMs: number;
+      oirMs: number;
+      pensarMs: number;
+      vozMs: number;
+      primeraVozMs: number;
+      totalMs: number;
+    };
     expect(t.recibirMs).toBe(3);
     expect(t.oirMs).toBeGreaterThanOrEqual(25);
     expect(t.pensarMs).toBeGreaterThanOrEqual(55);
