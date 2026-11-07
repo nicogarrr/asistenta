@@ -9,7 +9,7 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { parseAllowedHosts } from './webui/server.js';
+import { panelAllowedHosts, parsePanelPublicUrl } from './webui/server.js';
 
 /** Ejecuta la CLI de Tailscale; `null` si no está instalada o no responde. */
 export type TailscaleRun = (args: string[]) => Promise<string | null>;
@@ -100,7 +100,7 @@ export async function readTailscale(run: TailscaleRun, port: number): Promise<Ta
 /** Dirección https del panel dentro de la red Tailscale, o '' si aún no se puede usar. */
 export function tailnetPanelUrl(info: TailscaleInfo, env: NodeJS.ProcessEnv): string {
   if (!info.running || !info.serving || !info.dnsName || info.funnel) return '';
-  if (!parseAllowedHosts(env.PA_WEB_ALLOWED_HOSTS).includes(info.dnsName)) return '';
+  if (!panelAllowedHosts(env).includes(info.dnsName)) return '';
   return `https://${info.dnsName}/`;
 }
 
@@ -133,7 +133,7 @@ export function tailscaleReport(info: TailscaleInfo, env: NodeJS.ProcessEnv, por
     lines.push(guia);
     return lines.join('\n');
   }
-  if (!parseAllowedHosts(env.PA_WEB_ALLOWED_HOSTS).includes(info.dnsName)) {
+  if (!panelAllowedHosts(env).includes(info.dnsName)) {
     lines.push(
       `⚠️ Falta en .env: PA_WEB_ALLOWED_HOSTS=${info.dnsName} (y reinicia Asistenta). Sin eso el panel rechaza la visita.`,
     );
@@ -171,14 +171,27 @@ export async function tailscaleCommand(
       text: 'El panel está apagado (PA_WEB_PORT=0 en .env). Quita esa línea y reinicia Asistenta.',
     };
   }
-  const info = await readTailscale(deps.run, port);
-  const report = tailscaleReport(info, deps.env, port);
-  if (kind === 'estado') return { text: report };
-  const url = tailnetPanelUrl(info, deps.env);
-  if (!url) {
+  const rawPublic = (deps.env.PA_PANEL_PUBLIC_URL ?? '').trim();
+  const publicUrl = parsePanelPublicUrl(rawPublic);
+  if (kind !== 'estado' && rawPublic !== '' && !publicUrl) {
     return {
-      text: `Aún no puedo abrirte el panel en Telegram. ${report}`,
+      text: 'PA_PANEL_PUBLIC_URL en .env no es una dirección https válida. Telegram solo abre el panel por https, p. ej. PA_PANEL_PUBLIC_URL=https://tu-pc.tu-red.ts.net/ (la que da «tailscale serve»). Corrígela y reinicia Asistenta.',
     };
+  }
+  // Con PA_PANEL_PUBLIC_URL el dueño ya dijo la dirección: no hace falta leer Tailscale.
+  let url = publicUrl;
+  if (!url || kind === 'estado') {
+    const info = await readTailscale(deps.run, port);
+    const report = tailscaleReport(info, deps.env, port);
+    if (kind === 'estado') {
+      return { text: publicUrl ? `${report}\n🔗 PA_PANEL_PUBLIC_URL: ${publicUrl}` : report };
+    }
+    url = tailnetPanelUrl(info, deps.env);
+    if (!url) {
+      return {
+        text: `Aún no puedo abrirte el panel en Telegram. ${report}`,
+      };
+    }
   }
   if (kind === 'voz') {
     return {

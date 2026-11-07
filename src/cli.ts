@@ -841,7 +841,7 @@ import { createOwnerGoalsReader } from './webui/goals.js';
 import { mapaMemoria } from './webui/mapa-memoria.js';
 import { panelNextUp, panelRoutines } from './webui/next-up.js';
 import { panelRepartos } from './webui/repartos.js';
-import { parseAllowedHosts, startWebUi } from './webui/server.js';
+import { panelAllowedHosts, startWebUi } from './webui/server.js';
 import { panelTareas } from './webui/tareas.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
@@ -2543,7 +2543,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         },
         {
           port: panelPlan.port,
-          allowedHosts: parseAllowedHosts(process.env.PA_WEB_ALLOWED_HOSTS),
+          allowedHosts: panelAllowedHosts(process.env),
         },
       )
         .then((ui) => {
