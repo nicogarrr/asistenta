@@ -96,6 +96,14 @@ const MemoryParams = lazySchema(() =>
       }),
     ),
     tags: Type.Optional(Type.Array(Type.String())),
+    tema: Type.Optional(
+      Type.String({
+        description:
+          'For remember/update: topic file the fact goes to (memoria/notas/<tema>.md), e.g. ' +
+          'salud, trabajo, casa, coches, finanzas, gerarai, amazon, musica. Omit it and a local ' +
+          'keyword classifier picks one (general when nothing fits).',
+      }),
+    ),
   }),
 );
 
@@ -208,7 +216,8 @@ export function createMemoryTool(
     description: [
       'Durable notes that survive across days and across restarts.',
       '',
-      'action=remember stores one fact ("the user prefers short answers in Spanish").',
+      'action=remember stores one fact ("the user prefers short answers in Spanish");',
+      'optional tema puts it in that topic file (salud, trabajo, casa, coches, finanzas…).',
       'Use it for things that will still matter tomorrow: preferences, recurring',
       'tasks, where things live, how the user likes things done. Do not use it as a',
       'scratchpad for what is already in this conversation.',
@@ -254,11 +263,19 @@ export function createMemoryTool(
             return refused(reason);
           }
           try {
-            const entry = store.remember(write, text, { tags: args.tags ?? [] });
+            const entry = store.remember(write, text, {
+              tags: args.tags ?? [],
+              ...(args.tema ? { tema: args.tema } : {}),
+            });
             log.info('memory stored', { scope, id: entry.id });
             return {
               content: [{ type: 'text', text: `Recordado (${entry.id}): ${entry.text}` }],
-              details: { id: entry.id, date: entry.date, tags: entry.tags },
+              details: {
+                id: entry.id,
+                date: entry.date,
+                tags: entry.tags,
+                ...(entry.tema ? { tema: entry.tema } : {}),
+              },
             };
           } catch (err) {
             const error = safeError(err);
@@ -291,7 +308,10 @@ export function createMemoryTool(
             };
           }
           try {
-            const entry = store.supersede(write, oldId, text, { tags: args.tags ?? old.tags });
+            const entry = store.supersede(write, oldId, text, {
+              tags: args.tags ?? old.tags,
+              ...(args.tema ? { tema: args.tema } : {}),
+            });
             log.info('memory updated', { scope, id: entry.id, replaces: oldId });
             return {
               content: [

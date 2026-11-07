@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { wallClock } from './datecontext.js';
 import { writeFileReplacing } from './fs-tmp.js';
-import { memoryFile } from './memory.js';
+import { type MemoryStore, memoryFile } from './memory.js';
 import { capped, prunable } from './state-files.js';
 
 /** Un nombre de perfil seguro: sin separadores, sin `..` y sin nombres de dispositivo. */
@@ -314,7 +314,13 @@ function ownerFromScope(scope: string): string | null {
  * "no había" o "la base no estaba disponible"; en ambos casos la memoria y el
  * perfil se intentan igualmente.
  */
-export function eraseScope(opts: { stateDir: string; scope: string; db?: DatabaseSync }): {
+export function eraseScope(opts: {
+  stateDir: string;
+  scope: string;
+  db?: DatabaseSync;
+  /** La memoria viva (memoria/notas, por temas): sus hechos de este scope se borran también. */
+  memory?: MemoryStore;
+}): {
   memoryFile: boolean;
   sessions: number;
   profile: boolean;
@@ -324,6 +330,15 @@ export function eraseScope(opts: { stateDir: string; scope: string; db?: Databas
     memoryFileDeleted = removeFile(memoryFile(join(opts.stateDir, 'memory'), opts.scope));
   } catch {
     // Un scope no representable como nombre de fichero no debe romper el resto.
+  }
+  try {
+    // Desde la carpeta memoria/ (y por temas) los hechos ya no están en STATE/memory.
+    if (opts.memory && opts.memory.all(opts.scope).length > 0) {
+      opts.memory.clear(opts.scope);
+      memoryFileDeleted = true;
+    }
+  } catch {
+    // Igual que arriba: el resto del borrado sigue.
   }
 
   let sessions = 0;

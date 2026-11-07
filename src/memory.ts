@@ -1,19 +1,29 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { localDay, localTimeZone } from './datecontext.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
+import {
+  clasificarTema,
+  codificarChat,
+  decodificarChat,
+  normalizarTema,
+  TEMA_GENERAL,
+} from './memory/temas.js';
 import { paths } from './paths.js';
 import { foldAccents } from './text.js';
 
@@ -55,6 +65,11 @@ export interface MemoryEntry {
   supersedes: string[];
   /** Set on the entry that was replaced, so history stays auditable. */
   supersededBy: string | null;
+  /**
+   * Tema (fichero `notas/<tema>.md`) en una memoria por temas. Solo lo rellena
+   * un MemoryStore `porTema`; en la memoria por chat no se escribe en el fichero.
+   */
+  tema?: string;
 }
 
 export interface MemoryDoc {
@@ -76,6 +91,8 @@ export interface RememberOptions {
   supersedes?: string[];
   /** Guardar también la hora local (`time`), para ordenar dentro del mismo día. */
   stampTime?: boolean;
+  /** Tema elegido al escribir (memoria por temas). Sin él, lo decide el clasificador local. */
+  tema?: string;
 }
 
 /**
@@ -272,6 +289,35 @@ export function parseMemory(markdown: string): MemoryDoc {
     else doc.notes.push(line.trimEnd());
   }
   return doc;
+}
+
+/** Una línea `- [id] (meta) texto`; `chat` va tras la fecha en los ficheros de tema. */
+export function serializeEntry(entry: MemoryEntry, chat?: string): string {
+  const meta = [
+    entry.date,
+    chat !== undefined ? `chat: ${codificarChat(chat)}` : null,
+    entry.time ? `time: ${entry.time}` : null,
+    entry.tags.length > 0 ? `tags: ${entry.tags.join(' ')}` : null,
+    entry.supersedes.length > 0 ? `supersedes: ${entry.supersedes.join(' ')}` : null,
+    entry.supersededBy ? `superseded-by: ${entry.supersededBy}` : null,
+  ].filter((part): part is string => part !== null);
+  return `- [${entry.id}] (${meta.join(', ')}) ${entry.text}`;
+}
+
+/** Una línea de un fichero de tema: el hecho y su chat (null si la línea no lo dice). */
+export function parseTemaLine(line: string): { entry: MemoryEntry; chat: string | null } | null {
+  const m = BULLET.exec(line);
+  const entry = m ? parseBullet(line) : null;
+  if (!m || !entry) return null;
+  let chat: string | null = null;
+  for (const field of (m[2] ?? '').split(',')) {
+    const f = field.trim();
+    if (f.toLowerCase().startsWith('chat:')) {
+      const v = f.slice(5).trim();
+      if (v) chat = decodificarChat(v);
+    }
+  }
+  return { entry, chat };
 }
 
 export function serializeMemory(doc: MemoryDoc): string {
@@ -503,12 +549,381 @@ export function panelMemoryEntries(
   return memory.allIn(memoryScopesFor(chosen ? chosen : fallback).read);
 }
 
+export interface MemoryStoreOptions {
+  /**
+   * Memoria por temas: `notas/<tema>.md`, cada línea con su `chat:`. Sin esto,
+   * un fichero por chat (el formato de siempre). Al abrirla, los ficheros por
+   * chat que queden se reparten en temas una vez (migrarATemas).
+   */
+  porTema?: boolean;
+  /** Chat al que pertenece una línea escrita a mano sin `chat:` (por defecto `local`). */
+  ambitoSinChat?: string;
+  /** Tras cada escritura por temas (p. ej. rehacer indice.md). Un fallo aquí no pierde el hecho. */
+  alEscribir?: () => void;
+}
+
+/** Memoria por temas encendida salvo `PA_MEMORY_TEMAS=0` (vuelve a un fichero por chat). */
+export function memoriaPorTema(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.PA_MEMORY_TEMAS?.trim() !== '0';
+}
+
+/**
+ * La memoria del daemon y del CLI: `memoria/notas/` por temas. Lo escrito a mano
+ * sin `chat:` es del chat privado del dueño cuando se conoce.
+ */
+export function abrirMemoriaPrincipal(
+  ownerScope?: string | null,
+  alEscribir?: () => void,
+): MemoryStore {
+  return new MemoryStore(paths.memory, {
+    porTema: memoriaPorTema(),
+    ...(ownerScope ? { ambitoSinChat: ownerScope } : {}),
+    ...(alEscribir ? { alEscribir } : {}),
+  });
+}
+
+/** Cabecera de un fichero de tema. */
+export function cabeceraTema(tema: string): string {
+  return `# Notas: ${tema}`;
+}
+
+/** Carpeta (dentro de notas/) donde quedan los ficheros por chat ya repartidos. */
+export const CARPETA_COPIA_TEMAS = '_copia-por-chat';
+
+export interface MigracionTemas {
+  chats: number;
+  hechos: number;
+  copia: string | null;
+  errores: string[];
+}
+
 export class MemoryStore {
   readonly dir: string;
+  readonly porTema: boolean;
+  readonly #sinChat: string;
+  readonly #alEscribir: (() => void) | undefined;
 
-  constructor(dir: string = paths.memory) {
+  constructor(dir: string = paths.memory, opts: MemoryStoreOptions = {}) {
     this.dir = dir;
+    this.porTema = opts.porTema === true;
+    this.#sinChat = opts.ambitoSinChat?.trim() || 'local';
+    this.#alEscribir = opts.alEscribir;
     mkdirSync(dir, { recursive: true });
+    if (this.porTema) {
+      try {
+        this.migrarATemas();
+      } catch (err) {
+        log.warn('memoria por temas: la migración falló; los ficheros por chat se siguen leyendo', {
+          err: String(err),
+        });
+      }
+    }
+  }
+
+  /** Candado: uno por chat en la memoria por chat; uno para toda la carpeta por temas. */
+  #lockFile(scope: string): string {
+    return this.porTema ? join(this.dir, '.temas') : this.fileFor(scope);
+  }
+
+  /** Ficheros `<tema>.md` (no los por chat que queden, ni `_…` ni `.…`). */
+  #temaFiles(): string[] {
+    const out: string[] = [];
+    for (const name of readdirSync(this.dir).sort()) {
+      if (!name.endsWith(SUFFIX) || name.startsWith('_') || name.startsWith('.')) continue;
+      const tema = name.slice(0, -SUFFIX.length);
+      if (normalizarTema(tema) !== tema) continue;
+      const file = join(this.dir, name);
+      if (this.#esFicheroPorChat(file)) continue;
+      out.push(tema);
+    }
+    return out;
+  }
+
+  #esFicheroPorChat(file: string): boolean {
+    try {
+      const first =
+        readFileSync(file, 'utf8')
+          .replace(/^\uFEFF/, '')
+          .split(/\r?\n/, 1)[0] ?? '';
+      return TITLE.test(first);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Ficheros por chat (formato antiguo) que siguen en la carpeta, con su chat. */
+  #ficherosPorChat(): Array<{ file: string; doc: MemoryDoc }> {
+    const out: Array<{ file: string; doc: MemoryDoc }> = [];
+    for (const name of readdirSync(this.dir).sort()) {
+      if (!name.endsWith(SUFFIX) || name.startsWith('_') || name.startsWith('.')) continue;
+      const file = join(this.dir, name);
+      if (!this.#esFicheroPorChat(file)) continue;
+      const doc = parseMemory(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+      if (doc.scope) out.push({ file, doc });
+    }
+    return out;
+  }
+
+  /** Un tema cuyo nombre choca con un fichero por chat que aún no se ha repartido. */
+  #temaLibre(tema: string): string {
+    let t = tema;
+    while (existsSync(this.#temaPath(t)) && this.#esFicheroPorChat(this.#temaPath(t)))
+      t = `${t}-tema`;
+    return t;
+  }
+
+  #temaPath(tema: string): string {
+    return join(this.dir, `${tema}${SUFFIX}`);
+  }
+
+  #loadTemas(scope: string): MemoryDoc {
+    const entries: MemoryEntry[] = [];
+    for (const tema of this.#temaFiles()) {
+      const text = readFileSync(this.#temaPath(tema), 'utf8').replace(/^\uFEFF/, '');
+      for (const line of text.split(/\r?\n/)) {
+        const hit = parseTemaLine(line);
+        if (!hit) continue;
+        if ((hit.chat ?? this.#sinChat) !== scope) continue;
+        entries.push({ ...hit.entry, tema });
+      }
+    }
+    // Lo que siga en un fichero por chat (migración pendiente o fallida) también cuenta.
+    const legacy = this.fileFor(scope);
+    if (existsSync(legacy) && this.#esFicheroPorChat(legacy)) {
+      const doc = parseMemory(readFileSync(legacy, 'utf8').replace(/^\uFEFF/, ''));
+      const ids = new Set(entries.map((e) => e.id));
+      for (const e of doc.entries) if (!ids.has(e.id)) entries.push(e);
+    }
+    // Orden por fecha (estable): el más antiguo primero, como en un fichero por chat.
+    const order = entries.map((e, i) => ({ e, i }));
+    order.sort((a, b) => a.e.date.localeCompare(b.e.date) || a.i - b.i);
+    return { scope, entries: order.map((x) => x.e), notes: [] };
+  }
+
+  /**
+   * Reparte los hechos de un chat en sus ficheros de tema. Las líneas de otros
+   * chats y lo escrito a mano (lo que no es un hecho) se quedan donde estaban.
+   */
+  #saveTemas(scope: string, doc: MemoryDoc): void {
+    const porTema = new Map<string, MemoryEntry[]>();
+    for (const e of doc.entries) {
+      const tema = this.#temaLibre(normalizarTema(e.tema) ?? clasificarTema(e.text, e.tags));
+      e.tema = tema;
+      const list = porTema.get(tema) ?? [];
+      list.push(e);
+      porTema.set(tema, list);
+    }
+    const temas = new Set([...this.#temaFiles(), ...porTema.keys()]);
+    for (const tema of temas) {
+      const file = this.#temaPath(tema);
+      const mine = (porTema.get(tema) ?? []).map((e) => serializeEntry(e, scope));
+      const before = existsSync(file) ? readFileSync(file, 'utf8').replace(/^\uFEFF/, '') : null;
+      let out: string[];
+      if (before === null) {
+        if (mine.length === 0) continue;
+        out = [cabeceraTema(tema), '', ...mine];
+      } else {
+        const lines = before.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
+        out = [];
+        let placed = false;
+        for (const line of lines) {
+          const hit = parseTemaLine(line);
+          if (hit && (hit.chat ?? this.#sinChat) === scope) {
+            if (!placed) out.push(...mine);
+            placed = true;
+            continue;
+          }
+          out.push(line);
+        }
+        if (!placed && mine.length > 0) {
+          if (out.length === 1 && out[0] === cabeceraTema(tema)) out.push('');
+          out.push(...mine);
+        }
+        const soloCabecera = out.every((l) => l.trim() === '' || l === cabeceraTema(tema));
+        if (soloCabecera && mine.length === 0) {
+          // Un tema que se ha quedado vacío desaparece (su cabecera era nuestra).
+          unlinkSync(file);
+          continue;
+        }
+      }
+      const text = `${out.join('\n')}\n`;
+      if (text !== before) writeFileReplacing(file, text);
+    }
+    this.#retirarPorChat(scope);
+    try {
+      this.#alEscribir?.();
+    } catch (err) {
+      log.warn('memoria por temas: alEscribir falló', { err: String(err) });
+    }
+  }
+
+  /** El fichero por chat ya repartido se aparta (intacto) a `_copia-por-chat/`. */
+  #retirarPorChat(scope: string): void {
+    const legacy = this.fileFor(scope);
+    if (!existsSync(legacy) || !this.#esFicheroPorChat(legacy)) return;
+    const dest = join(this.dir, CARPETA_COPIA_TEMAS, 'retirados');
+    mkdirSync(dest, { recursive: true });
+    let target = join(dest, scopeToFilename(scope));
+    for (let n = 1; existsSync(target); n++) target = join(dest, `${n}-${scopeToFilename(scope)}`);
+    renameSync(legacy, target);
+  }
+
+  /**
+   * Una vez: reparte cada fichero por chat en temas. Antes, copia de todos en
+   * `_copia-por-chat/<fecha>/`. Después comprueba, byte a byte, que cada hecho
+   * (id, fecha, texto, etiquetas, historia) está en un fichero de tema con su chat;
+   * si alguno falta, el fichero por chat se queda donde estaba (se sigue leyendo) y
+   * el fallo va a `_migracion-temas-error.txt`.
+   */
+  migrarATemas(now: Date = new Date()): MigracionTemas {
+    const report: MigracionTemas = { chats: 0, hechos: 0, copia: null, errores: [] };
+    if (!this.porTema) return report;
+    const legacy = this.#ficherosPorChat();
+    if (legacy.length === 0) return report;
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    const copia = join(this.dir, CARPETA_COPIA_TEMAS, stamp);
+    mkdirSync(copia, { recursive: true });
+    for (const { file } of legacy) {
+      const target = join(copia, file.slice(this.dir.length + 1));
+      copyFileSync(file, target);
+      if (!readFileSync(target).equals(readFileSync(file))) {
+        throw new Error(`la copia de ${file} no coincide byte a byte; no se migra nada`);
+      }
+    }
+    report.copia = copia;
+    withFileLock(join(this.dir, '.temas'), () => {
+      for (const { file, doc } of legacy) {
+        const scope = doc.scope;
+        try {
+          const merged = this.#loadTemas(scope);
+          // Hand-written prose of a per-chat file stays in its copy; facts move.
+          this.#saveTemasSinRetirar(scope, merged);
+          const after = this.#loadTemasSolo(scope);
+          const faltan = doc.entries.filter((e) => {
+            const want = serializeEntry(e);
+            return !after.some((a) => serializeEntry(a) === want);
+          });
+          if (faltan.length > 0) {
+            throw new Error(
+              `${faltan.length} hecho(s) no aparecen en los temas: ${faltan.map((e) => e.id).join(' ')}`,
+            );
+          }
+          const temasText = this.#temaFiles()
+            .map((t) => readFileSync(this.#temaPath(t)))
+            .reduce((acc, b) => Buffer.concat([acc, b]), Buffer.alloc(0));
+          for (const e of doc.entries) {
+            if (!temasText.includes(Buffer.from(e.text, 'utf8'))) {
+              throw new Error(`el texto de ${e.id} no está byte a byte en los temas`);
+            }
+          }
+          this.#retirarPorChat(scope);
+          report.chats++;
+          report.hechos += doc.entries.length;
+        } catch (err) {
+          report.errores.push(`${file}: ${String(err)}`);
+        }
+      }
+    });
+    if (report.errores.length > 0) {
+      writeFileSync(
+        join(this.dir, '_migracion-temas-error.txt'),
+        `${now.toISOString()}\n${report.errores.join('\n')}\nLos ficheros por chat que fallaron siguen en su sitio y se siguen leyendo; copia en ${copia}\n`,
+        'utf8',
+      );
+      log.warn('memoria por temas: migración con errores', { errores: report.errores.length });
+    } else {
+      log.info('memoria por temas: migración hecha', {
+        chats: report.chats,
+        hechos: report.hechos,
+        copia,
+      });
+    }
+    return report;
+  }
+
+  #saveTemasSinRetirar(scope: string, doc: MemoryDoc): void {
+    const legacy = this.fileFor(scope);
+    const hold = `${legacy}.migrando`;
+    // Retiring happens only after the check: move the per-chat file out of the
+    // way of #saveTemas's own retire, then put it back.
+    const had = existsSync(legacy);
+    if (had) renameSync(legacy, hold);
+    try {
+      this.#saveTemas(scope, doc);
+    } finally {
+      if (had) renameSync(hold, legacy);
+    }
+  }
+
+  /** Solo lo que está en ficheros de tema (sin el fichero por chat). */
+  #loadTemasSolo(scope: string): MemoryEntry[] {
+    const out: MemoryEntry[] = [];
+    for (const tema of this.#temaFiles()) {
+      for (const line of readFileSync(this.#temaPath(tema), 'utf8').split(/\r?\n/)) {
+        const hit = parseTemaLine(line);
+        if (hit && (hit.chat ?? this.#sinChat) === scope) out.push({ ...hit.entry, tema });
+      }
+    }
+    return out;
+  }
+
+  /** Temas con cuántos hechos vigentes tiene cada uno (todos los chats o los dados). */
+  temas(scopes?: readonly string[]): Array<{ tema: string; hechos: number }> {
+    if (!this.porTema) return [];
+    const want = scopes ? new Set(scopes) : null;
+    return this.#temaFiles().map((tema) => {
+      let hechos = 0;
+      for (const line of readFileSync(this.#temaPath(tema), 'utf8').split(/\r?\n/)) {
+        const hit = parseTemaLine(line);
+        if (!hit || hit.entry.supersededBy !== null) continue;
+        if (want && !want.has(hit.chat ?? this.#sinChat)) continue;
+        hechos++;
+      }
+      return { tema, hechos };
+    });
+  }
+
+  /**
+   * La pasada nocturna: lo que quedó en `general` y el clasificador ya sabe
+   * colocar pasa a su tema. Nunca borra: el hecho se mueve entero (mismo id).
+   */
+  reclasificar(): number {
+    if (!this.porTema) return 0;
+    let movidos = 0;
+    for (const scope of this.scopes()) {
+      withFileLock(this.#lockFile(scope), () => {
+        const doc = this.#load(scope);
+        let cambia = false;
+        for (const e of doc.entries) {
+          if (e.tema !== TEMA_GENERAL) continue;
+          const nuevo = clasificarTema(e.text, e.tags);
+          if (nuevo !== TEMA_GENERAL) {
+            e.tema = nuevo;
+            cambia = true;
+            movidos++;
+          }
+        }
+        if (cambia) this.#saveTemas(scope, doc);
+      });
+    }
+    return movidos;
+  }
+
+  /** Ficheros donde vive la memoria de un chat (para copias antes de tocarla). */
+  filesFor(scope: string): string[] {
+    if (!this.porTema) return existsSync(this.fileFor(scope)) ? [this.fileFor(scope)] : [];
+    const out = this.#temaFiles()
+      .filter((tema) =>
+        readFileSync(this.#temaPath(tema), 'utf8')
+          .split(/\r?\n/)
+          .some((l) => {
+            const hit = parseTemaLine(l);
+            return hit !== null && (hit.chat ?? this.#sinChat) === scope;
+          }),
+      )
+      .map((tema) => this.#temaPath(tema));
+    if (existsSync(this.fileFor(scope))) out.push(this.fileFor(scope));
+    return out;
   }
 
   fileFor(scope: string): string {
@@ -516,6 +931,10 @@ export class MemoryStore {
   }
 
   read(scope: string): string {
+    if (this.porTema) {
+      const doc = this.#loadTemas(scope);
+      return doc.entries.length > 0 ? serializeMemory(doc) : emptyMemoryDoc(scope);
+    }
     const file = this.fileFor(scope);
     if (!existsSync(file)) return emptyMemoryDoc(scope);
     return readFileSync(file, 'utf8');
@@ -549,7 +968,7 @@ export class MemoryStore {
       throw new Error(`memory is ${clean.length} chars, limit is ${MAX_ENTRY_CHARS}`);
     }
 
-    return withFileLock(this.fileFor(scope), () => this.#rememberLocked(scope, clean, opts));
+    return withFileLock(this.#lockFile(scope), () => this.#rememberLocked(scope, clean, opts));
   }
 
   #rememberLocked(scope: string, clean: string, opts: RememberOptions): MemoryEntry {
@@ -559,9 +978,10 @@ export class MemoryStore {
     const supersedes = [...(opts.supersedes ?? [])];
     const index = doc.entries.findIndex((e) => e.id === id);
     const previous = index >= 0 ? doc.entries[index] : undefined;
+    const tema = normalizarTema(opts.tema) ?? undefined;
     if (previous) {
       // Explicit id means "correct that line": same slot, same date, new text.
-      const corrected: MemoryEntry = { ...previous, text: clean, tags };
+      const corrected: MemoryEntry = { ...previous, text: clean, tags, ...(tema ? { tema } : {}) };
       doc.entries[index] = corrected;
       this.#save(scope, doc);
       return corrected;
@@ -574,6 +994,7 @@ export class MemoryStore {
       tags,
       supersedes,
       supersededBy: null,
+      ...(tema ? { tema } : {}),
     };
     for (const oldId of supersedes) {
       const target = doc.entries.find((e) => e.id === oldId);
@@ -593,17 +1014,20 @@ export class MemoryStore {
     scope: string,
     oldId: string,
     text: string,
-    opts: { tags?: string[] } = {},
+    opts: { tags?: string[]; tema?: string } = {},
   ): MemoryEntry {
     const doc = this.#load(scope);
-    if (!doc.entries.some((e) => e.id === oldId)) {
+    const old = doc.entries.find((e) => e.id === oldId);
+    if (!old) {
       throw new Error(`no memory with id ${oldId} in ${scope}`);
     }
-    return this.remember(scope, text, { ...opts, supersedes: [oldId] });
+    // La corrección se queda en el tema del hecho viejo salvo que se diga otro.
+    const tema = opts.tema ?? old.tema;
+    return this.remember(scope, text, { ...opts, ...(tema ? { tema } : {}), supersedes: [oldId] });
   }
 
   forget(scope: string, id: string): boolean {
-    return withFileLock(this.fileFor(scope), () => {
+    return withFileLock(this.#lockFile(scope), () => {
       const doc = this.#load(scope);
       const before = doc.entries.length;
       doc.entries = doc.entries.filter((e) => e.id !== id);
@@ -624,7 +1048,7 @@ export class MemoryStore {
     // no borraba «Vivo en Málaga» y la respuesta era que no había nada que olvidar.
     const clean = foldAccents(needle.trim().toLowerCase());
     if (!clean) return [];
-    return withFileLock(this.fileFor(scope), () => {
+    return withFileLock(this.#lockFile(scope), () => {
       const doc = this.#load(scope);
       const removed = doc.entries
         .filter((e) => foldAccents(e.text.toLowerCase()).includes(clean))
@@ -639,7 +1063,7 @@ export class MemoryStore {
   }
 
   clear(scope: string): number {
-    return withFileLock(this.fileFor(scope), () => {
+    return withFileLock(this.#lockFile(scope), () => {
       const doc = this.#load(scope);
       const removed = doc.entries.length;
       doc.entries = [];
@@ -702,6 +1126,17 @@ export class MemoryStore {
 
   /** Every scope that has a file, including digest-stemmed ones. */
   scopes(): string[] {
+    if (this.porTema) {
+      const set = new Set<string>();
+      for (const tema of this.#temaFiles()) {
+        for (const line of readFileSync(this.#temaPath(tema), 'utf8').split(/\r?\n/)) {
+          const hit = parseTemaLine(line);
+          if (hit) set.add(hit.chat ?? this.#sinChat);
+        }
+      }
+      for (const { doc } of this.#ficherosPorChat()) set.add(doc.scope);
+      return [...set].sort();
+    }
     const out: string[] = [];
     for (const name of readdirSync(this.dir)) {
       if (!name.endsWith(SUFFIX)) continue;
@@ -725,6 +1160,7 @@ export class MemoryStore {
    * open, and losing memory quietly is worse than failing a turn.
    */
   #load(scope: string): MemoryDoc {
+    if (this.porTema) return this.#loadTemas(scope);
     const file = this.fileFor(scope);
     if (!existsSync(file)) return { scope, entries: [], notes: [] };
     const doc = parseMemory(readFileSync(file, 'utf8'));
@@ -775,6 +1211,11 @@ export class MemoryStore {
         scope,
         capBytes: MAX_MEMORY_BYTES,
       });
+    }
+    if (this.porTema) {
+      this.#saveTemas(scope, doc);
+      log.debug('memory written (temas)', { scope, entries: doc.entries.length });
+      return;
     }
     const file = this.fileFor(scope);
     // tmp + rename: a crash mid-write must leave the previous memory intact
