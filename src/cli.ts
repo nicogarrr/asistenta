@@ -843,6 +843,7 @@ import { panelNextUp, panelRoutines } from './webui/next-up.js';
 import { panelRepartos } from './webui/repartos.js';
 import { panelAllowedHosts, startWebUi } from './webui/server.js';
 import { panelTareas } from './webui/tareas.js';
+import { vozPanelPrompt } from './webui/voz-turno.js';
 import { buildWeeklySummary, isWeeklyDue, WeeklyState } from './weekly.js';
 
 const USAGE = `Asistenta (pa): tu asistente personal en tu propio PC
@@ -2424,7 +2425,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           auditVerify: () => verifyCallAudit(),
           // Chat del panel: corre en el hilo principal del propietario, con el
           // mismo agente, contexto y Gate que Telegram (sin enviar nada al chat).
-          chat: async (text: string) => {
+          chat: async (said: string, opts?: { voz?: boolean; onDelta?: (d: string) => void }) => {
+            // Desde /voz: la respuesta se dice en voz alta, así que corta (1–3 frases).
+            const text = opts?.voz ? vozPanelPrompt(said) : said;
             const thread = await getOrCreateThread(
               `telegram:dm:${String(vigilanteOwnerId ?? 'local')}`,
               'main',
@@ -2458,6 +2461,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               runTurn: (t, said, out) => runTurn(t, panelInbound, said, { out, panel: true }),
               // /aprendido y /olvida <n> como en Telegram (borrar sigue siendo escrito).
               command: (t, said) => learnedRulesCommand(memory, memoryScopesFor(t.key).read, said),
+              ...(opts?.onDelta ? { onDelta: opts.onDelta } : {}),
             });
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
@@ -8759,6 +8763,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const specialistsUsed: string[] = [];
       const specialistsDenied: string[] = [];
       result = await thread.agent.run(prompt, images, {
+        // /voz: el texto según llega, para empezar a hablar con la primera frase.
+        ...(out?.delta ? { onTextDelta: out.delta } : {}),
         onToolCall: (info) => {
           lastSummary = info.summary;
           toolNames.push(info.tool);

@@ -6,7 +6,14 @@ import { createServer } from '../node-http.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 import { renderVozPage } from './voz-page.js';
-import { guardarResto, partirPrimeraFrase, respuestaRapida, tomarResto } from './voz-rapida.js';
+import { tomarResto } from './voz-rapida.js';
+import {
+  type EventoVoz,
+  type FraseVoz,
+  PERDONA_PENSAR,
+  turnoVoz,
+  type VozTurnoDeps,
+} from './voz-turno.js';
 
 /** Archivos que /api/chat deja pasar al panel (ver panel-chat.ts PANEL_FILE_TYPES). */
 const PANEL_FILE_URL =
@@ -59,6 +66,8 @@ export interface WebUiDeps {
   /** Chat libre desde el panel. Si falta, la ruta responde 503. */
   chat?(
     text: string,
+    /** Desde /voz: respuesta corta para decirla y el texto según se escribe (`onDelta`). */
+    opts?: { voz?: boolean; onDelta?: (delta: string) => void },
   ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
   /**
    * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
@@ -575,64 +584,84 @@ async function respondApi(
           ?.trim()
           .toLowerCase();
         if (!mime?.startsWith('audio/')) throw new HttpError(415, 'Eso no es audio');
+        const inicio = Date.now();
         const audio = await readRawBody(req, MAX_VOICE_BYTES);
         if (audio.length === 0) throw new HttpError(400, 'No ha llegado audio');
-        const inicio = Date.now();
-        let oido: string;
-        try {
-          oido = (await deps.transcribe(audio, mime)).trim();
-        } catch (err) {
-          // El whisper local explica en castellano qué pasó (silencio, formato, ffmpeg…).
-          const motivo =
-            err instanceof Error && err.message ? err.message : 'no he podido leer el audio';
-          throw new HttpError(422, `No te he podido entender: ${motivo}. Prueba otra vez.`);
-        }
-        const oirMs = Date.now() - inicio;
-        if (!oido) {
-          payload = { oido: '', text: 'No te he entendido. Prueba otra vez, más cerca del micro.' };
-          break;
-        }
-        // Un «hola» o un «gracias» no espera al agente entero.
-        const rapida = respuestaRapida(oido);
-        const tPensar = Date.now();
-        const answer = rapida ? { text: rapida } : await deps.chat(oido);
-        if (!isRecord(answer) || typeof answer.text !== 'string') {
-          throw new Error('deps.chat devolvio una respuesta invalida');
-        }
-        const pensarMs = Date.now() - tPensar;
-        const respuesta: Record<string, unknown> = { oido, ...panelReply(answer) };
-        const tVoz = Date.now();
-        if (deps.speak && answer.text.trim()) {
-          // La voz del PC; si no sale, el texto llega igual y el móvil la lee con la suya.
-          // Primero la primera frase, para que empiece a sonar ya; el resto se sintetiza
-          // mientras tanto y el móvil lo pide en /api/voz/resto.
-          const speak = deps.speak;
-          const [primera, resto] = partirPrimeraFrase(answer.text);
-          const voz = await speak(primera).catch(() => null);
-          if (voz && voz.data.length > 0) {
-            respuesta.audio = { mime: voz.mimeType, data: voz.data.toString('base64') };
-            if (resto) {
-              respuesta.audioResto = guardarResto(
-                speak(resto)
-                  .then((v) =>
-                    v && v.data.length > 0
-                      ? { mime: v.mimeType, data: v.data.toString('base64') }
-                      : null,
-                  )
-                  .catch(() => null),
-              );
-            }
-          }
-        }
-        const tiempos = {
-          oirMs,
-          pensarMs,
-          vozMs: Date.now() - tVoz,
-          totalMs: Date.now() - inicio,
-          rapida: rapida !== null,
+        const medidas = { inicio, recibirMs: Date.now() - inicio };
+        const chat = deps.chat;
+        const vozDeps: VozTurnoDeps = {
+          transcribe: deps.transcribe,
+          chat: (t, o) => chat(t, o),
+          ...(deps.speak ? { speak: deps.speak } : {}),
         };
-        respuesta.tiempos = tiempos;
-        log.info('voz movil: tiempos', tiempos);
+        // Modo flujo (la página /voz): una línea JSON por evento, cada frase con su voz
+        // en cuanto está, para que el móvil empiece a hablar mientras el PC piensa.
+        if (String(req.headers.accept ?? '').includes('application/x-ndjson')) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.flushHeaders?.();
+          const emit = (e: EventoVoz): void => {
+            if (res.writableEnded) return;
+            const linea =
+              e.tipo === 'fin'
+                ? (() => {
+                    const { respuesta, ...resto } = e;
+                    return { ...resto, ...(respuesta ? panelReply(respuesta) : {}), text: e.text };
+                  })()
+                : e;
+            res.write(`${JSON.stringify(linea)}\n`);
+          };
+          try {
+            await turnoVoz(audio, mime, vozDeps, emit, medidas, 'flujo');
+          } catch (err) {
+            log.warn('voz movil: el turno se cortó', { err: describeError(err) });
+            emit({
+              tipo: 'fin',
+              oido: '',
+              text: PERDONA_PENSAR,
+              fallo: 'pensar',
+              tiempos: {
+                ...medidas,
+                oirMs: 0,
+                pensarMs: 0,
+                primeraVozMs: 0,
+                vozMs: 0,
+                totalMs: Date.now() - inicio,
+                rapida: false,
+              },
+            });
+          }
+          res.end();
+          return;
+        }
+        // JSON de siempre: la primera frase con su audio y el resto en /api/voz/resto.
+        let primera: FraseVoz | undefined;
+        let fin: Extract<EventoVoz, { tipo: 'fin' }> | undefined;
+        await turnoVoz(
+          audio,
+          mime,
+          vozDeps,
+          (e) => {
+            if (e.tipo === 'frase' && !primera) primera = e;
+            if (e.tipo === 'fin') fin = e;
+          },
+          medidas,
+          'json',
+        );
+        if (!fin) throw new Error('el turno de voz no terminó');
+        const respuesta: Record<string, unknown> = {
+          oido: fin.oido,
+          ...(fin.respuesta ? panelReply(fin.respuesta) : {}),
+          text: fin.text,
+        };
+        if (fin.respuesta && typeof fin.respuesta.audioResto === 'string') {
+          respuesta.audioResto = fin.respuesta.audioResto;
+        }
+        if (primera?.audio) respuesta.audio = primera.audio;
+        if (fin.fallo) respuesta.fallo = fin.fallo;
+        if (fin.pendiente) respuesta.pendiente = fin.pendiente;
+        respuesta.tiempos = fin.tiempos;
         payload = respuesta;
         break;
       }
