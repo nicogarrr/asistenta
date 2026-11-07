@@ -96,6 +96,14 @@ const MemoryParams = lazySchema(() =>
       }),
     ),
     tags: Type.Optional(Type.Array(Type.String())),
+    caduca: Type.Optional(
+      Type.String({
+        description:
+          'For remember/update: last day a TEMPORARY fact is true, YYYY-MM-DD (e.g. "is in ' +
+          'Seville this week" → that Sunday). After it the fact leaves the context index but ' +
+          'stays in list. Omit for permanent facts.',
+      }),
+    ),
     tema: Type.Optional(
       Type.String({
         description:
@@ -266,6 +274,7 @@ export function createMemoryTool(
             const entry = store.remember(write, text, {
               tags: args.tags ?? [],
               ...(args.tema ? { tema: args.tema } : {}),
+              ...(args.caduca ? { caduca: args.caduca.trim() } : {}),
             });
             log.info('memory stored', { scope, id: entry.id });
             return {
@@ -311,6 +320,7 @@ export function createMemoryTool(
             const entry = store.supersede(write, oldId, text, {
               tags: args.tags ?? old.tags,
               ...(args.tema ? { tema: args.tema } : {}),
+              ...(args.caduca ? { caduca: args.caduca.trim() } : {}),
             });
             log.info('memory updated', { scope, id: entry.id, replaces: oldId });
             return {

@@ -70,6 +70,20 @@ export interface MemoryEntry {
    * un MemoryStore `porTema`; en la memoria por chat no se escribe en el fichero.
    */
   tema?: string;
+  /**
+   * `YYYY-MM-DD`: último día en que el hecho vale («esta semana está en Sevilla»).
+   * Pasado ese día deja de entrar en el contexto (Active Memory: lo temporal no se
+   * queda susurrando para siempre), pero sigue en el fichero y en memory list.
+   * Sin él, el hecho es permanente, como siempre.
+   */
+  caduca?: string;
+}
+
+const DIA = /^\d{4}-\d{2}-\d{2}$/;
+
+/** true si el hecho tiene caducidad y `hoy` (YYYY-MM-DD) ya la pasó. */
+export function memoriaCaducada(entry: Pick<MemoryEntry, 'caduca'>, hoy: string): boolean {
+  return entry.caduca !== undefined && entry.caduca < hoy;
 }
 
 export interface MemoryDoc {
@@ -93,6 +107,8 @@ export interface RememberOptions {
   stampTime?: boolean;
   /** Tema elegido al escribir (memoria por temas). Sin él, lo decide el clasificador local. */
   tema?: string;
+  /** Último día en que vale (`YYYY-MM-DD`); sin él, permanente. Otro formato se rechaza. */
+  caduca?: string;
 }
 
 /**
@@ -263,6 +279,7 @@ function parseBullet(line: string): MemoryEntry | null {
     else if (key === 'supersedes') entry.supersedes = value.split(/\s+/).filter(Boolean);
     else if (key === 'superseded-by') entry.supersededBy = value;
     else if (key === 'time' && /^\d{2}:\d{2}(:\d{2})?$/.test(value)) entry.time = value;
+    else if (key === 'caduca' && DIA.test(value)) entry.caduca = value;
     // Unknown metadata is dropped rather than fatal: a hand-written field must
     // not make the whole file unreadable.
   }
@@ -300,6 +317,7 @@ export function serializeEntry(entry: MemoryEntry, chat?: string): string {
     entry.tags.length > 0 ? `tags: ${entry.tags.join(' ')}` : null,
     entry.supersedes.length > 0 ? `supersedes: ${entry.supersedes.join(' ')}` : null,
     entry.supersededBy ? `superseded-by: ${entry.supersededBy}` : null,
+    entry.caduca ? `caduca: ${entry.caduca}` : null,
   ].filter((part): part is string => part !== null);
   return `- [${entry.id}] (${meta.join(', ')}) ${entry.text}`;
 }
@@ -329,6 +347,7 @@ export function serializeMemory(doc: MemoryDoc): string {
       entry.tags.length > 0 ? `tags: ${entry.tags.join(' ')}` : null,
       entry.supersedes.length > 0 ? `supersedes: ${entry.supersedes.join(' ')}` : null,
       entry.supersededBy ? `superseded-by: ${entry.supersededBy}` : null,
+      entry.caduca ? `caduca: ${entry.caduca}` : null,
     ].filter((part): part is string => part !== null);
     out.push(`- [${entry.id}] (${meta.join(', ')}) ${entry.text}`);
   }
@@ -967,6 +986,9 @@ export class MemoryStore {
     if (clean.length > MAX_ENTRY_CHARS) {
       throw new Error(`memory is ${clean.length} chars, limit is ${MAX_ENTRY_CHARS}`);
     }
+    if (opts.caduca !== undefined && !DIA.test(opts.caduca)) {
+      throw new Error(`caduca must be YYYY-MM-DD, got «${opts.caduca.slice(0, 20)}»`);
+    }
 
     return withFileLock(this.#lockFile(scope), () => this.#rememberLocked(scope, clean, opts));
   }
@@ -981,7 +1003,13 @@ export class MemoryStore {
     const tema = normalizarTema(opts.tema) ?? undefined;
     if (previous) {
       // Explicit id means "correct that line": same slot, same date, new text.
-      const corrected: MemoryEntry = { ...previous, text: clean, tags, ...(tema ? { tema } : {}) };
+      const corrected: MemoryEntry = {
+        ...previous,
+        text: clean,
+        tags,
+        ...(tema ? { tema } : {}),
+        ...(opts.caduca ? { caduca: opts.caduca } : {}),
+      };
       doc.entries[index] = corrected;
       this.#save(scope, doc);
       return corrected;
@@ -995,6 +1023,7 @@ export class MemoryStore {
       supersedes,
       supersededBy: null,
       ...(tema ? { tema } : {}),
+      ...(opts.caduca ? { caduca: opts.caduca } : {}),
     };
     for (const oldId of supersedes) {
       const target = doc.entries.find((e) => e.id === oldId);
@@ -1014,7 +1043,7 @@ export class MemoryStore {
     scope: string,
     oldId: string,
     text: string,
-    opts: { tags?: string[]; tema?: string } = {},
+    opts: { tags?: string[]; tema?: string; caduca?: string } = {},
   ): MemoryEntry {
     const doc = this.#load(scope);
     const old = doc.entries.find((e) => e.id === oldId);

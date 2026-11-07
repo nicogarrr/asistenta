@@ -3,6 +3,8 @@ import type { AssistantMessage, Model, MutableModels } from '@earendil-works/pi-
 import { appendCallAudit, hashArgs } from '../audit/calls.js';
 import { takePageAfterFailedCall } from '../browser/page-after-call.js';
 import type { Config } from '../config.js';
+import { localDay } from '../datecontext.js';
+import { envSwitchOn } from '../env-flags.js';
 import { log, redact } from '../log.js';
 import { busyBegin } from '../ocupada.js';
 import type { Gate, ToolCall as GateCall } from '../permissions.js';
@@ -988,6 +990,8 @@ export class PersonalAgent {
                     text: extractionPrompt({
                       transcript,
                       existingFacts: factMemory.existing(),
+                      // Active Memory: con PA_MEMORIA_CADUCA también lo temporal, con fecha.
+                      ...(envSwitchOn('PA_MEMORIA_CADUCA') ? { hoy: localDay() } : {}),
                     }),
                   },
                 ],

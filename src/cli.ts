@@ -155,7 +155,7 @@ import {
   MODEL_ERROR_QUESTION,
   modelErrorFollowUp,
 } from './core/friendly-error.js';
-import { dedupeNewFacts } from './core/history.js';
+import { dedupeNewFacts, splitCaducidad } from './core/history.js';
 import {
   checkProviderKey,
   createProviderHandle,
@@ -3531,9 +3531,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             .allIn(memoryScopesFor(key).read)
             .filter((e) => e.supersededBy === null)
             .map((e) => e.text);
-          for (const fact of dedupeNewFacts(active, facts)) {
+          // «… (caduca: AAAA-MM-DD)»: lo temporal se guarda con su último día; el
+          // dedupe compara el hecho sin el sufijo.
+          const parsed = new Map(facts.map((f) => [splitCaducidad(f).text, splitCaducidad(f)]));
+          for (const text of dedupeNewFacts(active, [...parsed.keys()])) {
+            const caduca = parsed.get(text)?.caduca;
             try {
-              memory.remember(memoryScopesFor(key).write, fact, { tags: ['compaction'] });
+              memory.remember(memoryScopesFor(key).write, text, {
+                tags: ['compaction'],
+                ...(caduca ? { caduca } : {}),
+              });
               written++;
             } catch (err) {
               log.warn('compaction fact refused by memory store', { err: String(err) });
