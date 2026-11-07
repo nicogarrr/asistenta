@@ -1727,6 +1727,12 @@ export class Gate {
         const action = argString(c.args, 'action');
         return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
       }
+      case 'iphone_pantalla': {
+        // WebDriverAgent: mirar es lectura; tocar, escribir, abrir e inicio mueven un
+        // teléfono real con cuentas reales: opacos, siempre preguntan.
+        const action = argString(c.args, 'action');
+        return ['estado', 'pantalla', 'leer'].includes(action) ? 'lee' : null;
+      }
       case 'iphone_orden': {
         // Mandar una orden al iPhone (abrir una app, un WhatsApp a alguien…) sale del PC
         // y no se deshace: opaca, siempre pregunta. Solo estado/configurar leen.

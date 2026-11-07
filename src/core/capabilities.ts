@@ -153,6 +153,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'puente ESP32 del iPhone en la LAN: solo lo alcanza el PC de escritorio.',
   },
   {
+    name: 'iphone_pantalla',
+    note: 'iPhone por WebDriverAgent (PA_IPHONE_WDA=1, experimental): mirar es lectura; tocar y escribir piden aprobación.',
+  },
+  {
     name: 'iphone_orden',
     note: 'órdenes al iPhone por correo (atajo «Orden de Asistenta»); cada una pide aprobación.',
   },

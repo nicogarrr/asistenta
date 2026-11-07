@@ -263,6 +263,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'panel', description: 'el panel dentro de Telegram (con Tailscale)' },
       { command: 'voz', description: 'hablar conmigo desde el móvil (con Tailscale)' },
       { command: 'atajos', description: 'Siri, botón de acción y Compartir en el iPhone' },
+      {
+        command: 'iphone',
+        args: 'diagnostico',
+        description: 'si puedo ver y tocar tu iPhone (experimental)',
+      },
     ],
   },
   {
