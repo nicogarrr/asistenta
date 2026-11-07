@@ -35,6 +35,13 @@ export interface Config {
    * el principal. Vacío = todo con el principal, como antes.
    */
   utilityModel?: string;
+  /**
+   * PA_MODELO_RAPIDO: modelo rápido para los turnos fáciles (charla corta, preguntas
+   * directas y /voz; ver router.fastRouteFor). Lo demás sigue en PA_MODEL. Si el
+   * rápido falla, ese turno se repite con el principal. Vacío = todo con el principal.
+   * No se usa si la conversación eligió modelo con /modelo.
+   */
+  fastModel?: string;
   baseUrl: string;
   variant?: string | undefined;
   /** Wall-clock ceiling for a single tool call. */
@@ -261,6 +268,7 @@ export function loadConfig(): Config {
     ),
     extraModels: parseModelList(process.env.PA_MODELS),
     utilityModel: str('PA_UTILITY_MODEL'),
+    fastModel: str('PA_MODELO_RAPIDO'),
     fallbackModels: parseModelList(process.env.PA_FALLBACK_MODELS).length
       ? parseModelList(process.env.PA_FALLBACK_MODELS)
       : undefined,
