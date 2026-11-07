@@ -14,6 +14,7 @@ const noLaunch = new Set([
   'browser-session-launch.test.ts',
   'browser-perfil-dueno.test.ts',
   'browser-chrome-cdp.test.ts',
+  'browse1-opencode.test.ts',
   'consumo1-navegador-reposo.test.ts',
   'real-browser-gate.test.ts',
 ]);
