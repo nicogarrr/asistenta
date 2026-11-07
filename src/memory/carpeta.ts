@@ -199,24 +199,62 @@ export function textoCarpetaMemoria(r: ResumenMemoria): string {
   ].join('\n');
 }
 
-/** (Re)escribe indice.md con lo que hay ahora mismo en la carpeta. */
+/** Lo que Nico escriba debajo de esta línea del índice se conserva al regenerarlo. */
+export const MARCA_INDICE_LIBRE = '%% Lo que escribas debajo de esta línea se conserva. %%';
+const TITULO_INDICE = '# Índice de memoria de Asistenta';
+
+/** Enlace de Obsidian a un fichero de la carpeta (los .json no se abren en Obsidian). */
+function enlaceNota(ruta: string, texto: string): string {
+  return ruta.endsWith('.md') ? `[[${ruta}|${texto}]]` : ruta;
+}
+
+/**
+ * (Re)escribe indice.md con lo que hay ahora mismo en la carpeta: con propiedades
+ * y enlaces [[ ]] para que en Obsidian sea la nota central. Lo que haya debajo de
+ * MARCA_INDICE_LIBRE se conserva; un indice.md escrito del todo a mano (sin
+ * nuestro título ni la marca) se guarda antes en indice.editado-<fecha>.md.
+ */
 export function escribirIndiceMemoria(dir: string, ahora: Date = new Date()): string {
   const r = resumenCarpetaMemoria(dir);
+  const sinExt = (x: string): string => x.replace(/\.(md|json)$/, '');
   const lista = (xs: string[], carpeta: string): string =>
     xs.length
       ? `${xs
           .slice(-50)
-          .map((x) => `- ${carpeta}/${x}`)
+          .map((x) => `- ${enlaceNota(`${carpeta}/${x}`, sinExt(x))}`)
           .join('\n')}${xs.length > 50 ? `\n- … y ${xs.length - 50} más` : ''}`
       : '- (vacío)';
+  const file = join(dir, INDICE_MEMORIA);
+  let libre = '';
+  if (existsSync(file)) {
+    const antes = readFileSync(file, 'utf8');
+    const i = antes.indexOf(MARCA_INDICE_LIBRE);
+    if (i >= 0) libre = antes.slice(i + MARCA_INDICE_LIBRE.length).replace(/^\r?\n/, '');
+    else if (!antes.includes(TITULO_INDICE) && antes.trim() !== '') {
+      const sello = ahora.toISOString().replace(/[:.]/g, '-');
+      writeFileSync(join(dir, `indice.editado-${sello}.md`), antes, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+    }
+  }
   const texto = [
-    '# Índice de memoria de Asistenta',
+    '---',
+    'tags:',
+    '  - asistenta',
+    `updated: ${diaLocal(ahora)}`,
+    '---',
+    TITULO_INDICE,
     '',
     `Actualizado: ${diaLocal(ahora)}. Lo regenera Asistenta; puedes editar los demás ficheros.`,
     '',
     '## Perfil (hechos sobre ti)',
-    r.perfil ? '- PERFIL.md' : '- (todavía no hay PERFIL.md)',
-    ...(r.sobreTi ? [`- ${ESPEJO_PERFIL} (copia legible del perfil, al día en cada cambio)`] : []),
+    r.perfil ? `- ${enlaceNota(PERFIL_MEMORIA, 'PERFIL')}` : '- (todavía no hay PERFIL.md)',
+    ...(r.sobreTi
+      ? [
+          `- ${enlaceNota(ESPEJO_PERFIL, sinExt(ESPEJO_PERFIL))} (copia legible del perfil, al día en cada cambio)`,
+        ]
+      : []),
     '',
     '## Episodios (diario de lo que pasó)',
     lista(r.episodios, 'episodios'),
@@ -227,13 +265,20 @@ export function escribirIndiceMemoria(dir: string, ahora: Date = new Date()): st
     '## Notas (por tema)',
     r.temas.length
       ? r.temas
-          .map((t) => `- notas/${t.tema}.md — ${t.hechos} ${t.hechos === 1 ? 'hecho' : 'hechos'}`)
+          .map(
+            (t) =>
+              `- ${enlaceNota(`notas/${t.tema}.md`, t.tema)} — ${t.hechos} ${t.hechos === 1 ? 'hecho' : 'hechos'}`,
+          )
           .join('\n')
       : '- (vacío)',
     '',
+    MARCA_INDICE_LIBRE,
+    libre,
   ].join('\n');
-  const file = join(dir, INDICE_MEMORIA);
-  writeFileSync(file, texto, { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(file, texto.endsWith('\n') ? texto : `${texto}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
   return file;
 }
 

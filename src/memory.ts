@@ -18,6 +18,22 @@ import { localDay, localTimeZone } from './datecontext.js';
 import { writeFileReplacing } from './fs-tmp.js';
 import { log } from './log.js';
 import {
+  ETIQUETA_ASISTENTA,
+  esLineaRelacionadoAuto,
+  etiquetaTema,
+  fijarPropiedades,
+  fijarRelacionado,
+  leerPropiedad,
+  lineaRelacionado,
+  obsidianActivo,
+  type PartesNota,
+  type PerfilTema,
+  propiedadesSoloNuestras,
+  separarFrontmatter,
+  temasRelacionados,
+  unirFrontmatter,
+} from './memory/obsidian.js';
+import {
   clasificarTema,
   codificarChat,
   decodificarChat,
@@ -579,6 +595,19 @@ export interface MemoryStoreOptions {
   ambitoSinChat?: string;
   /** Tras cada escritura por temas (p. ej. rehacer indice.md). Un fallo aquí no pierde el hecho. */
   alEscribir?: () => void;
+  /**
+   * Notas de tema como bóveda de Obsidian (solo con `porTema`): propiedades YAML
+   * (tags, updated, caduca) y una línea «Relacionado: [[otro-tema]]…». Lo que
+   * Nico escriba en Obsidian se conserva siempre.
+   */
+  obsidian?: boolean;
+  /**
+   * Raíz de la bóveda para seguir enlaces (acción `enlaces` de la herramienta de
+   * memoria). Sin esto solo se miran las notas de tema de esta carpeta.
+   */
+  boveda?: string;
+  /** Solo para tests: se llama justo después de leer las notas, antes de escribir. */
+  trasLeer?: (scope: string) => void;
 }
 
 /** Memoria por temas encendida salvo `PA_MEMORY_TEMAS=0` (vuelve a un fichero por chat). */
@@ -594,11 +623,58 @@ export function abrirMemoriaPrincipal(
   ownerScope?: string | null,
   alEscribir?: () => void,
 ): MemoryStore {
-  return new MemoryStore(paths.memory, {
-    porTema: memoriaPorTema(),
+  const porTema = memoriaPorTema();
+  const obsidian = porTema && obsidianActivo();
+  const store = new MemoryStore(paths.memory, {
+    porTema,
+    obsidian,
+    boveda: paths.boveda,
     ...(ownerScope ? { ambitoSinChat: ownerScope } : {}),
     ...(alEscribir ? { alEscribir } : {}),
   });
+  if (obsidian) {
+    try {
+      store.prepararObsidian();
+    } catch (err) {
+      log.warn('memoria: no se pudieron preparar las notas para Obsidian', { err: String(err) });
+    }
+  }
+  return store;
+}
+
+/** Firma de un hecho para saber si alguien lo cambió (texto, metadatos y tema). */
+function firmaHecho(e: MemoryEntry): string {
+  return `${serializeEntry(e)}\u0000${e.tema ?? ''}`;
+}
+
+/**
+ * Fusión a tres bandas de los hechos de un chat cuando las notas cambiaron por
+ * fuera (Nico editando en Obsidian) entre que Asistenta las leyó y las escribe:
+ * - lo que Asistenta no tocó se queda como está AHORA en el fichero (su edición,
+ *   o borrado si él lo borró);
+ * - lo que Asistenta cambió o añadió va como Asistenta lo dejó;
+ * - lo que él añadió se queda.
+ */
+export function fusionarHechos(
+  base: ReadonlyMap<string, string>,
+  nuestros: readonly MemoryEntry[],
+  suyos: readonly MemoryEntry[],
+): MemoryEntry[] {
+  const suyosPorId = new Map(suyos.map((e) => [e.id, e]));
+  const out: MemoryEntry[] = [];
+  const vistos = new Set<string>();
+  for (const e of nuestros) {
+    vistos.add(e.id);
+    const antes = base.get(e.id);
+    if (antes !== undefined && antes === firmaHecho(e)) {
+      const suyo = suyosPorId.get(e.id);
+      if (suyo) out.push(suyo);
+      continue;
+    }
+    out.push(e);
+  }
+  for (const e of suyos) if (!base.has(e.id) && !vistos.has(e.id)) out.push(e);
+  return out;
 }
 
 /** Cabecera de un fichero de tema. */
@@ -621,10 +697,19 @@ export class MemoryStore {
   readonly porTema: boolean;
   readonly #sinChat: string;
   readonly #alEscribir: (() => void) | undefined;
+  readonly obsidian: boolean;
+  /** Raíz de la bóveda de Obsidian para seguir enlaces (undefined = solo esta carpeta). */
+  readonly boveda: string | undefined;
+  readonly #trasLeer: ((scope: string) => void) | undefined;
+  /** Cómo estaba cada hecho (de los ficheros de tema) al leerlo, por documento leído. */
+  readonly #leido = new WeakMap<MemoryDoc, Map<string, string>>();
 
   constructor(dir: string = paths.memory, opts: MemoryStoreOptions = {}) {
     this.dir = dir;
     this.porTema = opts.porTema === true;
+    this.obsidian = this.porTema && opts.obsidian === true;
+    this.boveda = opts.boveda;
+    this.#trasLeer = opts.trasLeer;
     this.#sinChat = opts.ambitoSinChat?.trim() || 'local';
     this.#alEscribir = opts.alEscribir;
     mkdirSync(dir, { recursive: true });
@@ -695,17 +780,34 @@ export class MemoryStore {
     return join(this.dir, `${tema}${SUFFIX}`);
   }
 
-  #loadTemas(scope: string): MemoryDoc {
+  /** El chat al que pertenece lo escrito a mano sin `chat:` (el dueño). */
+  get ambitoSinChat(): string {
+    return this.#sinChat;
+  }
+
+  /** Líneas de un fichero de tema sin el bloque de propiedades de arriba. */
+  #lineasTema(tema: string): string[] {
+    const text = readFileSync(this.#temaPath(tema), 'utf8').replace(/^\uFEFF/, '');
+    return separarFrontmatter(text.split(/\r?\n/)).cuerpo;
+  }
+
+  /** Los hechos de un chat que están en ficheros de tema, leídos ahora mismo del disco. */
+  #hechosEnTemas(scope: string): MemoryEntry[] {
     const entries: MemoryEntry[] = [];
     for (const tema of this.#temaFiles()) {
-      const text = readFileSync(this.#temaPath(tema), 'utf8').replace(/^\uFEFF/, '');
-      for (const line of text.split(/\r?\n/)) {
+      for (const line of this.#lineasTema(tema)) {
         const hit = parseTemaLine(line);
         if (!hit) continue;
         if ((hit.chat ?? this.#sinChat) !== scope) continue;
         entries.push({ ...hit.entry, tema });
       }
     }
+    return entries;
+  }
+
+  #loadTemas(scope: string): MemoryDoc {
+    const entries = this.#hechosEnTemas(scope);
+    const leido = new Map(entries.map((e) => [e.id, firmaHecho(e)]));
     // Lo que siga en un fichero por chat (migración pendiente o fallida) también cuenta.
     const legacy = this.fileFor(scope);
     if (existsSync(legacy) && this.#esFicheroPorChat(legacy)) {
@@ -716,14 +818,102 @@ export class MemoryStore {
     // Orden por fecha (estable): el más antiguo primero, como en un fichero por chat.
     const order = entries.map((e, i) => ({ e, i }));
     order.sort((a, b) => a.e.date.localeCompare(b.e.date) || a.i - b.i);
-    return { scope, entries: order.map((x) => x.e), notes: [] };
+    const doc: MemoryDoc = { scope, entries: order.map((x) => x.e), notes: [] };
+    this.#leido.set(doc, leido);
+    this.#trasLeer?.(scope);
+    return doc;
+  }
+
+  /**
+   * Si las notas cambiaron por fuera desde que se leyó `doc` (Nico en Obsidian, el
+   * Bloc de notas, una sincronización), se fusiona en vez de pisar sus cambios.
+   */
+  #conCambiosExternos(scope: string, doc: MemoryDoc): MemoryDoc {
+    const base = this.#leido.get(doc);
+    if (!base) return doc;
+    const ahora = this.#hechosEnTemas(scope);
+    const igual =
+      ahora.length === base.size && ahora.every((e) => base.get(e.id) === firmaHecho(e));
+    if (igual) return doc;
+    log.info('memoria: las notas cambiaron por fuera mientras escribía; conservo esos cambios', {
+      scope,
+    });
+    return { ...doc, entries: fusionarHechos(base, doc.entries, ahora) };
+  }
+
+  /** Lo que hace falta para enlazar temas: etiquetas y textos vigentes de cada uno. */
+  #perfilDe(tema: string, cuerpo: readonly string[]): PerfilTema {
+    const tags = new Set<string>();
+    const textos: string[] = [];
+    for (const l of cuerpo) {
+      const hit = parseTemaLine(l);
+      if (!hit || hit.entry.supersededBy !== null) continue;
+      for (const t of hit.entry.tags) tags.add(t);
+      textos.push(hit.entry.text);
+    }
+    return { tema, tags: [...tags], textos };
+  }
+
+  /** Propiedades y «Relacionado» de una nota de tema (sin tocar nada de Nico). */
+  #decorar(
+    tema: string,
+    partes: PartesNota,
+    perfiles: readonly PerfilTema[],
+    hechosCambiados: boolean,
+  ): PartesNota {
+    const hoy = today();
+    let caduca: string | null = null;
+    for (const l of partes.cuerpo) {
+      const hit = parseTemaLine(l);
+      const c = hit?.entry.caduca;
+      if (!hit || hit.entry.supersededBy !== null || !c || c < hoy) continue;
+      if (caduca === null || c < caduca) caduca = c;
+    }
+    const tieneUpdated = (leerPropiedad(partes.fm, 'updated') ?? []).length > 0;
+    const fm = fijarPropiedades(partes.fm, {
+      tags: [ETIQUETA_ASISTENTA, etiquetaTema(tema)],
+      ...(hechosCambiados || !tieneUpdated ? { updated: hoy } : {}),
+      caduca,
+    });
+    const cuerpo = fijarRelacionado(
+      partes.cuerpo,
+      lineaRelacionado(temasRelacionados(tema, perfiles)),
+    );
+    return { fm, cuerpo };
+  }
+
+  /**
+   * Deja todas las notas de tema listas para Obsidian (propiedades y enlaces). Solo
+   * reescribe un fichero si algo cambia; los hechos y lo escrito a mano no se tocan.
+   */
+  prepararObsidian(): number {
+    if (!this.obsidian) return 0;
+    return withFileLock(join(this.dir, '.temas'), () => {
+      const notas = this.#temaFiles().map((tema) => {
+        const file = this.#temaPath(tema);
+        const before = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+        const lines = before.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
+        return { tema, file, before, partes: separarFrontmatter(lines) };
+      });
+      const perfiles = notas.map((n) => this.#perfilDe(n.tema, n.partes.cuerpo));
+      let escritos = 0;
+      for (const n of notas) {
+        const text = `${unirFrontmatter(this.#decorar(n.tema, n.partes, perfiles, false)).join('\n')}\n`;
+        if (text !== n.before) {
+          writeFileReplacing(n.file, text);
+          escritos++;
+        }
+      }
+      return escritos;
+    });
   }
 
   /**
    * Reparte los hechos de un chat en sus ficheros de tema. Las líneas de otros
    * chats y lo escrito a mano (lo que no es un hecho) se quedan donde estaban.
    */
-  #saveTemas(scope: string, doc: MemoryDoc): void {
+  #saveTemas(scope: string, docLeido: MemoryDoc): void {
+    const doc = this.#conCambiosExternos(scope, docLeido);
     const porTema = new Map<string, MemoryEntry[]>();
     for (const e of doc.entries) {
       const tema = this.#temaLibre(normalizarTema(e.tema) ?? clasificarTema(e.text, e.tags));
@@ -733,40 +923,71 @@ export class MemoryStore {
       porTema.set(tema, list);
     }
     const temas = new Set([...this.#temaFiles(), ...porTema.keys()]);
+    const pendientes: Array<{
+      tema: string;
+      file: string;
+      before: string | null;
+      partes: PartesNota;
+      cambia: boolean;
+    }> = [];
     for (const tema of temas) {
       const file = this.#temaPath(tema);
       const mine = (porTema.get(tema) ?? []).map((e) => serializeEntry(e, scope));
       const before = existsSync(file) ? readFileSync(file, 'utf8').replace(/^\uFEFF/, '') : null;
-      let out: string[];
       if (before === null) {
         if (mine.length === 0) continue;
-        out = [cabeceraTema(tema), '', ...mine];
-      } else {
-        const lines = before.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
-        out = [];
-        let placed = false;
-        for (const line of lines) {
-          const hit = parseTemaLine(line);
-          if (hit && (hit.chat ?? this.#sinChat) === scope) {
-            if (!placed) out.push(...mine);
-            placed = true;
-            continue;
-          }
-          out.push(line);
-        }
-        if (!placed && mine.length > 0) {
-          if (out.length === 1 && out[0] === cabeceraTema(tema)) out.push('');
-          out.push(...mine);
-        }
-        const soloCabecera = out.every((l) => l.trim() === '' || l === cabeceraTema(tema));
-        if (soloCabecera && mine.length === 0) {
-          // Un tema que se ha quedado vacío desaparece (su cabecera era nuestra).
-          unlinkSync(file);
+        pendientes.push({
+          tema,
+          file,
+          before,
+          partes: { fm: null, cuerpo: [cabeceraTema(tema), '', ...mine] },
+          cambia: true,
+        });
+        continue;
+      }
+      const lines = before.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
+      // Las propiedades de arriba (Obsidian) no son hechos: se quedan aparte.
+      const { fm, cuerpo } = separarFrontmatter(lines);
+      const out: string[] = [];
+      let placed = false;
+      for (const line of cuerpo) {
+        const hit = parseTemaLine(line);
+        if (hit && (hit.chat ?? this.#sinChat) === scope) {
+          if (!placed) out.push(...mine);
+          placed = true;
           continue;
         }
+        out.push(line);
       }
-      const text = `${out.join('\n')}\n`;
-      if (text !== before) writeFileReplacing(file, text);
+      if (!placed && mine.length > 0) {
+        if (out.length === 1 && out[0] === cabeceraTema(tema)) out.push('');
+        out.push(...mine);
+      }
+      const soloCabecera = out.every(
+        (l) => l.trim() === '' || l === cabeceraTema(tema) || esLineaRelacionadoAuto(l),
+      );
+      if (soloCabecera && mine.length === 0 && propiedadesSoloNuestras(fm, tema)) {
+        // Un tema que se ha quedado vacío desaparece (su cabecera era nuestra).
+        unlinkSync(file);
+        continue;
+      }
+      pendientes.push({
+        tema,
+        file,
+        before,
+        partes: { fm, cuerpo: out },
+        cambia: out.join('\n') !== cuerpo.join('\n'),
+      });
+    }
+    const perfiles = this.obsidian
+      ? pendientes.map((p) => this.#perfilDe(p.tema, p.partes.cuerpo))
+      : [];
+    for (const p of pendientes) {
+      // Solo se decora la nota cuyos hechos cambiaron: las demás no se reescriben.
+      const partes =
+        this.obsidian && p.cambia ? this.#decorar(p.tema, p.partes, perfiles, true) : p.partes;
+      const text = `${unirFrontmatter(partes).join('\n')}\n`;
+      if (text !== p.before) writeFileReplacing(p.file, text);
     }
     this.#retirarPorChat(scope);
     try {
@@ -876,14 +1097,7 @@ export class MemoryStore {
 
   /** Solo lo que está en ficheros de tema (sin el fichero por chat). */
   #loadTemasSolo(scope: string): MemoryEntry[] {
-    const out: MemoryEntry[] = [];
-    for (const tema of this.#temaFiles()) {
-      for (const line of readFileSync(this.#temaPath(tema), 'utf8').split(/\r?\n/)) {
-        const hit = parseTemaLine(line);
-        if (hit && (hit.chat ?? this.#sinChat) === scope) out.push({ ...hit.entry, tema });
-      }
-    }
-    return out;
+    return this.#hechosEnTemas(scope);
   }
 
   /** Temas con cuántos hechos vigentes tiene cada uno (todos los chats o los dados). */
@@ -892,7 +1106,7 @@ export class MemoryStore {
     const want = scopes ? new Set(scopes) : null;
     return this.#temaFiles().map((tema) => {
       let hechos = 0;
-      for (const line of readFileSync(this.#temaPath(tema), 'utf8').split(/\r?\n/)) {
+      for (const line of this.#lineasTema(tema)) {
         const hit = parseTemaLine(line);
         if (!hit || hit.entry.supersededBy !== null) continue;
         if (want && !want.has(hit.chat ?? this.#sinChat)) continue;

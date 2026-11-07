@@ -168,6 +168,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'panel',
   'voz',
   'atajos',
+  'obsidian',
   'iphone',
   'tv',
   'ordenador',

@@ -1,16 +1,26 @@
+import { resolve, sep } from 'node:path';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
 import { detectMemoryWorthy } from '../memory/nudges.js';
+import {
+  enlacesInversos,
+  type IndiceEnlaces,
+  indiceEnlaces,
+  type NotaBoveda,
+  resolverEnlace,
+} from '../memory/obsidian.js';
 import { type Embedder, hybridRank } from '../memory/semantic.js';
 import type { SessionStore } from '../memory/sessions.js';
 import { looksLikeSecret, type MemorySnapshot } from '../memory/snapshot.js';
+import { normalizarTema } from '../memory/temas.js';
 import { isValidISODate, renderTimeline, UNKNOWN_DAY } from '../memory/timeline.js';
 import {
   looksLikeCredential,
   type MemoryEntry,
   type MemoryStore,
   memoryScopesFor,
+  parseTemaLine,
   scoreEntry,
 } from '../memory.js';
 import { sliceSafe } from '../text.js';
@@ -53,6 +63,7 @@ const MemoryParams = lazySchema(() =>
       Type.Literal('forget_profile'),
       Type.Literal('suggest_nudge'),
       Type.Literal('history'),
+      Type.Literal('enlaces'),
     ]),
     text: Type.Optional(
       Type.String({
@@ -67,7 +78,9 @@ const MemoryParams = lazySchema(() =>
       Type.String({
         description:
           'For recall: what you want to remember. For history: words to look for in ' +
-          'past conversations of this chat. For forget_profile: the text to remove from the profile.',
+          'past conversations of this chat. For forget_profile: the text to remove from the profile. ' +
+          'For enlaces: the note to follow (a tema like "salud", a note name, alias or path); ' +
+          'empty lists the most linked notes.',
       }),
     ),
     id: Type.Optional(
@@ -199,6 +212,108 @@ function renderEntry(e: MemoryEntry): string {
     : `- [${e.id}] (${e.date}) ${e.text}`;
 }
 
+const TOPE_LINEA_ENLACE = 160;
+const TOPE_ENLACES = 40;
+
+/**
+ * La bóveda que puede ver este chat. El dueño ve toda la bóveda (sus notas de
+ * Obsidian incluidas); otro chat solo las notas de tema, y de ellas solo sus
+ * propios hechos y los enlaces automáticos: lo que Nico escribe en su bóveda no
+ * sale en un grupo.
+ */
+function bovedaVisible(
+  store: MemoryStore,
+  read: readonly string[],
+): { idx: IndiceEnlaces; linea: (l: string) => string | null } {
+  const esDueno = read.includes(store.ambitoSinChat);
+  const idx = indiceEnlaces(store.boveda ?? store.dir);
+  const linea = (l: string): string | null => {
+    const hit = parseTemaLine(l);
+    if (hit) {
+      if (!read.includes(hit.chat ?? store.ambitoSinChat)) return null;
+      return `[${hit.entry.id}] ${hit.entry.text}`;
+    }
+    return esDueno ? l.trim() : null;
+  };
+  if (!esDueno) {
+    // Solo las notas donde este chat tiene algo, y solo los enlaces de sus hechos.
+    const notas = resolve(store.dir);
+    idx.notas = idx.notas.filter(
+      (n) =>
+        resolve(idx.raiz, n.ruta).startsWith(`${notas}${sep}`) &&
+        n.lineas.some((l) => parseTemaLine(l) !== null && linea(l) !== null),
+    );
+    for (const n of idx.notas) {
+      n.enlaces = n.enlaces.filter((e) => linea(n.lineas[e.linea - 1] ?? '') !== null);
+    }
+  }
+  return { idx, linea };
+}
+
+function recortar(t: string): string {
+  return t.length > TOPE_LINEA_ENLACE ? `${sliceSafe(t, TOPE_LINEA_ENLACE - 1)}…` : t;
+}
+
+/** action=enlaces: a dónde enlaza una nota y quién la enlaza (como los backlinks de Obsidian). */
+export function textoEnlaces(store: MemoryStore, read: readonly string[], query: string): string {
+  const { idx, linea } = bovedaVisible(store, read);
+  if (idx.notas.length === 0) return 'No hay notas todavía.';
+  const q = query.trim();
+  if (!q) {
+    const entrantes = new Map<NotaBoveda, number>();
+    for (const n of idx.notas) {
+      for (const e of n.enlaces) {
+        const d = resolverEnlace(idx, e.destino, n);
+        if (d && d !== n) entrantes.set(d, (entrantes.get(d) ?? 0) + 1);
+      }
+    }
+    const top = [...entrantes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
+    return [
+      `${idx.notas.length} notas${idx.cortado ? ' (hay más; me paré en el tope)' : ''}. Las más enlazadas:`,
+      ...(top.length
+        ? top.map(([n, c]) => `- ${n.ruta} ← ${c}`)
+        : ['- (ninguna enlaza a otra todavía)']),
+      'enlaces con query=<nota> muestra a dónde enlaza y quién la enlaza.',
+    ].join('\n');
+  }
+  const tema = normalizarTema(q);
+  const nota =
+    resolverEnlace(idx, q) ??
+    (tema
+      ? (idx.notas.find((n) => n.ruta.endsWith(`notas/${tema}.md`) || n.ruta === `${tema}.md`) ??
+        null)
+      : null);
+  if (!nota) {
+    const k = q.toLowerCase();
+    const parecidas = idx.notas.filter((n) => n.nombre.toLowerCase().includes(k)).slice(0, 5);
+    return [
+      `No hay ninguna nota «${recortar(q)}».`,
+      ...(parecidas.length ? [`Parecidas: ${parecidas.map((n) => n.ruta).join(', ')}`] : []),
+    ].join('\n');
+  }
+  const salida: string[] = [];
+  const vistos = new Set<string>();
+  for (const e of nota.enlaces) {
+    const k = e.destino.toLowerCase();
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    const d = resolverEnlace(idx, e.destino, nota);
+    salida.push(`- [[${e.destino}]] → ${d ? d.ruta : '(no existe todavía)'}`);
+  }
+  const entrada: string[] = [];
+  for (const { desde, enlace } of enlacesInversos(idx, nota)) {
+    const l = linea(desde.lineas[enlace.linea - 1] ?? '');
+    if (l !== null) entrada.push(`- ${desde.ruta}:${enlace.linea}: ${recortar(l)}`);
+  }
+  return [
+    `📄 ${nota.ruta}`,
+    `Enlaza a (${salida.length}):`,
+    ...(salida.length ? salida.slice(0, TOPE_ENLACES) : ['- (nada)']),
+    `Enlazada desde (${entrada.length}):`,
+    ...(entrada.length ? entrada.slice(0, TOPE_ENLACES) : ['- (nadie la enlaza)']),
+  ].join('\n');
+}
+
 /** The empty answer says WHICH empty it is: no match, nothing stored, or all replaced. */
 function emptyMemoryText(store: MemoryStore, read: readonly string[], query: string): string {
   if (query) return 'No hay nada guardado que coincida con eso.';
@@ -245,6 +360,10 @@ export function createMemoryTool(
       'something durable worth saving; ask the user before saving anything.',
       'action=history searches what was SAID in earlier conversations of this chat',
       '(user messages included), for "what did we decide last week?" questions.',
+      'action=enlaces follows [[links]] between notes like Obsidian backlinks: with',
+      'query=<note or tema> it lists where that note links to and every note that links',
+      'to it (with the line), read fresh from the files, so notes the user edits or',
+      'writes in Obsidian count. Use it to find related topics before answering.',
       '',
       'Corrected entries are history, never current facts: hidden by default, and',
       'include_superseded=true shows them marked and linked to their replacement.',
@@ -578,6 +697,11 @@ export function createMemoryTool(
             ],
             details: { count: hits.length },
           };
+        }
+
+        case 'enlaces': {
+          const text = textoEnlaces(store, read, String(args.query ?? ''));
+          return { content: [{ type: 'text', text }], details: { action: 'enlaces' } };
         }
 
         case 'suggest_nudge': {
