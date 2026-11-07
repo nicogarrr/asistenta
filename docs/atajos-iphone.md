@@ -65,3 +65,51 @@ Acciones y campos del JSON:
 Atajo **Orden de Asistenta**: *Obtener diccionario de* la entrada del atajo, luego *Obtener valor* de `accion` y un *Si* por cada acción, usando las acciones normales de Atajos (Abrir app, Enviar mensaje de WhatsApp, Enviar mensaje, Añadir recordatorio, Añadir evento, Buscar en Apple Music y Reproducir). Al final, *Obtener contenido de URL* a `/api/atajo/resultado` con el mismo encabezado `Authorization`.
 
 Sin comprobar en un iPhone real: si la automatización de correo pasa el cuerpo del correo como entrada (si pasa el correo entero, añade *Obtener texto de* la entrada), si WhatsApp manda el mensaje sin pedir confirmación, y cuánto tarda Mail en recibir el correo (con Gmail en la app Mail puede ir por intervalos, no al momento).
+
+## Atajo 3: automatizaciones (van solas)
+
+Atajos → **Automatización** → «+». Desde iOS 17 se pueden ejecutar sin preguntar (**Ejecutar inmediatamente**).
+
+**Al llegar a casa / al salir de casa** (sin compartir la ubicación en Telegram):
+
+1. Disparador **Llegar** (o **Salir**) → Ubicación: tu casa → **Ejecutar inmediatamente**.
+2. **Obtener contenido de URL**: `https://tu-pc.tu-red.ts.net/api/atajo/lugar`, método **POST**, el mismo encabezado `Authorization`, cuerpo **JSON** con `evento` = `llegar` (o `salir`) y `sitio` = `casa` (o el nombre de un sitio guardado, «el gimnasio»).
+3. **Si** *Contenido de la URL* **tiene algún valor** → **Mostrar notificación** (o **Leer texto**) con *Contenido de la URL*.
+
+Saltan los avisos de «cuando llegue a casa recuérdame…» (y de salir), también en Telegram. Si no hay ninguno, la respuesta va vacía y no se enseña nada. «casa» es el sitio guardado como casa o, si no, `PA_BRIEFING_LAT/LON`.
+
+**Resumen de la mañana a las 8:00**:
+
+1. Disparador **Hora del día** → 8:00, Diariamente → **Ejecutar inmediatamente**.
+2. **Obtener contenido de URL**: `…/api/atajo/resumen`, método **POST**, mismo encabezado (sin cuerpo).
+3. **Leer texto** con *Contenido de la URL*.
+
+Es el mismo resumen que `/resumen hoy`, sin emojis ni Markdown para leerlo en voz alta. No cambia el ritmo del resumen de Telegram.
+
+## Atajo 4: Salud y Calendario a la memoria
+
+`POST /api/atajo/datos`. Solo se guarda lo que el atajo manda y solo estos campos; cualquier otro se ignora y la respuesta lo dice.
+
+- `{"tipo": "salud", "pasos": 8432, "sueno_horas": 7.5, "ejercicio_min": 35, "fecha": "2026-11-07"}` → una línea en `notas/salud.md`: «Salud (iPhone) 2026-11-07: 8432 pasos; durmió 7 h 30 min; 35 min de ejercicio».
+- `{"tipo": "calendario", "eventos": "10:00 · Dentista\n18:00 · Pádel"}` → una línea en `notas/agenda.md` (máx. 15 eventos).
+- Una línea por día y tipo: si lo mandas otra vez el mismo día, se corrige en su sitio.
+- `fecha` es opcional (por defecto, hoy en el PC). Los números aceptan «8.432» y «7,5».
+
+Receta de Salud: **Buscar muestras de salud** (Tipo es Pasos, Fecha de inicio es hoy) → **Calcular estadísticas** (Suma) → **Obtener contenido de URL** con `tipo` = `salud` y `pasos` = *Estadísticas* → **Mostrar notificación**.
+Receta de Calendario: **Buscar eventos del calendario** (Fecha de inicio es hoy) → **Repetir con cada**: **Texto** «*Hora de inicio* · *Título*» → **Combinar texto** (Nueva línea) → **Obtener contenido de URL** con `tipo` = `calendario` y `eventos` = *Texto combinado*.
+
+## 5: pagar con Apple Pay desde el iPhone
+
+Asistenta prepara el carrito o el enlace de pago y lo manda por Telegram con un botón «Pagar con Apple Pay en Safari». El pago lo haces tú con Face ID; Asistenta nunca paga.
+
+## Atajo 6: con el PC apagado
+
+Atajos no tiene «si falla, haz otra cosa»: si el PC está apagado, «Pregunta a Asistenta» se para con un error de conexión. Para eso, un segundo atajo **Asistenta sin PC** (necesita Apple Intelligence):
+
+1. **Dictar texto**.
+2. **Usar modelo** → **En el dispositivo**, con «Contesta en 1 a 3 frases, en castellano:» y *Texto dictado*.
+3. **Leer texto**: «Modo sin conexión, sin tu memoria ni herramientas.» y luego *Respuesta*.
+
+«Oye Siri, Asistenta sin PC».
+
+`/atajos` en Telegram manda todas estas recetas con tu dirección real y el token.
