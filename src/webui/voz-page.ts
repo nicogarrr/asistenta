@@ -62,6 +62,15 @@ ${renderMiniAppReadyScript()}
   var grabador = null, trozos = [], flujo = null, vigia = null;
 
   function decir(t) { estado.textContent = t; }
+  // Sin datos o wifi en el móvil no es Asistenta rota: se dice así (Nico, 7 nov: se
+  // quedó sin datos y parecía que Asistenta no contestaba).
+  var SIN_CONEXION = 'Sin conexión en el móvil: revisa los datos o el wifi. Asistenta no tiene la culpa.';
+  function sinRed() {
+    if (navigator.onLine === false) return SIN_CONEXION;
+    return 'No llego al PC: o el móvil no tiene datos/wifi, o Tailscale está apagado en el móvil, o el PC está apagado.';
+  }
+  window.addEventListener('offline', function () { decir(SIN_CONEXION); });
+  window.addEventListener('online', function () { decir('Conexión de vuelta. Pulsa el botón y habla.'); });
   function linea(clase, t) {
     var p = document.createElement('p'); p.className = clase; p.textContent = t;
     chat.appendChild(p); chat.scrollTop = chat.scrollHeight;
@@ -75,7 +84,7 @@ ${renderMiniAppReadyScript()}
         if (d && d.token) { token = d.token; try { localStorage.setItem(CLAVE, token); } catch (e) {} decir('Listo. Pulsa el botón y habla.'); }
         else decir('Telegram no ha confirmado que seas tú. Ábrelo desde tu chat con el bot (/voz).');
       })
-      .catch(function () { decir('No llego al PC. ¿Tailscale está conectado en el móvil?'); });
+      .catch(function () { decir(sinRed()); });
   } else if (!token) {
     decir('Abre esto desde Telegram con /voz, o abre antes el panel con tu token en este navegador.');
   }
@@ -298,6 +307,7 @@ ${renderMiniAppReadyScript()}
         cuandoCalle(siguiente);
       }
     }
+    if (navigator.onLine === false) { fallo(SIN_CONEXION, 'Sin conexión en el móvil.'); return; }
     fetch('/api/voz', { method: 'POST', headers: { 'Content-Type': mime, Accept: 'application/x-ndjson', Authorization: 'Bearer ' + token }, body: audio, signal: corte ? corte.signal : undefined })
       .then(function (r) {
         var tipo = r.headers.get('content-type') || '';
@@ -320,7 +330,8 @@ ${renderMiniAppReadyScript()}
       .catch(function () {
         if (acabado) return;
         if (corte && corte.signal.aborted) fallo('Asistenta lleva más de ' + Math.round(TOPE_VOZ_MS / 1000) + ' s sin contestar: puede que siga pensando o que se haya colgado. Pulsa «Reintentar».', 'Perdona, estoy tardando demasiado. Pulsa reintentar.');
-        else fallo('No llego al PC. ¿Tailscale está conectado?', 'Perdona, no llego al ordenador.');
+        else if (navigator.onLine === false) fallo(SIN_CONEXION, 'Sin conexión en el móvil.');
+        else fallo(sinRed(), 'No llego al ordenador.');
       });
   }
 
