@@ -150,7 +150,7 @@ export const CAPABILITIES: readonly Capability[] = [
   {
     name: 'iphone',
     desktopOnly: true,
-    note: 'puente ESP32 del iPhone en la LAN: solo lo alcanza el PC de escritorio.',
+    note: 'puente ESP32 del iPhone en la LAN: solo lo alcanza el PC de escritorio. texto/screenshot leen; los pasos sueltos (PA_IPHONE_GESTOS=1) piden permiso.',
   },
   {
     name: 'iphone_pantalla',

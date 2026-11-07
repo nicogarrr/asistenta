@@ -1,7 +1,23 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { type IphoneStatus, readiness, setupGuide } from '../iphone/client.js';
-import { formatearPantalla, lineasDePantalla, pantallaBloqueada } from '../iphone/texto.js';
+import {
+  abrirApp,
+  BloqueadoError,
+  comboValido,
+  desplazar,
+  escribirTexto,
+  exigeDesbloqueado,
+  type ManosIphone,
+  type OjosIphone,
+} from '../iphone/gestos.js';
+import {
+  buscarTexto,
+  formatearPantalla,
+  lineasDePantalla,
+  pantallaBloqueada,
+  zonaProhibida,
+} from '../iphone/texto.js';
 import { log } from '../log.js';
 import type { OcrResult } from '../screen/ocr.js';
 
@@ -29,6 +45,12 @@ export interface IphoneToolDeps {
    * action=texto explica que no puede leer y remite a screenshot.
    */
   ocr?: (jpeg: Buffer) => Promise<OcrResult>;
+  /**
+   * Pasos sueltos (PA_IPHONE_GESTOS=1): tocar, deslizar, escribir, teclas y atrás en el
+   * servidor hidagent. Sin ellos (o sin `gestos`), esas acciones explican cómo activarlas.
+   */
+  gestos?: boolean;
+  manos?: ManosIphone & { back(): Promise<void> };
   /** Pausa entre sondeos; los tests la sustituyen. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -40,6 +62,13 @@ const Params = lazySchema(() =>
       Type.Literal('setup'),
       Type.Literal('screenshot'),
       Type.Literal('texto'),
+      Type.Literal('tocar'),
+      Type.Literal('tocar_texto'),
+      Type.Literal('escribir'),
+      Type.Literal('tecla'),
+      Type.Literal('atras'),
+      Type.Literal('desplazar'),
+      Type.Literal('abrir_app'),
       Type.Literal('run'),
       Type.Literal('stop'),
       Type.Literal('home'),
@@ -56,6 +85,34 @@ const Params = lazySchema(() =>
           'Para texto: true incluye la barra de estado y los iconos que el OCR lee como letras.',
       }),
     ),
+    x: Type.Optional(
+      Type.Number({ description: 'Para tocar: x en fraccion del ancho (0 a 1), como en texto.' }),
+    ),
+    y: Type.Optional(
+      Type.Number({ description: 'Para tocar: y en fraccion del alto (0 a 1), como en texto.' }),
+    ),
+    texto: Type.Optional(
+      Type.String({
+        description:
+          'Para tocar_texto: el texto que se ve en pantalla («Wi-Fi»). Para escribir: lo que se escribe (sin tildes ni enes; \\n = Intro).',
+      }),
+    ),
+    combo: Type.Optional(
+      Type.String({ description: 'Para tecla: enter, backspace, esc, tab, cmd+a, cmd+h...' }),
+    ),
+    direccion: Type.Optional(
+      Type.Union([Type.Literal('abajo'), Type.Literal('arriba')], {
+        description: 'Para desplazar: abajo o arriba.',
+      }),
+    ),
+    cantidad: Type.Optional(
+      Type.Number({ description: 'Para desplazar: medias pantallas (0.5 a 2, por defecto 1).' }),
+    ),
+    app: Type.Optional(
+      Type.String({
+        description: 'Para abrir_app: el nombre como sale en el iPhone («WhatsApp»).',
+      }),
+    ),
     waitSeconds: Type.Optional(
       Type.Number({
         description:
@@ -66,6 +123,19 @@ const Params = lazySchema(() =>
 );
 
 const POLL_MS = 3000;
+/** Lo que se deja al telefono para mostrar el resultado de un paso antes de leerlo. */
+export const PAUSA_TRAS_PASO_MS = 800;
+
+type PasoArgs = {
+  action: string;
+  x?: number;
+  y?: number;
+  texto?: string;
+  combo?: string;
+  direccion?: 'abajo' | 'arriba';
+  cantidad?: number;
+  app?: string;
+};
 const MAX_WAIT_S = 600;
 const DEFAULT_WAIT_S = 60;
 
@@ -88,6 +158,160 @@ const text = (t: string) => ({ type: 'text' as const, text: t });
 export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typeof Params>> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
+  /** La pantalla en texto (con la barra de estado, para reconocer el bloqueo), o null sin OCR. */
+  const ojos: OjosIphone = async () =>
+    deps.ocr ? lineasDePantalla(await deps.ocr(await deps.frame()), { todo: true }) : null;
+
+  /**
+   * Un paso suelto en el teléfono. Antes de mandar nada: activado, puente listo, sin el
+   * agente del servidor en marcha (se pisarían) y los controles de cada acción. Un fallo
+   * AL MANDAR deja la duda de si se hizo: se dice así, para mirar antes de repetir.
+   */
+  async function paso(args: PasoArgs) {
+    const manos = deps.manos;
+    if (!deps.gestos || !manos) {
+      throw new Error(
+        'Los pasos sueltos en el iPhone estan apagados. Se activan con PA_IPHONE_GESTOS=1 en .env; mientras, usa action=run con un objetivo.',
+      );
+    }
+    const s = await deps.status();
+    const missing = readiness(s);
+    if (missing.length) throw new Error(`El iPhone no esta listo: ${missing.join('; ')}.`);
+    if (s.agent.running) {
+      throw new Error(
+        `El agente del telefono esta en marcha ("${s.agent.task ?? ''}"): espera o usa action=stop antes de dar pasos sueltos.`,
+      );
+    }
+    let enviando = false;
+    const mano =
+      <A extends unknown[]>(f: (...a: A) => Promise<void>) =>
+      async (...a: A) => {
+        enviando = true;
+        await f(...a);
+      };
+    const m: ManosIphone = {
+      tap: mano((x: number, y: number) => manos.tap(x, y)),
+      swipe: mano((a: number, b: number, c: number, d: number) => manos.swipe(a, b, c, d)),
+      type: mano((t: string) => manos.type(t)),
+      key: mano((k: string) => manos.key(k)),
+    };
+    let hecho: string;
+    try {
+      switch (args.action) {
+        case 'tocar': {
+          const x = args.x;
+          const y = args.y;
+          if (typeof x !== 'number' || typeof y !== 'number')
+            throw new Error(
+              'Para tocar hacen falta x e y (fracciones de 0 a 1, como en action=texto).',
+            );
+          const prohibida = zonaProhibida(x, y);
+          if (prohibida) throw new Error(prohibida);
+          // Mirar si está bloqueado es lo mejor posible aquí: sin OCR (o si falla) se toca igual.
+          const lineas = await ojos().catch(() => null);
+          if (lineas && pantallaBloqueada(lineas)) throw new BloqueadoError();
+          await m.tap(x, y);
+          hecho = `Tocado en (${x}, ${y}).`;
+          break;
+        }
+        case 'tocar_texto': {
+          const lineas = await ojos();
+          if (lineas === null) {
+            throw new Error(
+              'Sin el OCR de Windows no puedo buscar texto en la pantalla: mira action=screenshot y usa tocar con x e y.',
+            );
+          }
+          if (pantallaBloqueada(lineas)) throw new BloqueadoError();
+          const b = buscarTexto(lineas, args.texto ?? '');
+          if (!b.ok) {
+            if (b.motivo === 'vacio')
+              throw new Error('Para tocar_texto hace falta el texto que se ve.');
+            if (b.motivo === 'ambiguo') {
+              const lista = b.candidatas
+                .slice(0, 5)
+                .map((l) => `«${l.texto}» (${l.x}, ${l.y})`)
+                .join(', ');
+              throw new Error(
+                `Hay varias lineas con ese texto: ${lista}. No toco ninguna: usa tocar con la x y de la que quieras.`,
+              );
+            }
+            throw new Error(
+              `«${args.texto}» no sale como texto en la pantalla, asi que no he tocado nada. Baja con desplazar o, si es un icono, mira action=screenshot y usa tocar con x e y.`,
+            );
+          }
+          const prohibida = zonaProhibida(b.linea.x, b.linea.y);
+          if (prohibida) throw new Error(prohibida);
+          await m.tap(b.linea.x, b.linea.y);
+          hecho = `Tocado «${b.linea.texto}» en (${b.linea.x}, ${b.linea.y})${b.como === 'parecido' ? ' (el OCR lo leia parecido: comprueba que era eso)' : ''}.`;
+          break;
+        }
+        case 'escribir':
+          await escribirTexto(m, ojos, args.texto ?? '');
+          hecho = 'Escrito.';
+          break;
+        case 'tecla': {
+          const combo = (args.combo ?? '').trim().toLowerCase();
+          if (!comboValido(combo)) {
+            throw new Error(
+              'Tecla no valida. Valen enter, backspace, esc, tab, space, flechas, una letra o numero, con cmd/ctrl/alt/shift delante (cmd+a).',
+            );
+          }
+          await exigeDesbloqueado(ojos);
+          await m.key(combo);
+          hecho = `Pulsado ${combo}.`;
+          break;
+        }
+        case 'atras':
+          await mano(() => manos.back())();
+          hecho = 'Gesto de volver hecho.';
+          break;
+        case 'desplazar':
+          await desplazar(m, args.direccion === 'arriba' ? 'arriba' : 'abajo', args.cantidad ?? 1);
+          hecho = `Desplazado hacia ${args.direccion === 'arriba' ? 'arriba' : 'abajo'}.`;
+          break;
+        case 'abrir_app': {
+          const nombre = await abrirApp(m, ojos, args.app ?? '', sleep);
+          hecho = `Buscado «${nombre}» y pulsado Intro (Inicio, buscar, Intro): comprueba en la pantalla de despues que se ha abierto esa app.`;
+          break;
+        }
+        default:
+          throw new Error('action desconocida.');
+      }
+    } catch (err) {
+      if (err instanceof BloqueadoError) {
+        return {
+          content: [text(err.message)],
+          details: { entrega: enviando ? 'parcial' : 'no-enviado', bloqueado: true },
+        };
+      }
+      if (!enviando) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        content: [
+          text(
+            `Sin saber si se ha hecho del todo: ${msg} Mira la pantalla (action=texto) antes de repetirlo.`,
+          ),
+        ],
+        details: { entrega: 'desconocido' },
+      };
+    }
+    log.info('iphone paso', { action: args.action });
+    await sleep(PAUSA_TRAS_PASO_MS);
+    let despues = 'Mira el resultado con action=texto o action=screenshot.';
+    if (deps.ocr) {
+      try {
+        despues = `Pantalla despues:\n${formatearPantalla(lineasDePantalla(await deps.ocr(await deps.frame())))}`;
+      } catch {
+        despues =
+          'No he podido leer la pantalla despues: mira con action=texto o action=screenshot.';
+      }
+    }
+    return {
+      content: [text(`${hecho} ${despues}`)],
+      details: { entrega: 'hecho', verified: false },
+    };
+  }
+
   return {
     name: 'iphone',
     label: 'iPhone',
@@ -107,6 +331,14 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
       'Limites: solo ve pixeles (no lee notificaciones ni el estado interno); si el telefono se bloquea o',
       'se corta el AirPlay, la tarea se queda parada. Nunca introduzcas contrasenas ni codigos por aqui',
       'salvo que Nico lo pida en esta conversacion.',
+      ...(deps.gestos
+        ? [
+            'Pasos sueltos (cada uno pide permiso a Nico): tocar (x, y en fracciones), tocar_texto (texto que se ve, p. ej. «Wi-Fi»),',
+            'escribir (texto ASCII, sin tildes ni enes; \\n = Intro), tecla (combo), atras, desplazar (direccion, cantidad) y abrir_app (app).',
+            'Cada paso devuelve la pantalla despues en texto. Bucle: texto, decide, un paso, mira el resultado.',
+            'No escriben ni tocan con el telefono bloqueado, ni tocan la isla dinamica (arriba en el centro: corta la duplicacion).',
+          ]
+        : []),
     ].join(' '),
     parameters: Params(),
     executionMode: 'sequential',
@@ -179,6 +411,14 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
             details: { lineas: lineas.length, bloqueado },
           };
         }
+        case 'tocar':
+        case 'tocar_texto':
+        case 'escribir':
+        case 'tecla':
+        case 'atras':
+        case 'desplazar':
+        case 'abrir_app':
+          return enqueue(() => paso(args));
         case 'run': {
           const goal = (args.goal ?? '').trim();
           if (!goal)

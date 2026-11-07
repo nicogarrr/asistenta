@@ -23,6 +23,33 @@ El modelo lee unos cientos de tokens en vez de una imagen y, si la pantalla es l
 codigo, lo avisa en cabeza para que no escriba nada. Idea tomada de phoneuse (MIT), ver
 `THIRD_PARTY_NOTICES.md`. Sin probar con un iPhone real.
 
+### Pasos sueltos (opcional, `PA_IPHONE_GESTOS=1`)
+
+Por defecto Asistenta solo le da un objetivo entero al agente del servidor (`run`), que usa su propio
+modelo y su propia clave. Con `PA_IPHONE_GESTOS=1` en el `.env`, el modelo de Asistenta maneja el
+telefono paso a paso, leyendo la pantalla con `texto`:
+
+| Accion | Que hace |
+|---|---|
+| `tocar` | toca en x, y (fracciones, como en `texto`) |
+| `tocar_texto` | busca ese texto en la pantalla y toca su centro; si no esta o hay dos iguales, no toca |
+| `escribir` | escribe en el campo con el foco (`\n` = Intro) |
+| `tecla` | enter, backspace, esc, cmd+a... |
+| `atras` | el gesto de volver |
+| `desplazar` | baja o sube media pantalla (o lo que se pida, hasta 2) |
+| `abrir_app` | Inicio (Cmd+H), buscar (Cmd+Espacio), el nombre e Intro |
+
+- **Cada paso pide permiso a Nico** en Telegram (la Gate los trata como opacos). Despues de cada paso
+  devuelve la pantalla nueva en texto.
+- No escribe ni pulsa teclas si la pantalla es la de bloqueo o la del codigo, ni si no puede leerla para
+  comprobarlo. No toca la isla dinamica (arriba en el centro): abre «Detener duplicacion» y se corta la pantalla.
+- No se mezcla con el agente del servidor: si hay un `run` en marcha, espera a que pare.
+- El teclado de la ESP32 es de EE. UU.: no escribe tildes ni enes (se rechazan antes de mandar nada) y, si en
+  el iPhone el teclado fisico esta en espanol, algunos signos pueden salir cambiados (Ajustes > General >
+  Teclado > Teclados fisicos: EE. UU.; sin comprobar).
+- Las recetas vienen de phoneuse, que las probo por Bluetooth en un iPhone 17 Pro con iOS 26. **Con la ESP32 por
+  USB no se han probado.**
+
 ## Alta guiada
 
 Pidele a Asistenta "conecta el iPhone" (tool `iphone`, `action=setup`, solo lectura): consulta al servidor y lista los
