@@ -125,8 +125,10 @@ describe('Salud y Calendario a la memoria: solo lo que Nico manda, una línea po
     expect(r).toContain('No he guardado frecuencia_cardiaca');
     const file = readFileSync(join(dir, 'salud.md'), 'utf8');
     expect(file).toContain('Salud (iPhone) 2026-11-07: 8432 pasos; durmió 7 h 30 min');
-    expect(file).not.toContain('61');
-    expect(file).not.toMatch(/frecuencia/);
+    // Sin el id aleatorio de la nota («[m61b9538e]» hizo fallar esto una vez de cada ~40).
+    const sinId = file.replace(/\[m[0-9a-f]+\]/g, '[id]');
+    expect(sinId).not.toContain('61');
+    expect(sinId).not.toMatch(/frecuencia/);
   });
 
   it('el mismo día otra vez corrige la línea en vez de añadir otra', () => {
