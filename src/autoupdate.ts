@@ -90,6 +90,20 @@ export interface AutoupdateState {
    * PC se apagó, se suspendió o se cortó a mitad: se vuelve a la versión anterior.
    */
   pending?: { from: string; to: string; at: string };
+  /** PA_AUTOUPDATE_MODO=preguntar: cuándo se ofreció la última vez (una vez al día como mucho). */
+  offeredAt?: string;
+}
+
+/** PA_AUTOUPDATE_MODO=preguntar: el vigilante no instala solo, pregunta con botones. */
+export function autoupdateAsks(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(preguntar|ask)$/i.test(env.PA_AUTOUPDATE_MODO?.trim() ?? '');
+}
+
+/** En modo «preguntar», como mucho una oferta al día aunque main cambie más veces. */
+export const OFFER_GAP_MS = 24 * 60 * 60_000;
+
+export function offerText(changes: number, to: string): string {
+  return `🔄 Hay una versión nueva de Asistenta (${to.slice(0, 7)}, ${changes} ${changes === 1 ? 'cambio' : 'cambios'}). ¿Me actualizo? Me cierro un par de minutos y te aviso aquí al volver; si algo falla, vuelvo a la de ahora.`;
 }
 
 const dir = (stateDir: string) => join(stateDir, AUTOUPDATE_DIR);
@@ -233,6 +247,8 @@ export interface AutoupdateDeps {
   now(): number;
   /** Salida del paso que falló, para el registro de esta revisión. */
   log?(text: string): void;
+  /** Oferta con los botones «Actualizar» / «Luego» (modo preguntar). */
+  offer?(text: string): Promise<void>;
   /** Una línea por paso al log de la autoactualización (log/autoupdate.log). */
   logStep?(line: string): void;
   /**
@@ -606,6 +622,22 @@ export async function runAutoupdate(
     if (plan.action === 'refuse') return skip(plan.reason);
     const toMove = [...plan.aside, ...(plan.discardLock ? ['package-lock.json'] : [])];
     if (toMove.length && !deps.moveAside) return skip('cambios-locales');
+    if (!opts.force && autoupdateAsks(opts.env)) {
+      // Nunca instala sin un toque del dueño: ofrece (una vez al día) y espera al botón.
+      const offered = state.offeredAt ? Date.parse(state.offeredAt) : Number.NaN;
+      if (deps.now() - offered < OFFER_GAP_MS || !deps.offer)
+        return done(
+          'omitida',
+          `hay versión nueva (${remote.slice(0, 7)}): esperando tu toque en Telegram`,
+        );
+      const log = await git(['log', '--no-merges', '--format=%s', `${old}..${remote}`]);
+      const n = log.out.split('\n').filter((l) => l.trim()).length;
+      await deps.offer(offerText(n, remote)).catch(() => {});
+      const fresh = readAutoupdateState(stateDir);
+      writeAutoupdateState(stateDir, { ...fresh, offeredAt: new Date(deps.now()).toISOString() });
+      step(`ofrecida ${remote.slice(0, 7)} (modo preguntar)`);
+      return done('omitida', `te he preguntado si me actualizo a ${remote.slice(0, 7)}`);
+    }
     if (deps.daemonState() !== 'running') return skip('no-en-marcha', 'aplazada');
     const busy = deps.busy();
     if (busy === 'ocupada') {
