@@ -721,6 +721,7 @@ import { createMediaTool } from './tools/media.js';
 import { createMemoryTool } from './tools/memory.js';
 import { createOcrTool } from './tools/ocr.js';
 import { createOpenGymTool, type GymKind, gymAnswer } from './tools/opengym.js';
+import { createPagoIphoneTool } from './tools/pago-iphone.js';
 import { createPriceWatchTool } from './tools/price-watch.js';
 import {
   createReminderTool,
@@ -3098,6 +3099,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createCompraTool(new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey)),
       // «el pedido de Mercadona los lunes»: el día del aviso semanal (pedir y pagar van con botones).
       createMercadonaTool(join(paths.state, 'mercadona.json')),
+      // «prepárame la cesta y la pago yo»: el carrito o el pago a Telegram con un botón que
+      // lo abre en Safari (Apple Pay en el iPhone). Nunca paga (src/tools/pago-iphone.ts).
+      createPagoIphoneTool(
+        { send: (chatId, text, buttons) => sendToChat(chatId, text, buttons) },
+        () => thread.chatKey.split(':')[1] ?? '',
+      ),
       createMailRulesTool({ account: () => loadMailAccount() }),
       createGoalTool({
         goals: goalStore,
