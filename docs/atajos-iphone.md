@@ -6,7 +6,7 @@ Asistenta tiene una puerta para la app **Atajos** de iOS: `POST /api/atajo`. El 
 
 - El panel por Tailscale ya funcionando (ver [panel-remoto.md](panel-remoto.md)): `/tailscale` en Telegram debe decir que está listo.
 - Tailscale conectado en el iPhone. En la app de Tailscale, activa la conexión bajo demanda para que esté siempre encendida.
-- La dirección del panel (la de `/panel`, del estilo `https://tu-pc.tu-red.ts.net/`) y su token (`PA_WEB_TOKEN`).
+- La dirección y el token: escribe **/atajos** en Telegram. Te manda los pasos con tu dirección real y, aparte, el token listo para pegar (`Bearer …`). Ese mensaje se borra solo a los 10 minutos.
 
 ## Atajo 1: «Pregunta a Asistenta» (Siri y botón de acción)
 

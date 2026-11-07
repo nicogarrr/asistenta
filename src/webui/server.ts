@@ -788,7 +788,7 @@ async function respondApi(
 }
 
 const ATAJO_SIN_TOKEN =
-  'El token del atajo no coincide con el de Asistenta. Vuelve a copiarlo en el atajo.';
+  'El token del atajo no coincide con el de Asistenta. Escribe /atajos en Telegram y vuelve a copiarlo.';
 
 /** `POST /api/atajo`: texto plano de ida y vuelta para la app Atajos (src/webui/atajo.ts). */
 async function respondAtajo(

@@ -167,6 +167,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'tailscale',
   'panel',
   'voz',
+  'atajos',
   'tv',
   'ordenador',
   'altavoz',
