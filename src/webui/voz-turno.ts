@@ -261,7 +261,11 @@ export async function turnoVoz(
   let oido = '';
   try {
     const r = await conTope(deps.transcribe(audio, mime), deps.topeOirMs ?? 30_000);
-    if (r === null) throw new Error('whisper ha tardado demasiado');
+    if (r === null) {
+      throw new Error(
+        'el reconocimiento de voz aún se está cargando (la primera vez tarda); pulsa «Reintentar» en un momento',
+      );
+    }
     oido = r.ok.trim();
   } catch (err) {
     tiempos.oirMs = ahora() - tOir;

@@ -248,6 +248,7 @@ type ApiRoute =
   | { method: 'POST'; kind: 'miniapp' }
   | { method: 'POST'; kind: 'voz' }
   | { method: 'GET'; kind: 'vozResto' }
+  | { method: 'GET'; kind: 'vozCalentar' }
   | { method: 'POST'; kind: 'approval'; id: string };
 
 function describeError(error: unknown): string {
@@ -406,6 +407,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'voz' };
     case '/api/voz/resto':
       return { method: 'GET', kind: 'vozResto' };
+    case '/api/voz/calentar':
+      return { method: 'GET', kind: 'vozCalentar' };
     default:
       break;
   }
@@ -569,6 +572,16 @@ async function respondApi(
           throw new Error('deps.chat devolvio una respuesta invalida');
         }
         payload = panelReply(answer);
+        break;
+      }
+      case 'vozCalentar': {
+        // Con /voz abierta, la página lo pide cada 2 min: whisper no se suelta de memoria.
+        try {
+          deps.prewarm?.();
+        } catch {
+          // Calentar es opcional.
+        }
+        payload = { ok: true };
         break;
       }
       case 'vozResto': {

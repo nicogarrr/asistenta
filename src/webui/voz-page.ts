@@ -324,6 +324,13 @@ ${renderMiniAppReadyScript()}
       });
   }
 
+  // Con la página abierta, el PC mantiene whisper y la voz cargados (recargar el
+  // whisper grande tardaba hasta 2 min: la primera nota se quedaba sin respuesta).
+  setInterval(function () {
+    if (!token || document.visibilityState === 'hidden') return;
+    fetch('/api/voz/calentar', { headers: { Authorization: 'Bearer ' + token } }).catch(function () {});
+  }, 120000);
+
   boton.addEventListener('click', function () {
     desbloquear();
     if (grabador && grabador.state === 'recording') parar(); else empezar();

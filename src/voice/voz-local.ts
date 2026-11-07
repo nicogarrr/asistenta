@@ -373,6 +373,8 @@ export interface TtsConVozLocalDeps {
 export type TtsConVozLocal = Tts & {
   /** Arranca la descarga si falta; true si la voz local queda lista. Nunca lanza. */
   precargar(): Promise<boolean>;
+  /** Qué voz habla ahora, en castellano («supertonic-f2», «kokoro (supertonic-f2 aún sin descargar)»). */
+  estado(): string;
 };
 
 /** Fallos seguidos de la voz local (p. ej. el módulo nativo no carga) antes de dejarla hasta reiniciar. */
@@ -393,6 +395,7 @@ export function createTtsConVozLocal(
       name: respaldo.name,
       speak: (text, opts) => respaldo.speak(text, opts),
       precargar: async () => false,
+      estado: () => respaldo.name,
     };
   }
   const raiz = deps.raiz ?? paths.models;
@@ -440,6 +443,13 @@ export function createTtsConVozLocal(
   return {
     name: `local+${respaldo.name}`,
     precargar,
+    estado: () => {
+      if (vozLocalLista(raiz, voz)) {
+        return fallos < FALLOS_PARA_DEJARLA ? voz.clave : `${respaldo.name} (${voz.clave} falló)`;
+      }
+      const habla = puente && vozLocalLista(raiz, puente) ? puente.clave : respaldo.name;
+      return `${habla} (${voz.clave} aún sin descargar)`;
+    },
     async speak(text: string, opts: TtsSpeakOptions = {}): Promise<TtsAudio> {
       const lista = vozLocalLista(raiz, voz);
       if (!lista) {
