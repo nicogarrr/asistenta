@@ -59,6 +59,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
   { name: 'goals.db', what: 'objetivos', backup: 'db' },
   { name: 'tareas.json', what: 'tablero semanal de tareas', backup: 'file' },
   {
+    name: 'iphone-ordenes.json',
+    what: 'órdenes al iPhone por correo: clave del asunto y órdenes sin confirmar',
+    backup: 'file',
+  },
+  {
     name: 'correo-canal.json',
     what: 'cursor del canal de correo (correos ya leídos)',
     backup: 'file',
