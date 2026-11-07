@@ -17,6 +17,7 @@
  */
 
 import { sliceSafe } from '../text.js';
+import { resumirArbolWda } from './wda-texto.js';
 
 export type WdaFetch = (
   input: string,
@@ -170,8 +171,25 @@ export class WdaClient {
     return Buffer.from(d.value, 'base64');
   }
 
-  /** Árbol de accesibilidad en texto (lo que hay en pantalla, con posiciones). */
+  /**
+   * Lo que hay en pantalla, una línea por elemento con texto y su centro en puntos
+   * (src/iphone/wda-texto.ts). Si WDA no da el JSON o no trae nada reconocible, el árbol
+   * en texto de siempre (`leerCrudo`).
+   */
   async leer(): Promise<string> {
+    try {
+      const d = (await this.#pedir('GET', '/source?format=json')) as { value?: unknown } | null;
+      const resumen = resumirArbolWda(d?.value);
+      if (resumen) return resumen;
+    } catch (err) {
+      // Sin conexión no hay nada que reintentar con el otro formato.
+      if (err instanceof WdaError && err.entrega === 'no-enviado') throw err;
+    }
+    return this.leerCrudo();
+  }
+
+  /** Árbol de accesibilidad entero, en el texto de XCTest (largo: se recorta en la tool). */
+  async leerCrudo(): Promise<string> {
     const d = (await this.#pedir('GET', '/source?format=description')) as { value?: string } | null;
     return typeof d?.value === 'string' ? d.value : '';
   }

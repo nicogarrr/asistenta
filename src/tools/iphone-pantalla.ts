@@ -29,6 +29,12 @@ const Params = lazySchema(() =>
     texto: Type.Optional(
       Type.String({ description: 'escribir: el texto, en el campo que tenga el foco.' }),
     ),
+    crudo: Type.Optional(
+      Type.Boolean({
+        description:
+          'leer: true da el árbol entero de accesibilidad (largo) en vez del resumen de una línea por elemento.',
+      }),
+    ),
     bundleId: Type.Optional(
       Type.String({
         description: 'abrir: id de la app, p. ej. net.whatsapp.WhatsApp o com.apple.mobilesafari.',
@@ -50,7 +56,7 @@ export function createIphonePantallaTool(
     label: 'Pantalla del iPhone',
     description: [
       'Ve y maneja el iPhone de Nico con WebDriverAgent (experimental).',
-      'estado: si está conectado. pantalla: captura. leer: lo que hay en pantalla con sus posiciones.',
+      'estado: si está conectado. pantalla: captura. leer: lo que hay en pantalla, una línea por elemento con su centro en puntos (vale tal cual para tocar) y el estado de los interruptores; gasta mucho menos que una captura, úsalo primero.',
       'tocar (x, y), escribir (texto), abrir (bundleId) e inicio mueven el teléfono y piden aprobación cada vez.',
       'Mira la pantalla antes de tocar y después para comprobar. Si una orden queda «sin saber si se hizo», mira la pantalla antes de repetirla.',
       'Nunca escribas contraseñas ni códigos salvo que Nico lo pida en esta conversación.',
@@ -83,7 +89,7 @@ export function createIphonePantallaTool(
             };
           }
           case 'leer': {
-            const arbol = await c.leer();
+            const arbol = args.crudo === true ? await c.leerCrudo() : await c.leer();
             const corto =
               arbol.length > WDA_MAX_LEER
                 ? `${sliceSafe(arbol, WDA_MAX_LEER)}\n[…recortado]`
