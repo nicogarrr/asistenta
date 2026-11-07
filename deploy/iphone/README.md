@@ -11,11 +11,17 @@ fijado al commit `88a51030b5ec36564157bc778c7827b4dffb4b41`.
 |---|---|---|
 | ESP32-S3 | enchufada al iPhone | Se presenta como raton/teclado USB; ejecuta ordenes por wifi |
 | UxPlay + servidor `hidagent` | Linux, macOS o **WSL2** en la MISMA red que el iPhone | Recibe la pantalla, calibra el puntero, lleva el modelo de vision |
-| Tool `iphone` (este repo) | daemon de Asistenta | `status`, `screenshot`, `run` (objetivo), `stop`, `home` |
+| Tool `iphone` (este repo) | daemon de Asistenta | `status`, `screenshot`, `texto`, `run` (objetivo), `stop`, `home` |
 
 La tool solo habla con la API local del servidor (`/api/status`, `/api/frame.jpg`, `/api/agent`...).
 Cada `run`, `stop` y `home` **pregunta siempre** antes de ejecutarse (mueve un telefono real);
-`status` y `screenshot` son lecturas.
+`status`, `screenshot` y `texto` son lecturas.
+
+`texto` pasa la captura por el OCR que ya trae Windows (sin instalar nada) y devuelve la pantalla
+como lineas `x y  texto`, con x e y en fracciones (0 a 1), las mismas que usa el servidor para tocar.
+El modelo lee unos cientos de tokens en vez de una imagen y, si la pantalla es la de bloqueo o la del
+codigo, lo avisa en cabeza para que no escriba nada. Idea tomada de phoneuse (MIT), ver
+`THIRD_PARTY_NOTICES.md`. Sin probar con un iPhone real.
 
 ## Alta guiada
 

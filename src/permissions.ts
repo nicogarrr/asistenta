@@ -1741,8 +1741,9 @@ export class Gate {
       }
       case 'iphone': {
         // run/home/stop mueven un telefono real: opacos, siempre preguntan.
+        // texto es la misma captura pasada por el OCR local: lectura.
         const action = argString(c.args, 'action');
-        return action === 'status' || action === 'setup' || action === 'screenshot' ? 'lee' : null;
+        return ['status', 'setup', 'screenshot', 'texto'].includes(action) ? 'lee' : null;
       }
       case 'browser': {
         const action = argString(c.args, 'action');
