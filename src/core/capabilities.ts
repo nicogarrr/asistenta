@@ -73,6 +73,10 @@ export const CAPABILITIES: readonly Capability[] = [
     name: 'mercadona',
     note: 'Solo lee o cambia el día del pedido semanal; pedir y pagar van con botones y «✅ Confirmar pedido» del dueño.',
   },
+  {
+    name: 'enlace_pago',
+    note: 'Solo manda al dueño el carrito o el enlace de pago para que pague él en el iPhone; nunca paga ni rellena nada.',
+  },
   { name: 'temas', threadAllow: true },
   {
     name: 'correo_reglas',

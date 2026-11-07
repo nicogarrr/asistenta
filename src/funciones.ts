@@ -349,6 +349,10 @@ export const TOOL_ABILITIES: Readonly<
     text: 'hago el pedido semanal de Mercadona con tu lista y pago solo cuando confirmas',
   },
   checkout: { area: 'compras', text: 'preparo una compra y te pido permiso antes de pagar' },
+  enlace_pago: {
+    area: 'compras',
+    text: 'te dejo la cesta lista y la pagas tú en el iPhone con Apple Pay',
+  },
   memory: { area: 'memoria', text: 'recuerdo datos tuyos y los uso cuando hacen falta' },
   decision: { area: 'memoria', text: 'apunto lo que decides en cada proyecto' },
   opengym: { area: 'gimnasio', text: 'miro tu rutina, tu último entreno y tu peso' },
