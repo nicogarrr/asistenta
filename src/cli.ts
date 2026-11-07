@@ -2332,6 +2332,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // (WhatsApp Web, Gmail...) y vale para todos sus hilos. Los demás chats siguen con
       // perfil propio, para que una sesión iniciada no se vea desde otra conversación.
       cdpPort: config.browserCdpPort,
+      backend: config.browserBackend,
+      opencode: { url: config.browserOpencodeUrl },
       sharedProfileKey: (scope) => {
         try {
           return ownerBrowserProfileKey(scope, vigilanteOwnerId);

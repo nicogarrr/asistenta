@@ -13,6 +13,7 @@ import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
 import { type CdpDeps, ensureChromeDebugPort } from './chrome-cdp.js';
 import { callPageAdClick, callPageMediaState, callPageScan, installPageScan } from './inpage.js';
+import { type OpencodeDeps, opencodeEndpoint } from './opencode.js';
 import {
   describeContext,
   describeLocator,
@@ -157,6 +158,8 @@ export function isMissingBrowserError(err: unknown): boolean {
   return /distribution '[^']+' is not found|executable doesn't exist/i.test(msg);
 }
 
+export type BrowserBackend = 'playwright' | 'opencode';
+
 export interface BrowserServiceOptions {
   policy: BrowserPolicy;
   /** Default 'chromium', so a bare service behaves as before; the daemon passes config. */
@@ -179,6 +182,16 @@ export interface BrowserServiceOptions {
   cdpPort?: number;
   /** Para pruebas: sustituye el arranque del Chrome con puerto. */
   cdpDeps?: CdpDeps;
+  /**
+   * Qué navegador usa el chat del dueño. 'playwright' (por defecto): la ruta de siempre
+   * (Chrome con puerto y perfil dedicado, o el navegador propio). 'opencode': su Chrome
+   * NORMAL a través de OpenCode Browse (extensión + relay local), con sus sesiones ya
+   * abiertas. Si falla, se sigue por la ruta de siempre y se avisa. Los demás chats nunca
+   * lo usan: su perfil sigue siendo propio y aislado.
+   */
+  backend?: BrowserBackend;
+  /** Para pruebas y para PA_BROWSER_OPENCODE_URL. */
+  opencode?: OpencodeDeps;
   /** Viewport for the headless page; defaults to a common laptop size. */
   viewport?: { width: number; height: number };
   /**
@@ -781,12 +794,13 @@ export class BrowserService {
   /** Launches in flight, so concurrent callers for one scope share a single browser. */
   readonly #opening = new Map<string, Promise<Session>>();
   readonly #options: Required<
-    Omit<BrowserServiceOptions, 'policy' | 'sharedProfileKey' | 'cdpPort' | 'cdpDeps'>
+    Omit<BrowserServiceOptions, 'policy' | 'sharedProfileKey' | 'cdpPort' | 'cdpDeps' | 'opencode'>
   > & {
     policy: BrowserPolicy;
     sharedProfileKey?: (scope: string) => string | undefined;
     cdpPort?: number;
     cdpDeps?: CdpDeps;
+    opencode?: OpencodeDeps;
   };
   /** Último uso de cada ámbito (cualquier llamada que pide su sesión). */
   readonly #lastUse = new Map<string, number>();
@@ -806,6 +820,8 @@ export class BrowserService {
       sharedProfileKey: options.sharedProfileKey,
       cdpPort: options.cdpPort,
       cdpDeps: options.cdpDeps,
+      backend: options.backend ?? 'playwright',
+      opencode: options.opencode,
       viewport: options.viewport ?? { width: 1440, height: 900 },
       idleCloseMs: options.idleCloseMs ?? browserIdleCloseDefaultMs(),
     };
@@ -1052,6 +1068,36 @@ export class BrowserService {
     const { chromium } = await import('playwright');
     const port = this.#options.cdpPort;
     let notice: string | undefined;
+    if (sharedKey && this.#options.backend === 'opencode') {
+      // Chrome normal del dueño por OpenCode Browse: sus pestañas de agente van en segundo plano.
+      try {
+        const endpoint = await opencodeEndpoint(this.#options.opencode);
+        const browser = await chromium.connectOverCDP(endpoint, {
+          timeout: this.#options.timeoutMs,
+        });
+        const context = browser.contexts()[0];
+        if (!context) {
+          await browser.close().catch(() => undefined);
+          throw new Error('OpenCode Browse no tiene ningún Chrome conectado.');
+        }
+        const before = new Set(context.pages());
+        return {
+          context,
+          channel: 'chrome',
+          // Cierra solo las pestañas que abrió Asistenta y suelta la conexión; Chrome sigue abierto.
+          release: async () => {
+            for (const pg of context.pages()) {
+              if (!before.has(pg)) await pg.close().catch(() => undefined);
+            }
+            await browser.close();
+          },
+        };
+      } catch (err) {
+        const motivo = err instanceof Error ? err.message.split('\n')[0] : 'error desconocido';
+        log.warn('browser opencode unavailable, using default path', { scope });
+        notice = `No pude usar tu Chrome con OpenCode Browse (${motivo}); sigo con el navegador de siempre.`;
+      }
+    }
     if (sharedKey && port) {
       // Chrome real del dueño: perfil dedicado, puerto solo en loopback, sesión que persiste.
       try {
@@ -1075,7 +1121,12 @@ export class BrowserService {
         // Sin Chrome o sin respuesta: se sigue con el perfil propio (#1879) y se avisa.
         const motivo = err instanceof Error ? err.message.split('\n')[0] : 'error desconocido';
         log.warn('browser cdp unavailable, using own profile', { scope });
-        notice = `No pude abrir tu Chrome con puerto (${motivo}); uso el navegador propio de Asistenta con tu perfil compartido.`;
+        notice = [
+          notice,
+          `No pude abrir tu Chrome con puerto (${motivo}); uso el navegador propio de Asistenta con tu perfil compartido.`,
+        ]
+          .filter(Boolean)
+          .join(' ');
       }
     }
     const wanted = this.#options.channel;

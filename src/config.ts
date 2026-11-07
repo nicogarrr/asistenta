@@ -95,6 +95,8 @@ export interface Config {
   browserChannel: BrowserChannel;
   /** Puerto de depuración (solo 127.0.0.1) del Chrome del dueño; 0 lo desactiva. */
   browserCdpPort?: number;
+  browserBackend?: 'playwright' | 'opencode';
+  browserOpencodeUrl?: string;
   /** Browser whose cookies yt-dlp may use (`firefox`, `chrome`...). Empty = off. */
   downloadCookiesBrowser: string;
   /** Path to curl-impersonate for PDFs behind anti-bot walls. Empty = look on PATH. */
@@ -288,6 +290,13 @@ export function loadConfig(): Config {
     },
     maxToolCalls: num('PA_MAX_TOOL_CALLS', 60),
     browserCdpPort: num('PA_BROWSER_CDP_PORT', 9222),
+    // 'opencode': el chat del dueño usa su Chrome normal por OpenCode Browse (ver src/browser/opencode.ts).
+    browserBackend: oneOf<'playwright' | 'opencode'>(
+      'PA_BROWSER',
+      ['playwright', 'opencode'],
+      'playwright',
+    ),
+    browserOpencodeUrl: str('PA_BROWSER_OPENCODE_URL'),
     browserChannel: oneOf<BrowserChannel>(
       'PA_BROWSER_CHANNEL',
       ['chrome', 'msedge', 'chromium'],
