@@ -168,6 +168,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'panel',
   'voz',
   'atajos',
+  'iphone',
   'tv',
   'ordenador',
   'altavoz',
@@ -248,6 +249,10 @@ export const TOOL_ABILITIES: Readonly<
   list: { area: 'pc', text: 'te digo qué hay en una carpeta' },
   write: { area: 'pc', text: 'creo o cambio ficheros, con tu permiso' },
   iphone: { area: 'pc', text: 'hago cosas en tu iPhone a través del puente de casa' },
+  iphone_pantalla: {
+    area: 'pc',
+    text: 'veo y toco la pantalla de tu iPhone si lo conectas (te pregunto cada toque)',
+  },
   iphone_orden: {
     area: 'pc',
     text: 'abro apps, mando WhatsApps o creo recordatorios en tu iPhone (te pregunto antes)',

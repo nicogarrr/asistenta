@@ -600,6 +600,7 @@ import {
   TOOL_ABILITIES,
 } from './funciones.js';
 import { OrdenesStore, recetasOrdenes, registrarResultado } from './iphone/ordenes.js';
+import { diagnosticoWda, WdaClient, wdaActivo, wdaUrl } from './iphone/wda.js';
 import {
   crearLlegada,
   createLlegadaTool,
@@ -716,6 +717,7 @@ import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createGoogleTool } from './tools/google.js';
 import { createIphoneOrdenTool } from './tools/iphone-orden.js';
+import { createIphonePantallaTool } from './tools/iphone-pantalla.js';
 import { createLuzTool } from './tools/luz.js';
 import { createMailTool } from './tools/mail.js';
 import { createMailRulesTool } from './tools/mail-rules.js';
@@ -2375,6 +2377,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA), encendido por defecto en 127.0.0.1:8787 (PA_WEB_PORT=0 lo
   // apaga). Sin PA_WEB_TOKEN usa un token guardado en el estado; `pa panel` lo abre.
+  // iPhone por WebDriverAgent (src/iphone/wda.ts): un cliente, con su sesión, para todo el proceso.
+  let wdaCliente: WdaClient | null = null;
+  const iphoneWda = (): WdaClient => {
+    const url = wdaUrl();
+    if (!wdaCliente) wdaCliente = new WdaClient({ baseUrl: url });
+    return wdaCliente;
+  };
   // Órdenes al iPhone por correo (src/iphone/ordenes.ts): clave, ids y pendientes.
   const iphoneOrdenes = new OrdenesStore(join(paths.state, 'iphone-ordenes.json'));
   /** Un aviso al chat privado del dueño (respuestas tardías de atajos, órdenes al iPhone). */
@@ -3384,6 +3393,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(...iphonePlugin.tools({}));
+    // iPhone por WebDriverAgent (experimental, PA_IPHONE_WDA=1): solo el dueño; cada toque pregunta.
+    if (wdaActivo() && isOwnerDm(inboundFor(thread), vigilanteOwnerId)) {
+      all.push(createIphonePantallaTool(() => iphoneWda()));
+    }
     // Órdenes al iPhone por correo: solo en el chat privado del dueño, y cada una pregunta.
     if (isOwnerDm(inboundFor(thread), vigilanteOwnerId)) {
       all.push(
@@ -7158,6 +7171,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       { quote: false },
     );
   };
+  /** /iphone [diagnostico]: si Asistenta puede ver y tocar el iPhone (WebDriverAgent). */
+  const cmdIphone = async (inbound: Inbound): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    await say(inbound, await diagnosticoWda(process.env, iphoneWda()), { quote: true });
+  };
   /** «/voz diagnostico»: una ida y vuelta de una frase en este PC, con los ms de cada etapa. */
   const cmdVozDiagnostico = async (inbound: Inbound): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -10113,6 +10136,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
     { names: ['atajos', 'atajo', 'siri'], run: (inbound) => cmdAtajos(inbound) },
+    { names: ['iphone'], run: (inbound) => cmdIphone(inbound) },
     {
       names: ['voz'],
       run: (inbound, args) =>
