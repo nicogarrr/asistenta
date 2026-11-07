@@ -21,7 +21,9 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -174,4 +176,69 @@ export function escribirIndiceMemoria(dir: string, ahora: Date = new Date()): st
   const file = join(dir, INDICE_MEMORIA);
   writeFileSync(file, texto, { encoding: 'utf8', mode: 0o600 });
   return file;
+}
+
+/** Días que un diario se queda suelto antes de pasar al archivo del mes. */
+export const DIAS_EPISODIOS_SUELTOS = 60;
+
+/**
+ * Parte de la pasada nocturna: los diarios de más de `dias` días se juntan en
+ * episodios/archivo/AAAA-MM.md (un fichero por mes) y el diario suelto se
+ * borra SOLO después de comprobar que su texto está entero en el archivo.
+ * Ordena sin perder nada. Devuelve cuántos días archivó.
+ */
+export function archivarEpisodios(
+  dir: string,
+  ahora: Date = new Date(),
+  dias: number = DIAS_EPISODIOS_SUELTOS,
+): number {
+  const carpeta = join(dir, 'episodios');
+  if (!existsSync(carpeta)) return 0;
+  const corte = diaLocal(new Date(ahora.getTime() - dias * 86_400_000));
+  let archivados = 0;
+  for (const nombre of readdirSync(carpeta).sort()) {
+    const m = /^(\d{4}-\d{2})-\d{2}\.md$/.exec(nombre);
+    if (!m || nombre.slice(0, 10) >= corte) continue;
+    const dia = join(carpeta, nombre);
+    const texto = readFileSync(dia, 'utf8');
+    mkdirSync(join(carpeta, 'archivo'), { recursive: true, mode: 0o700 });
+    const mes = join(carpeta, 'archivo', `${m[1]}.md`);
+    const bloque = `${texto.endsWith('\n') ? texto : `${texto}\n`}\n`;
+    appendFileSync(mes, bloque, { encoding: 'utf8', mode: 0o600 });
+    if (!readFileSync(mes, 'utf8').includes(bloque)) continue;
+    unlinkSync(dia);
+    archivados++;
+  }
+  if (archivados) escribirIndiceMemoria(dir, ahora);
+  return archivados;
+}
+
+/**
+ * Lo último que pasó en ESTE chat según el diario (hoy y ayer), para la nota
+ * del turno: así un hilo nuevo o un reinicio no empiezan de cero. Solo las
+ * líneas del mismo chat; acotado en líneas y caracteres.
+ */
+export function notaEpisodiosRecientes(
+  dir: string,
+  chat: string,
+  ahora: Date = new Date(),
+  maxLineas = 6,
+  tope = 1200,
+): string {
+  const chatLimpio = chat.replace(/[\r\n|]/g, ' ').slice(0, 60);
+  const marca = ` · ${chatLimpio} · `;
+  const lineas: string[] = [];
+  for (const d of [new Date(ahora.getTime() - 86_400_000), ahora]) {
+    const f = join(dir, 'episodios', `${diaLocal(d)}.md`);
+    if (!existsSync(f)) continue;
+    for (const l of readFileSync(f, 'utf8').split('\n')) {
+      if (l.startsWith('- ') && l.includes(marca))
+        lineas.push(`${l.slice(0, 2)}${diaLocal(d)} ${l.slice(2)}`);
+    }
+  }
+  if (!lineas.length) return '';
+  let out = lineas.slice(-maxLineas);
+  while (out.length > 1 && out.join('\n').length > tope) out = out.slice(1);
+  const cuerpo = out.join('\n').slice(0, tope);
+  return `Episodios recientes de este chat (diario local memoria/episodios; para más, la acción history):\n${cuerpo}`;
 }

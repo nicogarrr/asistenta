@@ -26,7 +26,7 @@ export function envSwitch(value: string | undefined, byDefault: boolean): boolea
 /** Interruptores que `pa doctor` revisa (solo los que no son de seguridad). */
 export const ENV_SWITCHES: ReadonlyArray<{ name: string; byDefault: boolean }> = [
   { name: 'PA_SEMANTIC_RECALL', byDefault: false },
-  { name: 'PA_MEMORY_CONSOLIDATE', byDefault: false },
+  { name: 'PA_MEMORY_CONSOLIDATE', byDefault: true },
   { name: 'PA_ROUTINE_CATCHUP', byDefault: true },
   { name: 'PA_AUTO_RETRY', byDefault: true },
 ];

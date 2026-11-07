@@ -13,14 +13,15 @@ function sources(dir: string): string[] {
 }
 
 describe('PA_MEMORY_CONSOLIDATE escrito como una persona', () => {
-  it('se enciende con 1, sí, true u on y se queda apagado con no o vacío', () => {
-    for (const v of ['1', 'sí', 'true', 'On']) {
+  // asis-memoria-8: la pasada nocturna («dreaming») viene encendida; 0 o no la apaga.
+  it('encendida por defecto; se apaga con 0, no, false u off', () => {
+    for (const v of ['1', 'sí', 'true', 'On', '', 'quizá']) {
       expect(envSwitchOn('PA_MEMORY_CONSOLIDATE', env({ PA_MEMORY_CONSOLIDATE: v }))).toBe(true);
     }
-    for (const v of ['0', 'no', '', 'quizá']) {
+    for (const v of ['0', 'no', 'false', 'off']) {
       expect(envSwitchOn('PA_MEMORY_CONSOLIDATE', env({ PA_MEMORY_CONSOLIDATE: v }))).toBe(false);
     }
-    expect(envSwitchOn('PA_MEMORY_CONSOLIDATE', env({}))).toBe(false);
+    expect(envSwitchOn('PA_MEMORY_CONSOLIDATE', env({}))).toBe(true);
   });
 
   it('pa doctor avisa si no entiende el valor', () => {
