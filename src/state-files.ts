@@ -176,6 +176,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'carpeta de memoria: PERFIL.md, episodios, procedimientos, notas e índice',
     backup: 'dir',
   },
+  {
+    name: 'memoria-copia',
+    what: 'originales de memoria de antes de la migración a memoria/',
+    backup: 'dir',
+  },
   { name: 'memory', what: 'memoria a largo plazo (markdown por ámbito)', backup: 'dir' },
   { name: 'snapshot', what: 'instantáneas de memoria', backup: 'dir' },
   { name: 'skills', what: 'habilidades aprendidas', backup: 'dir' },

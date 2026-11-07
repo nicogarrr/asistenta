@@ -221,11 +221,12 @@ describe('diagnose', () => {
   });
 
   it('reports memory and skills sizes from disk', async () => {
-    mkdirSync(join(dir, 'memory', 'perfil'), { recursive: true });
-    writeFileSync(join(dir, 'memory', 'perfil.md'), 'x'.repeat(2048));
-    writeFileSync(join(dir, 'memory', 'perfil', 'extra.md'), 'y'.repeat(1024));
-    mkdirSync(join(dir, 'skills', 'comprar-tren'), { recursive: true });
-    writeFileSync(join(dir, 'skills', 'comprar-tren', 'SKILL.md'), '# tren\n');
+    // Desde asis-memoria-8 todo vive en memoria/: notas/ y procedimientos/.
+    mkdirSync(join(dir, 'memoria', 'notas', 'perfil'), { recursive: true });
+    writeFileSync(join(dir, 'memoria', 'notas', 'perfil.md'), 'x'.repeat(2048));
+    writeFileSync(join(dir, 'memoria', 'notas', 'perfil', 'extra.md'), 'y'.repeat(1024));
+    mkdirSync(join(dir, 'memoria', 'procedimientos', 'comprar-tren'), { recursive: true });
+    writeFileSync(join(dir, 'memoria', 'procedimientos', 'comprar-tren', 'SKILL.md'), '# tren\n');
 
     const report = await diagnose({ stateDir: dir, now: () => NOW });
 

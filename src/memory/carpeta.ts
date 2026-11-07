@@ -30,7 +30,8 @@ import { sliceSafe } from '../text.js';
 
 export const SUBCARPETAS_MEMORIA = ['episodios', 'procedimientos', 'notas'] as const;
 export const INDICE_MEMORIA = 'indice.md';
-export const PERFIL_MEMORIA = 'perfil.md';
+/** El perfil (MemorySnapshot). En Windows «perfil.md» y «PERFIL.md» son el mismo fichero. */
+export const PERFIL_MEMORIA = 'PERFIL.md';
 /** Tope por lado de cada línea del diario: el diario resume, no transcribe. */
 export const TOPE_EPISODIO = 280;
 const OMITIDO = '[omitido: parecía una clave]';
@@ -134,7 +135,7 @@ export function textoCarpetaMemoria(r: ResumenMemoria): string {
   const ultimo = r.episodios.at(-1)?.replace(/\.md$/, '');
   return [
     `📁 Carpeta de memoria: ${r.ruta}`,
-    `- perfil.md: ${r.perfil ? 'sí' : 'todavía no'}`,
+    `- PERFIL.md (hechos sobre ti): ${r.perfil ? 'sí' : 'todavía no'}`,
     `- episodios: ${r.episodios.length} día(s)${ultimo ? `, último ${ultimo}` : ''}`,
     `- procedimientos: ${r.procedimientos.length}`,
     `- notas: ${r.notas.length}`,
@@ -158,7 +159,7 @@ export function escribirIndiceMemoria(dir: string, ahora: Date = new Date()): st
     `Actualizado: ${diaLocal(ahora)}. Lo regenera Asistenta; puedes editar los demás ficheros.`,
     '',
     '## Perfil (hechos sobre ti)',
-    r.perfil ? '- perfil.md' : '- (todavía no hay perfil.md)',
+    r.perfil ? '- PERFIL.md' : '- (todavía no hay PERFIL.md)',
     '',
     '## Episodios (diario de lo que pasó)',
     lista(r.episodios, 'episodios'),
