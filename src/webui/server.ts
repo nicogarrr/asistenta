@@ -76,6 +76,11 @@ export interface WebUiDeps {
    * pregunte otra vez.
    */
   avisarTelegram?(text: string): Promise<unknown>;
+  /**
+   * `POST /api/atajo/resultado`: el atajo «Orden de Asistenta» dice cómo fue una orden
+   * (src/iphone/ordenes.ts). Devuelve el status y la frase que recibe el atajo.
+   */
+  atajoResultado?(body: Record<string, unknown>): Promise<{ status: number; texto: string }>;
   /** Tope (ms) antes de pasar la respuesta de un atajo a Telegram. Solo para tests. */
   atajoTopeMs?: number;
   /**
@@ -252,6 +257,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
   | { method: 'POST'; kind: 'atajo' }
+  | { method: 'POST'; kind: 'atajoResultado' }
   | { method: 'POST'; kind: 'chatRetry' }
   | { method: 'POST'; kind: 'modelo' }
   | { method: 'POST'; kind: 'clave' }
@@ -407,6 +413,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'chat' };
     case '/api/atajo':
       return { method: 'POST', kind: 'atajo' };
+    case '/api/atajo/resultado':
+      return { method: 'POST', kind: 'atajoResultado' };
     case '/api/chat/retry':
       return { method: 'POST', kind: 'chatRetry' };
     case '/api/modelo':
@@ -832,6 +840,39 @@ async function respondAtajo(
   send(res, 200, texto, textPlain);
 }
 
+/** `POST /api/atajo/resultado`: el iPhone confirma una orden de Asistenta. */
+async function respondAtajoResultado(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WebUiDeps,
+): Promise<void> {
+  const textPlain = 'text/plain; charset=utf-8';
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    const status = error instanceof HttpError ? error.status : 400;
+    send(
+      res,
+      status,
+      'No he entendido la respuesta del atajo: el cuerpo debe ser JSON.',
+      textPlain,
+    );
+    return;
+  }
+  if (!deps.atajoResultado) {
+    send(res, 503, 'Las órdenes al iPhone aún no están listas.', textPlain);
+    return;
+  }
+  try {
+    const r = await deps.atajoResultado(body);
+    send(res, r.status, r.texto, textPlain);
+  } catch (error) {
+    log.warn('atajo resultado: falló', { error: describeError(error) });
+    send(res, 500, 'No he podido apuntar la respuesta.', textPlain);
+  }
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -867,12 +908,17 @@ async function handleRequest(
     if (route.kind !== 'miniapp' && !authorized(req, deps.token)) {
       res.setHeader('WWW-Authenticate', 'Bearer realm="asistenta"');
       // El atajo lee en voz alta lo que recibe: una frase, no JSON.
-      if (route.kind === 'atajo') send(res, 401, ATAJO_SIN_TOKEN, 'text/plain; charset=utf-8');
+      if (route.kind === 'atajo' || route.kind === 'atajoResultado')
+        send(res, 401, ATAJO_SIN_TOKEN, 'text/plain; charset=utf-8');
       else sendJson(res, 401, { error: 'No autorizado' });
       return;
     }
     if (route.kind === 'atajo') {
       await respondAtajo(req, res, deps);
+      return;
+    }
+    if (route.kind === 'atajoResultado') {
+      await respondAtajoResultado(req, res, deps);
       return;
     }
     await respondApi(req, res, deps, route, url);

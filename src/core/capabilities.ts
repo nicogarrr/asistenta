@@ -153,6 +153,10 @@ export const CAPABILITIES: readonly Capability[] = [
     note: 'puente ESP32 del iPhone en la LAN: solo lo alcanza el PC de escritorio.',
   },
   {
+    name: 'iphone_orden',
+    note: 'órdenes al iPhone por correo (atajo «Orden de Asistenta»); cada una pide aprobación.',
+  },
+  {
     name: 'boe',
     note: 'sumario del BOE (API de datos abiertos, sin clave): lectura por red; el aviso es una rutina local.',
   },

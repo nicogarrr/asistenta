@@ -1727,6 +1727,12 @@ export class Gate {
         const action = argString(c.args, 'action');
         return ['screenshot', 'state', 'apps'].includes(action) ? 'lee' : null;
       }
+      case 'iphone_orden': {
+        // Mandar una orden al iPhone (abrir una app, un WhatsApp a alguien…) sale del PC
+        // y no se deshace: opaca, siempre pregunta. Solo estado/configurar leen.
+        const action = argString(c.args, 'action');
+        return action === 'estado' || action === 'configurar' ? 'lee' : null;
+      }
       case 'iphone': {
         // run/home/stop mueven un telefono real: opacos, siempre preguntan.
         const action = argString(c.args, 'action');
