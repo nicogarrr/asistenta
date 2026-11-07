@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { log } from '../log.js';
 import { createServer } from '../node-http.js';
+import { ATAJO_MAX_TEXTO, atajoModo, responderAtajo } from './atajo.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 import { renderVozPage } from './voz-page.js';
@@ -69,6 +70,14 @@ export interface WebUiDeps {
     /** Desde /voz: respuesta corta para decirla y el texto según se escribe (`onDelta`). */
     opts?: { voz?: boolean; onDelta?: (delta: string) => void; onOcupado?: () => void },
   ): Promise<{ text: string; images?: string[]; files?: { name: string; url: string }[] }>;
+  /**
+   * Atajos del iPhone (`POST /api/atajo`): manda al chat privado del dueño en Telegram
+   * una respuesta que tardó más de lo que Atajos espera. Si falta, el atajo dice que
+   * pregunte otra vez.
+   */
+  avisarTelegram?(text: string): Promise<unknown>;
+  /** Tope (ms) antes de pasar la respuesta de un atajo a Telegram. Solo para tests. */
+  atajoTopeMs?: number;
   /**
    * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
    * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409);
@@ -242,6 +251,7 @@ type ApiRoute =
   | { method: 'GET'; kind: 'audit' }
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
+  | { method: 'POST'; kind: 'atajo' }
   | { method: 'POST'; kind: 'chatRetry' }
   | { method: 'POST'; kind: 'modelo' }
   | { method: 'POST'; kind: 'clave' }
@@ -395,6 +405,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'GET', kind: 'approvals' };
     case '/api/chat':
       return { method: 'POST', kind: 'chat' };
+    case '/api/atajo':
+      return { method: 'POST', kind: 'atajo' };
     case '/api/chat/retry':
       return { method: 'POST', kind: 'chatRetry' };
     case '/api/modelo':
@@ -775,6 +787,51 @@ async function respondApi(
   sendJson(res, 200, payload);
 }
 
+const ATAJO_SIN_TOKEN =
+  'El token del atajo no coincide con el de Asistenta. Vuelve a copiarlo en el atajo.';
+
+/** `POST /api/atajo`: texto plano de ida y vuelta para la app Atajos (src/webui/atajo.ts). */
+async function respondAtajo(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WebUiDeps,
+): Promise<void> {
+  const textPlain = 'text/plain; charset=utf-8';
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    const status = error instanceof HttpError ? error.status : 400;
+    send(
+      res,
+      status,
+      'No he entendido la petición del atajo: revisa que el cuerpo sea JSON.',
+      textPlain,
+    );
+    return;
+  }
+  const raw = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!raw) {
+    send(res, 400, 'No me ha llegado nada. Dímelo otra vez.', textPlain);
+    return;
+  }
+  const chat = deps.chat;
+  if (!chat) {
+    send(res, 503, 'El chat de Asistenta aún no está listo. Prueba en un momento.', textPlain);
+    return;
+  }
+  const inicio = Date.now();
+  const texto = await responderAtajo(raw.slice(0, ATAJO_MAX_TEXTO), atajoModo(body.modo), {
+    chat: (t) => chat(t),
+    ...(deps.avisarTelegram
+      ? { avisar: (t: string) => deps.avisarTelegram?.(t) ?? Promise.resolve() }
+      : {}),
+    ...(deps.atajoTopeMs !== undefined ? { topeMs: deps.atajoTopeMs } : {}),
+  });
+  log.info('atajo iPhone: tiempos', { ms: Date.now() - inicio });
+  send(res, 200, texto, textPlain);
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -809,7 +866,13 @@ async function handleRequest(
     // /api/miniapp es la puerta para entrar SIN token: su prueba es la firma de Telegram.
     if (route.kind !== 'miniapp' && !authorized(req, deps.token)) {
       res.setHeader('WWW-Authenticate', 'Bearer realm="asistenta"');
-      sendJson(res, 401, { error: 'No autorizado' });
+      // El atajo lee en voz alta lo que recibe: una frase, no JSON.
+      if (route.kind === 'atajo') send(res, 401, ATAJO_SIN_TOKEN, 'text/plain; charset=utf-8');
+      else sendJson(res, 401, { error: 'No autorizado' });
+      return;
+    }
+    if (route.kind === 'atajo') {
+      await respondAtajo(req, res, deps);
       return;
     }
     await respondApi(req, res, deps, route, url);
