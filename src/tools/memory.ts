@@ -487,6 +487,22 @@ export function createMemoryTool(
                 : activeOnly(store.allIn(read));
           }
           if (hits.length === 0) {
+            // Lo que no cabía en la memoria está en el archivo: mejor eso que «no hay nada».
+            const archivo = query ? store.buscarArchivo(read, query) : [];
+            if (archivo.length > 0) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: [
+                      'En la memoria vigente no hay nada; en el archivo (lo antiguo que ya no cabía):',
+                      ...archivo.map(renderEntry),
+                    ].join('\n'),
+                  },
+                ],
+                details: { count: 0, archivo: archivo.length },
+              };
+            }
             return {
               content: [{ type: 'text', text: emptyMemoryText(store, read, query) }],
               details: { count: 0 },
