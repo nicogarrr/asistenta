@@ -227,7 +227,7 @@ describeBrowser('BrowserService (live)', () => {
     const snap = await service.snapshot(scope);
     expect(snap).toContain('https://example.com');
     // The element list is the point of the snapshot: a selector to click, not a pixel.
-    expect(snap).toMatch(/^a\b.*"/m);
+    expect(snap).toMatch(/^(a\b|e\d+\[link\]).*"/m);
   });
 
   it('keeps state across exec_js calls', async () => {

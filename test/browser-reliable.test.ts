@@ -246,7 +246,8 @@ describeBrowser('browser: fiabilidad en páginas reales', () => {
       // Kind and role are there so a locator can be built from the snapshot alone.
       expect(snap).toMatch(/input#fecha\[textbox\]/);
       expect(snap).toMatch(/\[button\]/);
-      expect(snap).toMatch(/\[\d+\]/);
+      // Each line leads with something selector= accepts: a short selector or a ref.
+      expect(snap).toMatch(/^(e\d+|[a-z]+#[\w-]+)\[/m);
     });
   });
 
