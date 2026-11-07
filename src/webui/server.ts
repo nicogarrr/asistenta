@@ -165,6 +165,54 @@ const PAGE_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+/**
+ * Orígenes de Telegram que pueden enmarcar el panel como Mini App: Telegram Web
+ * (web.telegram.org, sus versiones /k y /a) la mete en un iframe. En el iPhone y en
+ * Telegram Desktop la Mini App es una vista propia, sin iframe, y no necesita esto.
+ */
+export const TELEGRAM_FRAME_ANCESTORS = ['https://web.telegram.org', 'https://*.telegram.org'];
+
+/**
+ * ¿Esta petición de página es Telegram Web abriendo la Mini App? Solo si el navegador
+ * dice que la carga es para un marco (`Sec-Fetch-Dest: iframe`) y quien la pide es
+ * una página https de telegram.org (o no dice quién). Cualquier otro caso (navegación
+ * normal, otro origen, navegador que no manda Sec-Fetch-Dest) sigue con DENY. Aunque alguien
+ * falsificara las cabeceras, `frame-ancestors` deja que solo telegram.org enmarque.
+ */
+export function isTelegramFrame(headers: IncomingMessage['headers']): boolean {
+  const dest = String(headers['sec-fetch-dest'] ?? '').toLowerCase();
+  if (dest !== 'iframe' && dest !== 'frame') return false;
+  const from = String(headers.origin ?? headers.referer ?? '');
+  // Sin Referer (política no-referrer) se acepta igual: quien enmarca lo decide el
+  // navegador con frame-ancestors, que solo deja a telegram.org.
+  if (from === '') return true;
+  let host: string;
+  try {
+    const u = new URL(from);
+    if (u.protocol !== 'https:') return false;
+    host = u.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return host === 'telegram.org' || host.endsWith('.telegram.org');
+}
+
+/** CSP de las páginas: igual que siempre, salvo `frame-ancestors` para Telegram Web. */
+export function pageCsp(telegramFrame: boolean): string {
+  if (!telegramFrame) return PAGE_CSP;
+  return PAGE_CSP.replace(
+    "frame-ancestors 'none'",
+    `frame-ancestors ${TELEGRAM_FRAME_ANCESTORS.join(' ')}`,
+  );
+}
+
+function setPageFrameHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const telegram = isTelegramFrame(req.headers);
+  res.setHeader('Content-Security-Policy', pageCsp(telegram));
+  // X-Frame-Options no admite listas: con Telegram se quita y manda frame-ancestors.
+  if (telegram) res.removeHeader('X-Frame-Options');
+}
+
 type ApiRoute =
   | { method: 'GET'; kind: 'goals' }
   | { method: 'GET'; kind: 'routines' }
@@ -733,12 +781,12 @@ async function handleRequest(
 
   switch (pathname) {
     case '/':
-      res.setHeader('Content-Security-Policy', PAGE_CSP);
+      setPageFrameHeaders(req, res);
       res.setHeader('Cache-Control', 'no-store');
       sendPage(req, res, renderPage(), 'text/html; charset=utf-8');
       return;
     case '/voz':
-      res.setHeader('Content-Security-Policy', PAGE_CSP);
+      setPageFrameHeaders(req, res);
       res.setHeader('Cache-Control', 'no-store');
       // Mientras Nico pulsa «Hablar», el PC ya carga whisper y la voz.
       try {
@@ -795,6 +843,42 @@ export function parseAllowedHosts(raw: string | undefined): string[] {
     .split(',')
     .map((h) => hostHeaderName(h))
     .filter((h) => h !== '' && !h.includes('*'));
+}
+
+/**
+ * PA_PANEL_PUBLIC_URL: la dirección https con la que se abre el panel desde fuera
+ * (p. ej. `https://tu-pc.tu-red.ts.net/` de `tailscale serve`). Devuelve la URL
+ * normalizada con barra final, o '' si falta o no es https (Telegram solo abre Mini
+ * Apps por https). Sin usuario ni contraseña en la URL.
+ */
+export function parsePanelPublicUrl(raw: string | undefined): string {
+  const text = (raw ?? '').trim();
+  if (text === '') return '';
+  let u: URL;
+  try {
+    u = new URL(text);
+  } catch {
+    return '';
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.hostname.includes('*')) return '';
+  u.search = '';
+  u.hash = '';
+  if (!u.pathname.endsWith('/')) u.pathname += '/';
+  return u.toString();
+}
+
+/**
+ * Nombres que el panel acepta en Host: los de PA_WEB_ALLOWED_HOSTS más el de
+ * PA_PANEL_PUBLIC_URL, para que configurar la dirección pública baste.
+ */
+export function panelAllowedHosts(env: NodeJS.ProcessEnv): string[] {
+  const hosts = parseAllowedHosts(env.PA_WEB_ALLOWED_HOSTS);
+  const pub = parsePanelPublicUrl(env.PA_PANEL_PUBLIC_URL);
+  if (pub) {
+    const name = hostHeaderName(new URL(pub).host);
+    if (name && !hosts.includes(name)) hosts.push(name);
+  }
+  return hosts;
 }
 
 function assertLoopbackHost(host: string): void {

@@ -18,7 +18,13 @@ Sirve para abrir el panel dentro de Telegram (`/panel`) y hablar con Asistenta d
 6. Vuelve a escribir `/tailscale`: todo debe salir con ✅. Ahora `/panel` te da el botón «📱 Abrir panel».
 7. **Voz desde el móvil**: escribe `/voz` y pulsa «🎙️ Hablar». La primera vez el móvil pide permiso para el micrófono (acéptalo para Telegram). Pulsas, hablas, pulsas otra vez y te contesta en voz alta. Con «Manos libres» corta sola cuando te callas y vuelve a escucharte tras responder. Si Telegram no deja usar el micro en tu móvil, abre `https://tu-pc.tu-red.ts.net/voz` en Chrome o Safari (antes abre el panel una vez allí con tu token).
 
+Atajo (opcional): en vez de los pasos 5 y 6 puedes poner en `.env` la dirección que te dio `tailscale serve`, por ejemplo
+`PA_PANEL_PUBLIC_URL=https://tu-pc.tu-red.ts.net/`
+y reiniciar. Con eso `/panel` y `/voz` usan esa dirección directamente y el panel ya acepta ese nombre (no hace falta `PA_WEB_ALLOWED_HOSTS`). Tiene que ser `https://`: Telegram no abre Mini Apps por http.
+
 Notas:
+- Por qué Tailscale Serve y no Funnel: la Mini App se abre en el propio móvil (en el iPhone es una vista de Telegram, no un iframe), así que basta con que el móvil tenga Tailscale conectado. Funnel la publicaría en Internet para cualquiera.
+- En Telegram Web (web.telegram.org, en el navegador del PC) la Mini App va dentro de un iframe: el panel solo deja enmarcarse a telegram.org; cualquier otra web sigue bloqueada.
 - Nunca uses `tailscale funnel`: eso publica el panel en Internet. `/tailscale` avisa si está encendido.
 - El panel solo se abre desde tus dispositivos con Tailscale conectado. En el móvil, si no carga, abre la app Tailscale y comprueba que está «Connected».
 - Dentro de Telegram entra sin pedir token: Telegram firma que eres tú (solo el dueño del bot).
