@@ -40,6 +40,7 @@ export const SUBAGENT_DENIED_TOOLS: readonly string[] = Object.freeze([
   'mail',
   'tv',
   'iphone',
+  'iphone_orden',
   'media',
   'memory',
   'reminder',

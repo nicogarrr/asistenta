@@ -38,3 +38,30 @@ Desde Safari o Amazon: Compartir → *Mandar a Asistenta*.
 - Va al mismo hilo que Telegram, con la misma memoria y las mismas aprobaciones.
 - Atajos corta la espera hacia los 60 s. Si Asistenta tarda más de 50 s, el atajo dice «Te mando la respuesta por Telegram en cuanto la tenga», y la respuesta llega allí.
 - Si algo falla (token, PC, red), contesta con una frase en castellano, no con un error mudo.
+
+## Órdenes desde Asistenta: que haga cosas en tu iPhone
+
+El PC no puede lanzar un atajo en el iPhone por su cuenta, pero sí mandarle un correo. Desde iOS 17 una automatización «Al recibir un correo» se ejecuta sola. Así Asistenta puede pedirle al iPhone que **abra una app**, **mande un WhatsApp o un iMessage**, **cree un recordatorio o un evento** o **ponga música**. Antes de cada orden te pide permiso en Telegram.
+
+Cómo funciona:
+
+1. Asistenta manda un correo desde su cuenta (la de `/correo`) a `PA_IPHONE_CORREO`, o a esa misma cuenta si no lo pones. El asunto es `ASIS-<clave> <acción> #<n>` y el cuerpo es una línea JSON, por ejemplo `{"id":7,"accion":"whatsapp","para":"Mamá","texto":"Llego en 10"}`.
+2. En el iPhone, la automatización (remitente = ese correo, asunto contiene `ASIS-<clave>`) ejecuta el atajo **Orden de Asistenta**.
+3. El atajo hace la acción y confirma en `POST /api/atajo/resultado` con `{"id": 7, "ok": true}`. Asistenta te lo dice en Telegram («✅ Hecho en el iPhone…»). Si en 5 minutos no ha confirmado, también te avisa.
+
+**/atajos** te da la clave, el remitente y la URL exactos. La clave es aleatoria, así que un correo de otro no dispara nada.
+
+Acciones y campos del JSON:
+
+| accion | campos |
+|---|---|
+| `abrir_app` | `app` |
+| `whatsapp` | `para`, `texto` |
+| `imessage` | `para`, `texto` |
+| `recordatorio` | `texto`, `cuando` (opcional) |
+| `evento` | `titulo`, `cuando`, `fin` (opcional) |
+| `musica` | `busqueda` |
+
+Atajo **Orden de Asistenta**: *Obtener diccionario de* la entrada del atajo, luego *Obtener valor* de `accion` y un *Si* por cada acción, usando las acciones normales de Atajos (Abrir app, Enviar mensaje de WhatsApp, Enviar mensaje, Añadir recordatorio, Añadir evento, Buscar en Apple Music y Reproducir). Al final, *Obtener contenido de URL* a `/api/atajo/resultado` con el mismo encabezado `Authorization`.
+
+Sin comprobar en un iPhone real: si la automatización de correo pasa el cuerpo del correo como entrada (si pasa el correo entero, añade *Obtener texto de* la entrada), si WhatsApp manda el mensaje sin pedir confirmación, y cuánto tarda Mail en recibir el correo (con Gmail en la app Mail puede ir por intervalos, no al momento).

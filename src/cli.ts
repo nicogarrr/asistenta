@@ -599,6 +599,7 @@ import {
   funcionesText,
   TOOL_ABILITIES,
 } from './funciones.js';
+import { OrdenesStore, recetasOrdenes, registrarResultado } from './iphone/ordenes.js';
 import {
   crearLlegada,
   createLlegadaTool,
@@ -714,6 +715,7 @@ import { createGastosTool, refrescarPaginaGastos } from './tools/gastos.js';
 import { createGestionTool } from './tools/gestion.js';
 import { createGoalTool } from './tools/goal.js';
 import { createGoogleTool } from './tools/google.js';
+import { createIphoneOrdenTool } from './tools/iphone-orden.js';
 import { createLuzTool } from './tools/luz.js';
 import { createMailTool } from './tools/mail.js';
 import { createMailRulesTool } from './tools/mail-rules.js';
@@ -2373,6 +2375,24 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const panelGoals = createOwnerGoalsReader();
   // Panel web local (PWA), encendido por defecto en 127.0.0.1:8787 (PA_WEB_PORT=0 lo
   // apaga). Sin PA_WEB_TOKEN usa un token guardado en el estado; `pa panel` lo abre.
+  // Órdenes al iPhone por correo (src/iphone/ordenes.ts): clave, ids y pendientes.
+  const iphoneOrdenes = new OrdenesStore(join(paths.state, 'iphone-ordenes.json'));
+  /** Un aviso al chat privado del dueño (respuestas tardías de atajos, órdenes al iPhone). */
+  const avisarDueno = async (text: string): Promise<void> => {
+    const chatId = resolveOwnerDmChatId(
+      [...threads.values()].map((t) => t.chatKey),
+      vigilanteOwnerId,
+    );
+    if (!chatId) return;
+    await telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+  };
+  /** El correo del iPhone (PA_IPHONE_CORREO o el propio de Asistenta) y el remitente. */
+  const iphoneCorreos = async (): Promise<{ iphone: string; remitente: string } | null> => {
+    const account = await loadMailAccount().catch(() => null);
+    if (!account) return null;
+    const iphone = process.env.PA_IPHONE_CORREO?.trim() || account.address;
+    return { iphone, remitente: account.address };
+  };
   const panelPlan = panelStartPlan(process.env, () => ensurePanelToken(paths.state));
   let panelStarted: Promise<string | PanelListenProblem> | undefined;
   // Cierre del panel al parar: un servidor abierto dejaba vivo el proceso tras un cierre
@@ -2554,13 +2574,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           },
           // Atajos del iPhone (/api/atajo): una respuesta que tarda más de lo que espera
           // Atajos llega luego al chat privado del dueño.
-          avisarTelegram: async (text: string) => {
-            const chatId = resolveOwnerDmChatId(
-              [...threads.values()].map((t) => t.chatKey),
-              vigilanteOwnerId,
-            );
-            if (!chatId) return;
-            await telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+          avisarTelegram: (text: string) => avisarDueno(text),
+          // El atajo «Orden de Asistenta» confirma una orden: se dice en Telegram.
+          atajoResultado: async (body: Record<string, unknown>) => {
+            const r = registrarResultado(iphoneOrdenes, body);
+            if (r.telegram) await avisarDueno(r.telegram).catch(() => {});
+            return { status: r.status, texto: r.respuesta };
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
           // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram
@@ -3365,6 +3384,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     );
     // El iPhone (esp32-iphone-agent): pantalla por AirPlay y toques por ESP32.
     all.push(...iphonePlugin.tools({}));
+    // Órdenes al iPhone por correo: solo en el chat privado del dueño, y cada una pregunta.
+    if (isOwnerDm(inboundFor(thread), vigilanteOwnerId)) {
+      all.push(
+        createIphoneOrdenTool({
+          store: iphoneOrdenes,
+          correos: iphoneCorreos,
+          enviar: async (to, subject, text) => {
+            const account = await loadMailAccount();
+            if (!account) return { ok: false, error: 'no hay cuenta de correo' };
+            return sendMail(account, { to: [to], subject, text });
+          },
+          avisar: (t) => avisarDueno(t),
+        }),
+      );
+    }
     // OCR local opcional (PP-OCRv5 / GLM-OCR): sin PA_OCR_LOCAL=1 no aporta nada.
     all.push(...ocrLocalPlugin.tools({}));
     if (mcpTools.length)
@@ -7110,6 +7144,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }, ATAJO_TOKEN_BORRAR_MS);
       borrar.unref?.();
     }
+    // Órdenes desde Asistenta (src/iphone/ordenes.ts): necesitan el correo de Asistenta.
+    const correos = await iphoneCorreos();
+    await say(
+      inbound,
+      correos
+        ? recetasOrdenes({
+            remitente: correos.remitente,
+            clave: iphoneOrdenes.clave(),
+            urlResultado: `${url}api/atajo/resultado`,
+          })
+        : '📨 Para que yo haga cosas en tu iPhone (abrir apps, mandar un WhatsApp…) antes tengo que tener tu correo configurado. Escribe /correo.',
+      { quote: false },
+    );
   };
   /** «/voz diagnostico»: una ida y vuelta de una frase en este PC, con los ms de cada etapa. */
   const cmdVozDiagnostico = async (inbound: Inbound): Promise<void> => {

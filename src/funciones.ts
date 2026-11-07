@@ -248,6 +248,10 @@ export const TOOL_ABILITIES: Readonly<
   list: { area: 'pc', text: 'te digo qué hay en una carpeta' },
   write: { area: 'pc', text: 'creo o cambio ficheros, con tu permiso' },
   iphone: { area: 'pc', text: 'hago cosas en tu iPhone a través del puente de casa' },
+  iphone_orden: {
+    area: 'pc',
+    text: 'abro apps, mando WhatsApps o creo recordatorios en tu iPhone (te pregunto antes)',
+  },
   ocr_local: {
     area: 'pc',
     text: 'leo el texto de fotos y PDF escaneados con el OCR local, si lo activas',
