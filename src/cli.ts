@@ -2505,7 +2505,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           auditVerify: () => verifyCallAudit(),
           // Chat del panel: corre en el hilo principal del propietario, con el
           // mismo agente, contexto y Gate que Telegram (sin enviar nada al chat).
-          chat: async (said: string, opts?: { voz?: boolean; onDelta?: (d: string) => void }) => {
+          chat: async (
+            said: string,
+            opts?: { voz?: boolean; onDelta?: (d: string) => void; onOcupado?: () => void },
+          ) => {
             // Desde /voz: la respuesta se dice en voz alta, así que corta (1–3 frases).
             const text = opts?.voz ? vozPanelPrompt(said) : said;
             const thread = await getOrCreateThread(
@@ -2542,6 +2545,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               // /aprendido y /olvida <n> como en Telegram (borrar sigue siendo escrito).
               command: (t, said) => learnedRulesCommand(memory, memoryScopesFor(t.key).read, said),
               ...(opts?.onDelta ? { onDelta: opts.onDelta } : {}),
+              ...(opts?.onOcupado ? { onOcupado: opts.onOcupado } : {}),
             });
           },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin

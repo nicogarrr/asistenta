@@ -27,7 +27,10 @@ export interface RespuestaChat extends Record<string, unknown> {
 export interface VozTurnoDeps {
   transcribe(audio: Buffer, mime: string): Promise<string>;
   /** El turno del agente; `onDelta` recibe el texto según lo escribe (si el agente lo da). */
-  chat(text: string, opts: { voz: true; onDelta: (delta: string) => void }): Promise<unknown>;
+  chat(
+    text: string,
+    opts: { voz: true; onDelta: (delta: string) => void; onOcupado: () => void },
+  ): Promise<unknown>;
   speak?(text: string): Promise<AudioPc | null>;
   /** Tope de whisper (por defecto 30 s). */
   topeOirMs?: number;
@@ -73,6 +76,7 @@ export type EventoVoz =
 
 export const PERDONA_OIR = 'Perdona, no te he oído bien.';
 export const PERDONA_PENSAR = 'Perdona, algo ha fallado al pensar la respuesta. Prueba otra vez.';
+export const OCUPADA = 'Un momento, estoy terminando otra cosa y enseguida te contesto.';
 export const SIGO_PENSANDO = 'Sigo pensándolo; te lo digo en cuanto lo tenga.';
 /** Por voz no se lee un informe: pasado esto, el resto se queda escrito. */
 const MAX_HABLADO = 700;
@@ -298,7 +302,17 @@ export async function turnoVoz(
   };
   const enMarcha: Promise<unknown> = rapida
     ? Promise.resolve({ text: rapida })
-    : Promise.resolve().then(() => deps.chat(oido, { voz: true, onDelta }));
+    : Promise.resolve().then(() =>
+        deps.chat(oido, {
+          voz: true,
+          onDelta,
+          // Hay otro turno en marcha (p. ej. una tarea por Telegram): se dice ya, en vez
+          // de esperar callada en la cola.
+          onOcupado: () => {
+            if (modo === 'flujo') decir(OCUPADA);
+          },
+        }),
+      );
   let answer: RespuestaChat;
   try {
     const r = await conTope(enMarcha, deps.topePensarMs ?? 45_000);
