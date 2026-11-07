@@ -376,6 +376,19 @@ function packageVersion(repo: string): string | undefined {
   }
 }
 
+/** Cuánto espera el actualizador del botón a que Asistenta acabe lo que está haciendo. */
+export const BUTTON_WAIT_FREE_MS = 3 * 60_000;
+
+/** Espera (hasta `maxMs`) a que Asistenta esté libre; devuelve si lo está. */
+export async function waitUntilFree(deps: AutoupdateDeps, maxMs: number): Promise<boolean> {
+  const until = deps.now() + maxMs;
+  while (deps.busy() !== 'libre') {
+    if (deps.now() >= until) return false;
+    await deps.sleep(3_000);
+  }
+  return true;
+}
+
 /**
  * `pa autoupdate boton`, lo que lanza el botón de Telegram: la revisión de `now` y una
  * respuesta en el chat siempre (al día con la versión, «me actualizo» antes de parar,
@@ -398,6 +411,9 @@ async function autoupdateButtonRun(
   };
   let out: Outcome;
   try {
+    // Pedida desde un turno («actualízate», /actualizar): ese turno sigue abierto unos
+    // segundos tras lanzarla. Se espera a que Asistenta quede libre en vez de aplazarla.
+    await waitUntilFree(deps, BUTTON_WAIT_FREE_MS);
     out = await runAutoupdate(stateDir, tracked, {
       force: true,
       env,

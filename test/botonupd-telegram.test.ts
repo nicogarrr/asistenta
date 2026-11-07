@@ -276,8 +276,10 @@ describe('dónde sale el botón (cableado en el daemon)', () => {
   const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
 
   it('el daemon atiende el botón con la misma comprobación de dueño que los demás', () => {
-    expect(cli).toMatch(/onUpdateButton: async \(press\)/);
-    expect(cli).toMatch(/isOwner: isOwnerDm\(press, vigilanteOwnerId\)/);
+    // Botón, /actualizar y la herramienta «actualizarme» comparten pressUpdateButton.
+    expect(cli).toMatch(
+      /onUpdateButton: \(press\) =>\s+pressUpdateButton\(press\.data, isOwnerDm\(press, vigilanteOwnerId\)\)/,
+    );
     expect(cli).toContain("'autoupdate', 'boton'");
   });
 

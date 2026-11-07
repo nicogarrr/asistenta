@@ -135,6 +135,10 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'ocr', desktopOnly: true },
   { name: 'system', desktopOnly: true },
   {
+    name: 'actualizarme',
+    note: 'lanza el actualizador aparte (pa autoupdate boton); solo en el chat privado del dueño.',
+  },
+  {
     name: 'tv',
     desktopOnly: true,
     note: 'hardware de la LAN (TV LG por SSAP): solo lo alcanza el PC de escritorio.',

@@ -684,6 +684,7 @@ import { startTelegramEstado } from './telegram-estado.js';
 import { backToMainAnswer, topicReadyText } from './temas.js';
 import { timeZoneDoctorLine, withTimeZoneProblem } from './timezone-doctor.js';
 import { createAccountsTool } from './tools/accounts.js';
+import { createSelfUpdateTool } from './tools/actualizarme.js';
 import { createAgendaTool } from './tools/agenda.js';
 import { createAireTool } from './tools/aire.js';
 import { createBoeTool } from './tools/boe.js';
@@ -1816,6 +1817,39 @@ export async function capturePageIfOpen(
   return Buffer.from(shot.data, 'base64');
 }
 
+// «🔄 Buscar actualización ahora», /actualizar y la herramienta «actualizarme»: uno por
+// daemon (recuerda la búsqueda en marcha, así dos toques no lanzan dos actualizadores).
+let updateButtonPress:
+  | ReturnType<typeof import('./autoupdate-boton.js').createUpdateButton>
+  | undefined;
+
+async function pressUpdateButton(
+  data: string,
+  isOwner: boolean,
+): Promise<import('./autoupdate-boton.js').UpdateButtonReply> {
+  const { createUpdateButton } = await import('./autoupdate-boton.js');
+  const { autostartRepo } = await import('./autostart.js');
+  updateButtonPress ??= createUpdateButton({
+    stateDir: paths.state,
+    platform: process.platform,
+    env: process.env,
+    now: Date.now,
+    // Aparte y desligado: espera a que acabe el turno, para este daemon, instala y lo
+    // vuelve a arrancar (y vuelve atrás si algo falla).
+    launch: (onExit) => {
+      const child = spawn(
+        process.execPath,
+        [join(autostartRepo(), 'dist', 'cli.js'), 'autoupdate', 'boton'],
+        { detached: true, stdio: 'ignore', windowsHide: true },
+      );
+      child.once('exit', onExit);
+      child.once('error', onExit);
+      child.unref();
+    },
+  });
+  return updateButtonPress({ data, isOwner });
+}
+
 async function serveCommand(control?: ControlStartup): Promise<number> {
   // Windows: onnxruntime-node primero, antes que sherpa o whisper (ver sherpa.ts).
   precargarOnnxRuntime();
@@ -2766,7 +2800,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createWebTool(config),
       createDoneTool(),
       createAskTool(),
-      createShellTool(config),
+      createShellTool(config, { selfRepo: fileURLToPath(new URL('..', import.meta.url)) }),
+      // «actualízate»: el actualizador aparte, nunca git pull / npm ci desde su propio shell.
+      createSelfUpdateTool({
+        allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        start: async () => {
+          const { UPDATE_CALLBACK } = await import('./autoupdate-boton.js');
+          return pressUpdateButton(UPDATE_CALLBACK, true);
+        },
+      }),
       // Especialistas: eligen de las herramientas finales de este hilo (threadFinal). Los
       // de PC/tele/casa preguntan en este chat cada acción, sin botones de «Siempre»; en
       // un turno del panel, en la tarjeta «Aprobaciones» del panel (daemon/specialist-ask.ts).
@@ -3901,10 +3943,6 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ? vigilanteOwnerConfigured
       : null,
   );
-  // «🔄 Buscar actualización ahora»: uno por daemon (recuerda la búsqueda en marcha).
-  let updateButtonPress:
-    | ReturnType<typeof import('./autoupdate-boton.js').createUpdateButton>
-    | undefined;
   // Chat privado del dueño (DM de Telegram verificado). Vigilante y resumen diario se
   // mandan ahí, así que solo leen los seguimientos de ese chat, no los de los grupos.
   const ownerDmFollowupKey = (): string | undefined => {
@@ -9853,6 +9891,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
       },
     },
+    {
+      // Lo mismo que el botón «🔄 Buscar actualización ahora», escrito.
+      names: ['actualizar'],
+      run: async (inbound) => {
+        const { UPDATE_CALLBACK, UPDATE_SEARCHING } = await import('./autoupdate-boton.js');
+        const r = await pressUpdateButton(UPDATE_CALLBACK, isOwnerDm(inbound, vigilanteOwnerId));
+        await say(
+          inbound,
+          r.reply ??
+            (r.notice === UPDATE_SEARCHING
+              ? `${UPDATE_SEARCHING} Si hay versión nueva me cierro un momento, la instalo y te aviso aquí al volver (si falla, vuelvo a la de antes).`
+              : r.notice),
+        );
+      },
+    },
     { names: ['reintentar'], run: (inbound) => cmdReintentar(inbound) },
     { names: ['compactar'], run: (inbound) => cmdCompactar(inbound) },
     { names: ['modelo'], run: (inbound, args) => cmdModelo(inbound, args) },
@@ -10016,28 +10069,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             ),
             press.data,
           ),
-    onUpdateButton: async (press) => {
-      const { createUpdateButton } = await import('./autoupdate-boton.js');
-      const { autostartRepo } = await import('./autostart.js');
-      updateButtonPress ??= createUpdateButton({
-        stateDir: paths.state,
-        platform: process.platform,
-        env: process.env,
-        now: Date.now,
-        // Aparte y desligado: la actualización para este daemon y lo vuelve a arrancar.
-        launch: (onExit) => {
-          const child = spawn(
-            process.execPath,
-            [join(autostartRepo(), 'dist', 'cli.js'), 'autoupdate', 'boton'],
-            { detached: true, stdio: 'ignore', windowsHide: true },
-          );
-          child.once('exit', onExit);
-          child.once('error', onExit);
-          child.unref();
-        },
-      });
-      return updateButtonPress({ data: press.data, isOwner: isOwnerDm(press, vigilanteOwnerId) });
-    },
+    onUpdateButton: (press) => pressUpdateButton(press.data, isOwnerDm(press, vigilanteOwnerId)),
     onTvButton: (press) =>
       tvButtonCommand(press.data, {
         isOwner: isOwnerDm(press, vigilanteOwnerId),

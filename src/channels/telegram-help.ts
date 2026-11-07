@@ -251,6 +251,10 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'si me actualizo sola desde main',
       },
       {
+        command: 'actualizar',
+        description: 'me actualizo ahora a la última versión (y vuelvo atrás si falla)',
+      },
+      {
         command: 'google',
         args: '[conectar]',
         description: 'tu Google: calendario, contactos y Drive',
