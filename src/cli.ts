@@ -1407,7 +1407,7 @@ async function doctorCommand(): Promise<number> {
   lines.push(
     briefingDoctorLine(
       process.env,
-      new MemorySnapshot({ dir: join(paths.state, 'snapshot') }).load().split(ENTRY_SEPARATOR),
+      new MemorySnapshot({ dir: paths.perfil }).load().split(ENTRY_SEPARATOR),
     ),
   );
   const switchesLine = envSwitchesDoctorLine();
@@ -1948,7 +1948,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * re-explain who they are every morning, and a snapshot costs one read instead of
    * rebuilding the same context from scattered rows each time.
    */
-  const snapshot = new MemorySnapshot({ dir: join(paths.state, 'snapshot') });
+  const snapshot = new MemorySnapshot({ dir: paths.perfil });
   /** El modelo barato (PA_UTILITY_MODEL) para resumir «Tus temas»; sin él, undefined. */
   const temasResumidor = async (): Promise<Resumidor | undefined> => {
     if (!config.utilityModel?.trim()) return undefined;
@@ -2006,7 +2006,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const semanticRecall = semanticFromEnv(paths.models);
   // Modelo de usuario que se enriquece solo: cuenta repeticiones de nudges.
   const nudgeTracker = new NudgeTracker(join(paths.state, 'snapshot'));
-  const skills = new SkillStore({ dir: join(paths.state, 'skills') });
+  const skills = new SkillStore({ dir: paths.procedimientos });
   // Usos de cada habilidad aprendida (/funciones uso, archivar las que no se usan).
   const skillUsage = new SkillUsage(join(paths.state, 'skills', '.uso.json'));
   // «Esto ya lo he hecho 3 veces, ¿lo guardo como habilidad?» (src/skills/repeats.ts).
