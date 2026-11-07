@@ -154,7 +154,6 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     name: 'iphone_pantalla',
-    desktopOnly: true,
     note: 'iPhone por WebDriverAgent (PA_IPHONE_WDA=1, experimental): mirar es lectura; tocar y escribir piden aprobación.',
   },
   {
