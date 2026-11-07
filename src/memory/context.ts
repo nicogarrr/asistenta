@@ -22,7 +22,8 @@
  * line saying how many are gone and how to see them. FULL_RECENT is a
  * maximum, never a promise: the cap wins.
  */
-import type { MemoryEntry } from '../memory.js';
+import { localDay } from '../datecontext.js';
+import { type MemoryEntry, memoriaCaducada } from '../memory.js';
 import { sliceSafe } from '../text.js';
 import { plainInline } from '../utils.js';
 import { LEARNED_TAG } from './learned-rules.js';
@@ -71,7 +72,13 @@ interface Row {
   full: boolean;
 }
 
-const rowLine = (r: Row) => (r.full ? `- ${plainInline(r.entry.text)}` : indexLine(r.entry));
+/** Lo temporal lleva su fecha límite a la vista: el modelo sabe que no es para siempre. */
+const hasta = (entry: MemoryEntry) => (entry.caduca ? ` (vale hasta ${entry.caduca})` : '');
+
+const rowLine = (r: Row) =>
+  r.full
+    ? `- ${plainInline(r.entry.text)}${hasta(r.entry)}`
+    : `${indexLine(r.entry)}${hasta(r.entry)}`;
 
 /**
  * Render the memory section of a chat's context note, or null when the chat
@@ -82,12 +89,20 @@ const rowLine = (r: Row) => (r.full ? `- ${plainInline(r.entry.text)}` : indexLi
  * keep answering after its correction, the same rule the memory tool's
  * recall/list/get apply.
  */
-export function renderMemoryContext(entries: MemoryEntry[]): MemoryContextRender | null {
+export function renderMemoryContext(
+  entries: MemoryEntry[],
+  hoy: string = localDay(),
+): MemoryContextRender | null {
   if (entries.length === 0) return null;
-  const active = entries.filter((e) => e.supersededBy === null);
-  const superseded = entries.length - active.length;
+  const current = entries.filter((e) => e.supersededBy === null);
+  const superseded = entries.length - current.length;
+  // Lo temporal que ya pasó («esta semana está en Sevilla») no entra: seguiría
+  // contestando como si fuera verdad. Sigue en memory action=list.
+  const active = current.filter((e) => !memoriaCaducada(e, hoy));
+  const caducadas = current.length - active.length;
   const header =
-    `Memoria del chat: ${active.length} activas · ${superseded} superadas ocultas. ` +
+    `Memoria del chat: ${active.length} activas · ${superseded} superadas ocultas` +
+    `${caducadas > 0 ? ` · ${caducadas} caducadas ocultas` : ''}. ` +
     'Detalle exacto: memory action=get con el [id]; búsqueda: memory action=recall; ' +
     'activas: memory action=list.';
   const rows: Row[] = active.map((entry, i) => ({

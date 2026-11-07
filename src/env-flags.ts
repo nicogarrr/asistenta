@@ -29,6 +29,8 @@ export const ENV_SWITCHES: ReadonlyArray<{ name: string; byDefault: boolean }> =
   { name: 'PA_MEMORY_CONSOLIDATE', byDefault: true },
   { name: 'PA_ROUTINE_CATCHUP', byDefault: true },
   { name: 'PA_AUTO_RETRY', byDefault: true },
+  // Active Memory: el extractor guarda también lo temporal, con fecha de caducidad.
+  { name: 'PA_MEMORIA_CADUCA', byDefault: false },
 ];
 
 /** Lee un interruptor de ENV_SWITCHES con su valor por defecto. */
