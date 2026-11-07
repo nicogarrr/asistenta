@@ -9,6 +9,7 @@ import { log } from '../log.js';
 import { paths } from '../paths.js';
 import { foldAccents, sliceSafe, urlHostname } from '../text.js';
 import { isFetchableResolved } from '../tools/fetch.js';
+import { withTimeout } from '../utils.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
 import { type CdpDeps, ensureChromeDebugPort } from './chrome-cdp.js';
@@ -371,7 +372,35 @@ export interface TargetResult {
   error?: string;
   candidates: string[];
   visible: boolean;
+  /**
+   * Solo en un clic: si la página cambió después (dirección, texto, estructura,
+   * formulario, una pestaña nueva). `false` = no cambió nada visible; `undefined` = no
+   * se pudo medir o la comprobación está apagada (PA_CLIC_CAMBIOS=0).
+   */
+  pageChanged?: boolean;
 }
+
+/**
+ * Huella barata de lo que se ve de una página: si dos huellas son iguales, el clic no
+ * cambió nada que el modelo pueda notar. Idea de POKI (reescrita): «enviado» no es
+ * «hecho»; un toque sin cambio observado se dice como tal.
+ */
+export const PAGE_PRINT_JS = `(() => {
+  const h = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 16777619); } return (x >>> 0).toString(36); };
+  const body = document.body;
+  const text = body ? body.innerText || '' : '';
+  const form = [...document.querySelectorAll('input, select, textarea')].map((e) => (e.type === 'checkbox' || e.type === 'radio') ? (e.checked ? '1' : '0') : String(e.value || '')).join('\u0001');
+  const open = [...document.querySelectorAll('[aria-expanded="true"], [aria-selected="true"], [aria-pressed="true"], [aria-checked="true"], dialog[open], [aria-modal="true"]')].length;
+  return [location.href, document.getElementsByTagName('*').length, h(text), h(form), open, Math.round(window.scrollY)].join('|');
+})()`;
+
+/** ¿La comprobación de «el clic cambió algo» está encendida? (PA_CLIC_CAMBIOS=0 la apaga.) */
+export function clickChangeCheckOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.PA_CLIC_CAMBIOS ?? '').trim() !== '0';
+}
+
+/** Cuánto se espera, como mucho, a que un clic cambie la página antes de decir que no. */
+const CLICK_CHANGE_WAIT_MS = 900;
 
 /** One resolution of a target: the locator plus the two ways of naming it again. */
 interface Resolved {
@@ -1964,11 +1993,18 @@ export class BrowserService {
     const started = Date.now();
     const found = await this.#resolveLocator(session, target, resolveBudget(opts?.timeoutMs));
     if (!found) return this.#missingTarget(session, target, started, 'hacer clic en');
+    const measure = clickChangeCheckOn();
+    const pagesBefore = measure ? this.#pageCount(session) : 0;
+    const before = measure ? await this.#pagePrint(session) : null;
     const clicked = await found.locator
       .click({ timeout: CLICK_MS })
       .then(() => true)
       .catch(() => false);
     if (!clicked) return this.#missingTarget(session, target, started, 'hacer clic en');
+    const pageChanged =
+      measure && before !== null
+        ? await this.#changedSince(session, before, pagesBefore)
+        : undefined;
     return {
       ok: true,
       target,
@@ -1979,7 +2015,50 @@ export class BrowserService {
       waitedMs: Date.now() - started,
       candidates: [],
       visible: session.visible,
+      ...(pageChanged === undefined ? {} : { pageChanged }),
     };
+  }
+
+  /** Pestañas abiertas en el contexto de la sesión (un clic puede abrir una nueva). */
+  #pageCount(session: { page: Page }): number {
+    try {
+      return session.page.context().pages().length;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** La huella de la página, o null si no se puede leer (navegando, cerrada…). */
+  async #pagePrint(session: { page: Page }): Promise<string | null> {
+    try {
+      return await withTimeout(
+        session.page.evaluate(PAGE_PRINT_JS) as Promise<string>,
+        1_500,
+        'page print timed out',
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ¿Cambió algo tras el clic? Se mira varias veces durante un momento corto, porque
+   * muchas páginas reaccionan tarde. Una huella ilegible después del clic cuenta como
+   * cambio: casi siempre es que la página está navegando.
+   */
+  async #changedSince(
+    session: { page: Page },
+    before: string,
+    pagesBefore: number,
+  ): Promise<boolean> {
+    const until = Date.now() + CLICK_CHANGE_WAIT_MS;
+    for (;;) {
+      if (this.#pageCount(session) !== pagesBefore) return true;
+      const now = await this.#pagePrint(session);
+      if (now === null || now !== before) return true;
+      if (Date.now() >= until) return false;
+      await new Promise((r) => setTimeout(r, 150));
+    }
   }
 
   /** The failure text: what was asked for, and what does exist. */

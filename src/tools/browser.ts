@@ -205,6 +205,16 @@ const BrowserParams = lazySchema(() =>
 );
 
 /**
+ * Lo que se le dice al modelo cuando un clic no cambió nada en la página. Un clic
+ * «hecho» no es un clic que funcionó: sin esto el modelo daba por bueno un botón tapado
+ * por un aviso de cookies, o volvía a pulsar a ciegas.
+ */
+export const NO_CHANGE_NOTE =
+  'SIN_CAMBIOS: tras el clic la página no cambió (ni dirección, ni texto, ni formulario, ni pestañas). ' +
+  'Puede que el clic no hiciera nada (algo encima, botón desactivado, otro elemento). ' +
+  'No des por hecho que funcionó: mira la página con snapshot antes de repetirlo o de seguir.';
+
+/**
  * Script for action=fill that verifies what ended up in the field.
  *
  * Autocomplete widgets (Renfe's station boxes, for one) react to the typed text and
@@ -692,6 +702,7 @@ export function createBrowserTool(
           });
           const note = await challengeNote(service, scope, sendImage);
           let said = describeTarget(result, { done: 'clicked', missing: 'hacer clic en' });
+          if (result.ok && result.pageChanged === false) said += `\n${NO_CHANGE_NOTE}`;
           const expected = record.expect === undefined ? '' : String(record.expect);
           if (expected) {
             await new Promise((r) => setTimeout(r, 800));
