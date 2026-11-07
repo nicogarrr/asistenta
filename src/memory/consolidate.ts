@@ -406,6 +406,8 @@ export interface ConsolidationReport {
   /** Copias recuperables escritas antes de modificar (rutas absolutas). */
   backups: string[];
   skippedScopes: string[];
+  /** Memoria por temas: hechos que salieron de `general` hacia su tema. */
+  reclasificados?: number;
 }
 
 function dayStamp(d: Date): string {
@@ -437,8 +439,12 @@ export async function runConsolidation(opts: {
     skippedScopes: [],
   };
 
+  const copiados = new Set<string>();
   const backup = (file: string): void => {
     if (!existsSync(file)) return;
+    // En la memoria por temas varios chats comparten fichero: se copia el original una vez.
+    if (copiados.has(file)) return;
+    copiados.add(file);
     // Nunca pisar una copia ya hecha: con la regla de 20 h puede haber dos pasadas el
     // mismo día (03:00 y 23:00) y la segunda sobrescribía la copia ORIGINAL de la
     // primera con el fichero ya consolidado. Tampoco un scope que se llame como
@@ -457,13 +463,20 @@ export async function runConsolidation(opts: {
       continue;
     }
     // Copia recuperable ANTES de tocar el fichero, siempre.
-    backup(opts.store.fileFor(scope));
+    for (const file of opts.store.filesFor(scope)) backup(file);
     const result = applyScopeGroups(opts.store, scope, entries, groups);
     if (result.created === 0) {
       report.skippedScopes.push(scope);
       continue;
     }
     report.scopes.push(result);
+  }
+
+  if (opts.store.porTema) {
+    // Lo que quedó en general y ya tiene tema se mueve (mismo id, nada se borra).
+    for (const scope of opts.store.scopes())
+      for (const file of opts.store.filesFor(scope)) backup(file);
+    report.reclasificados = opts.store.reclasificar();
   }
 
   const profileFile = join(opts.snapshot.dir, 'PERFIL.md');

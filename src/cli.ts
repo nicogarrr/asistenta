@@ -266,6 +266,7 @@ import { AudioRecall } from './media/recall.js';
 import {
   archivarEpisodios,
   asegurarCarpetaMemoria,
+  episodioPermitido,
   escribirIndiceMemoria,
   notaEpisodiosRecientes,
   registrarEpisodio,
@@ -324,7 +325,13 @@ import { SessionStore } from './memory/sessions.js';
 import { ENTRY_SEPARATOR, MemorySnapshot } from './memory/snapshot.js';
 import { NudgeTracker } from './memory/usermodel.js';
 import { WorkstreamStore } from './memory/workstreams.js';
-import { looksLikeCredential, MemoryStore, memoryScopesFor, panelMemoryEntries } from './memory.js';
+import {
+  abrirMemoriaPrincipal,
+  looksLikeCredential,
+  type MemoryStore,
+  memoryScopesFor,
+  panelMemoryEntries,
+} from './memory.js';
 import { browserTransport, buscarProductos } from './mercadona/api.js';
 import {
   avisoSemanal,
@@ -602,7 +609,8 @@ import { parseMcpServers } from './mcp/client.js';
 import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
 import { guardReaTools, withRea } from './mcp/rea.js';
 import { createMcpTools, mcpCommandText, mcpResourcesDoctorLines } from './mcp/tools.js';
-import { OwnerProfile } from './memory/profile.js';
+import { ESPEJO_PERFIL, OwnerProfile } from './memory/profile.js';
+import { esTemaConocido, textoMemoriaPorTemas, textoTemaMemoria } from './memory/temas-comando.js';
 import {
   currentLimits,
   getPace,
@@ -1886,7 +1894,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** Cuándo se creó la rutina que hoy lleva ese nombre (el historial no enseña lo de antes). */
   const routineBornAt = (scope: string, name: string): string | undefined =>
     store.getRoutine(scope, name)?.createdAt;
-  const memory = new MemoryStore();
+  // Notas por tema (memoria/notas/<tema>.md); lo escrito a mano sin chat es del dueño.
+  const memory = abrirMemoriaPrincipal(
+    allowed.length === 1 ? `telegram:dm:${String(allowed[0])}#main` : null,
+    // indice.md con los temas y sus cuentas al momento de cada escritura.
+    () => safeRemember(() => escribirIndiceMemoria(paths.memoria)),
+  );
   // La carpeta de memoria legible existe desde el primer arranque (src/memory/carpeta.ts).
   safeRemember(() => asegurarCarpetaMemoria(paths.memoria));
   const docMemory = new DocMemory({
@@ -3904,6 +3917,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // vacío, buildContextNote cae al PERFIL.md legado (compatibilidad).
   const ownerProfile = new OwnerProfile(
     join(paths.state, 'profile', `${vigilanteOwnerId ?? 'local'}.json`),
+    // Copia legible en la carpeta de memoria (memoria/sobre-ti.md), al día en cada cambio.
+    { espejo: join(paths.memoria, ESPEJO_PERFIL) },
   );
 
   const attention = new AttentionQueue({
@@ -6683,6 +6698,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       chatKey: ck,
       liveScopes: live.map((t) => t.key),
       db: memoryDb,
+      memory,
       projects: projectContexts,
       models: modelChoices,
       followups,
@@ -7321,12 +7337,51 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return `📁 Carpeta de memoria: ${paths.memoria}`;
     }
   };
+  const MEMORIA_SUBCOMANDOS = new Set([
+    'listar',
+    'lista',
+    'list',
+    'buscar',
+    'search',
+    'importar',
+    'import',
+    'revisar',
+    'contradicciones',
+    'review',
+    'olvidar',
+    'borrar',
+    'forget',
+    'exportar',
+    'export',
+  ]);
   const cmdMemoria = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
     const sub = (subRaw ?? '').toLowerCase();
     const restText = rest.join(' ').trim();
     const vigentes = () =>
       memory.allIn(memoryScopesFor(thread.key).read).filter((e) => e.supersededBy === null);
+    if (!sub && memory.porTema) {
+      // Por temas (memoria/notas/<tema>.md): lo de este chat agrupado por tema.
+      const porTemas = textoMemoriaPorTemas(memory, memoryScopesFor(thread.key).read);
+      if (porTemas) {
+        await say(inbound, `${porTemas}\n\n${carpetaMemoriaTexto()}`, { quote: true });
+        return;
+      }
+    }
+    if (sub && memory.porTema && !MEMORIA_SUBCOMANDOS.has(sub)) {
+      const scopes = memoryScopesFor(thread.key).read;
+      const tema = textoTemaMemoria(memory, scopes, args.trim());
+      if (tema) {
+        await say(inbound, tema, { quote: true });
+        return;
+      }
+      if (esTemaConocido(memory, args.trim())) {
+        await say(inbound, `Este chat no tiene nada guardado en el tema «${args.trim()}».`, {
+          quote: true,
+        });
+        return;
+      }
+    }
     if (!sub || sub === 'listar' || sub === 'lista' || sub === 'list') {
       const entries = vigentes();
       if (!entries.length) {
@@ -7478,7 +7533,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const owner = (await vaultGet('telegram:ownerId').catch(() => null)) ?? 'local';
-    const profile = new OwnerProfile(join(paths.state, 'profile', `${owner}.json`));
+    const profile = new OwnerProfile(join(paths.state, 'profile', `${owner}.json`), {
+      espejo: join(paths.memoria, ESPEJO_PERFIL),
+    });
     if (!sub || sub === 'listar' || sub === 'lista') {
       const facts = profile.load().filter((f) => !f.supersededBy);
       await say(
@@ -8938,7 +8995,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const finalText = result.text;
       safeRemember(() => sessions.addTurn(sessionId, 'assistant', finalText));
       // Y una línea en el diario del día (memoria/episodios/AAAA-MM-DD.md), al momento.
+      // Solo el chat privado del dueño, salvo PA_MEMORY_EPISODIOS_GRUPOS=1 (src/memory/carpeta.ts).
       safeRemember(() => {
+        if (!episodioPermitido(inbound, vigilanteOwnerId)) return;
         registrarEpisodio(paths.memoria, {
           fecha: new Date(),
           chat: thread.key,

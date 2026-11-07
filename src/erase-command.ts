@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { eraseScope } from './maintenance.js';
+import type { MemoryStore } from './memory.js';
 
 /**
  * /borrar_chat: borrar la memoria, el historial y el perfil de un chat es
@@ -88,6 +89,8 @@ export function eraseChat(opts: {
   chatKey: string;
   liveScopes: string[];
   db?: DatabaseSync;
+  /** La memoria viva (memoria/notas por temas): sin ella, los hechos de este chat se quedaban. */
+  memory?: MemoryStore;
   /** Carpetas de proyecto ligadas a los temas de este chat (/proyecto). */
   projects?: ChatSettingsStore;
   /** Modelo elegido con /modelo en los temas de este chat. */
@@ -108,7 +111,12 @@ export function eraseChat(opts: {
   let memoryFiles = 0;
   let profile = false;
   for (const scope of scopes) {
-    const r = eraseScope({ stateDir: opts.stateDir, scope, db: opts.db });
+    const r = eraseScope({
+      stateDir: opts.stateDir,
+      scope,
+      db: opts.db,
+      ...(opts.memory ? { memory: opts.memory } : {}),
+    });
     sessions += r.sessions;
     if (r.memoryFile) memoryFiles++;
     profile ||= r.profile;

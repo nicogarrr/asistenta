@@ -19,7 +19,15 @@
  *   solo llegan las vigentes.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../log.js';
 import { foldAccents } from '../text.js';
@@ -135,11 +143,86 @@ function parseFacts(raw: string): ProfileFact[] {
   return facts;
 }
 
+/**
+ * Copia legible del perfil dentro de la carpeta de memoria (`memoria/sobre-ti.md`).
+ * La fuente sigue siendo el JSON; esta copia se rehace en cada cambio. No es
+ * PERFIL.md: ese es el bloque de prosa antiguo, con tope de 1375 caracteres, que
+ * el prompt aún lee como respaldo y que la pasada nocturna reescribe.
+ */
+export const ESPEJO_PERFIL = 'sobre-ti.md';
+
+const SELLO = /\n<!-- sello: ([0-9a-f]{16}) -->\n?$/;
+
+function sello(cuerpo: string): string {
+  return createHash('sha256').update(cuerpo, 'utf8').digest('hex').slice(0, 16);
+}
+
+/** El Markdown del espejo: vigentes primero, historial (sustituidos) debajo; nada se omite. */
+export function textoEspejoPerfil(facts: readonly ProfileFact[], fuente: string): string {
+  const linea = (f: ProfileFact): string => {
+    const tags = f.tags.length ? ` ${f.tags.map((t) => `#${t}`).join(' ')}` : '';
+    return `- (${f.updatedAt.slice(0, 10)}) ${f.text}${tags}`;
+  };
+  const vigentes = facts.filter((f) => f.supersededBy === null);
+  const viejos = facts.filter((f) => f.supersededBy !== null);
+  const cuerpo = [
+    '# Lo que Asistenta sabe de ti',
+    '',
+    `Copia legible de tu perfil (la fuente es ${fuente}). Asistenta la rehace en cada cambio;`,
+    'para cambiar algo, díselo («recuerda que…», «olvida que…») o usa /perfil.',
+    '',
+    `## Vigente (${vigentes.length})`,
+    ...(vigentes.length ? vigentes.map(linea) : ['- (nada todavía)']),
+    ...(viejos.length
+      ? ['', `## Historial: sustituidos (${viejos.length})`, ...viejos.map(linea)]
+      : []),
+    '',
+  ].join('\n');
+  return `${cuerpo}\n<!-- sello: ${sello(cuerpo)} -->\n`;
+}
+
 export class OwnerProfile {
   readonly file: string;
+  readonly espejo: string | undefined;
 
-  constructor(file: string) {
+  /** `espejo`: ruta de la copia legible (memoria/sobre-ti.md). Se sincroniza al abrir y en cada cambio. */
+  constructor(file: string, opts: { espejo?: string } = {}) {
     this.file = file;
+    this.espejo = opts.espejo;
+    if (this.espejo) this.sincronizarEspejo();
+  }
+
+  /**
+   * Reescribe el espejo con el perfil actual. Si Nico lo editó a mano (el sello
+   * no cuadra), su versión se guarda antes en `sobre-ti.editado-<fecha>.md`.
+   * Nunca lanza: un espejo que no se pudo escribir no cuesta el hecho.
+   */
+  sincronizarEspejo(now: Date = new Date()): boolean {
+    const espejo = this.espejo;
+    if (!espejo) return false;
+    try {
+      const facts = this.load();
+      const previo = existsSync(espejo) ? readFileSync(espejo, 'utf8') : null;
+      if (previo === null && facts.length === 0) return false;
+      const texto = textoEspejoPerfil(facts, this.file);
+      if (previo === texto) return true;
+      if (previo !== null) {
+        const m = SELLO.exec(previo);
+        const cuerpo = m ? previo.slice(0, m.index) : null;
+        if (!m || cuerpo === null || sello(cuerpo) !== m[1]) {
+          const stamp = now.toISOString().replace(/[:.]/g, '-');
+          copyFileSync(espejo, espejo.replace(/\.md$/, `.editado-${stamp}.md`));
+        }
+      }
+      mkdirSync(dirname(espejo), { recursive: true });
+      const tmp = `${espejo}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+      writeFileSync(tmp, texto, 'utf8');
+      renameSync(tmp, espejo);
+      return true;
+    } catch (err) {
+      log.warn('no se pudo escribir la copia legible del perfil', { err: String(err) });
+      return false;
+    }
   }
 
   /**
@@ -392,5 +475,6 @@ export class OwnerProfile {
       throw err;
     }
     log.debug('perfil v2 escrito', { facts: facts.length });
+    this.sincronizarEspejo();
   }
 }

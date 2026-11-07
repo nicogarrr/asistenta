@@ -29,6 +29,7 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { looksLikeCredential } from '../memory.js';
 import { sliceSafe } from '../text.js';
+import { ESPEJO_PERFIL } from './profile.js';
 
 export const SUBCARPETAS_MEMORIA = ['episodios', 'procedimientos', 'notas'] as const;
 export const INDICE_MEMORIA = 'indice.md';
@@ -80,6 +81,25 @@ export interface Episodio {
  * Añade una línea al diario del día (episodios/AAAA-MM-DD.md) y devuelve la
  * ruta. Síncrono: si Asistenta se cae justo después, la línea ya está.
  */
+/**
+ * Qué chats van al diario (episodios/). Por defecto solo el chat privado del
+ * dueño (y el panel o la consola, que son suyos): lo que se dice en un grupo no
+ * acaba en un fichero de su PC sin pedirlo. `PA_MEMORY_EPISODIOS_GRUPOS=1`
+ * apunta también los grupos. Sin dueño configurado, un chat privado cuenta como suyo.
+ */
+export function episodioPermitido(
+  m: { channel: string; chatId: string; userId: string; isGroup?: boolean },
+  ownerUserId: number | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (env.PA_MEMORY_EPISODIOS_GRUPOS?.trim() === '1') return true;
+  if (m.isGroup === true) return false;
+  if (m.channel !== 'telegram') return true;
+  if (ownerUserId == null) return m.chatId === m.userId;
+  const owner = String(ownerUserId);
+  return m.chatId === owner && m.userId === owner;
+}
+
 export function registrarEpisodio(dir: string, ep: Episodio): string | null {
   const pedido = limpiar(ep.pedido);
   const respuesta = limpiar(ep.respuesta);
@@ -114,21 +134,54 @@ function contarMd(dir: string): string[] {
   return out;
 }
 
+export interface TemaNotas {
+  tema: string;
+  /** Hechos vigentes (las líneas `- [id] (…)` sin `superseded-by`). */
+  hechos: number;
+}
+
+/**
+ * Los temas de `notas/`: cada `<tema>.md` de primer nivel con cuántos hechos
+ * vigentes tiene. Lo que empieza por `_` o `.` (copias, errores) no es un tema.
+ */
+export function temasNotas(dir: string): TemaNotas[] {
+  const notas = join(dir, 'notas');
+  if (!existsSync(notas)) return [];
+  const out: TemaNotas[] = [];
+  for (const nombre of readdirSync(notas).sort()) {
+    if (!nombre.endsWith('.md') || nombre.startsWith('_') || nombre.startsWith('.')) continue;
+    const p = join(notas, nombre);
+    if (!statSync(p).isFile()) continue;
+    let hechos = 0;
+    for (const l of readFileSync(p, 'utf8').split(/\r?\n/)) {
+      if (/^-\s*\[[A-Za-z0-9_-]{1,32}\]\s*\(/.test(l) && !/\(([^)]*)superseded-by:/.test(l))
+        hechos++;
+    }
+    out.push({ tema: nombre.slice(0, -3), hechos });
+  }
+  return out;
+}
+
 export interface ResumenMemoria {
   ruta: string;
+  /** memoria/sobre-ti.md: copia legible del perfil v2 (src/memory/profile.ts). */
+  sobreTi?: boolean;
   perfil: boolean;
   episodios: string[];
   procedimientos: string[];
   notas: string[];
+  temas: TemaNotas[];
 }
 
 export function resumenCarpetaMemoria(dir: string): ResumenMemoria {
   return {
     ruta: dir,
     perfil: existsSync(join(dir, PERFIL_MEMORIA)),
+    sobreTi: existsSync(join(dir, ESPEJO_PERFIL)),
     episodios: contarMd(join(dir, 'episodios')),
     procedimientos: contarMd(join(dir, 'procedimientos')),
-    notas: contarMd(join(dir, 'notas')),
+    notas: temasNotas(dir).map((t) => `${t.tema}.md`),
+    temas: temasNotas(dir),
   };
 }
 
@@ -138,9 +191,10 @@ export function textoCarpetaMemoria(r: ResumenMemoria): string {
   return [
     `📁 Carpeta de memoria: ${r.ruta}`,
     `- PERFIL.md (hechos sobre ti): ${r.perfil ? 'sí' : 'todavía no'}`,
+    ...(r.sobreTi ? [`- ${ESPEJO_PERFIL}: tu perfil, legible y al día`] : []),
     `- episodios: ${r.episodios.length} día(s)${ultimo ? `, último ${ultimo}` : ''}`,
     `- procedimientos: ${r.procedimientos.length}`,
-    `- notas: ${r.notas.length}`,
+    `- notas por tema: ${r.temas.length ? r.temas.map((t) => `${t.tema} (${t.hechos})`).join(', ') : 'ninguna todavía'}`,
     'Son ficheros normales: puedes abrirlos y editarlos. El índice está en indice.md.',
   ].join('\n');
 }
@@ -162,6 +216,7 @@ export function escribirIndiceMemoria(dir: string, ahora: Date = new Date()): st
     '',
     '## Perfil (hechos sobre ti)',
     r.perfil ? '- PERFIL.md' : '- (todavía no hay PERFIL.md)',
+    ...(r.sobreTi ? [`- ${ESPEJO_PERFIL} (copia legible del perfil, al día en cada cambio)`] : []),
     '',
     '## Episodios (diario de lo que pasó)',
     lista(r.episodios, 'episodios'),
@@ -170,7 +225,11 @@ export function escribirIndiceMemoria(dir: string, ahora: Date = new Date()): st
     lista(r.procedimientos, 'procedimientos'),
     '',
     '## Notas (por tema)',
-    lista(r.notas, 'notas'),
+    r.temas.length
+      ? r.temas
+          .map((t) => `- notas/${t.tema}.md — ${t.hechos} ${t.hechos === 1 ? 'hecho' : 'hechos'}`)
+          .join('\n')
+      : '- (vacío)',
     '',
   ].join('\n');
   const file = join(dir, INDICE_MEMORIA);

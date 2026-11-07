@@ -11,7 +11,7 @@ import { Store } from '../db.js';
 import { GoalStore } from '../goals/store.js';
 import { scrubLogText } from '../log.js';
 import { SessionStore } from '../memory/sessions.js';
-import { MemoryStore } from '../memory.js';
+import { abrirMemoriaPrincipal } from '../memory.js';
 import { paths } from '../paths.js';
 import { nextScheduleRun } from '../routines.js';
 import { openSqlite } from '../sqlite.js';
@@ -47,7 +47,7 @@ export async function mcpCommand(args: string[]): Promise<number> {
     return 1;
   }
   const main = `${chat}#main`;
-  const memory = new MemoryStore();
+  const memory = abrirMemoriaPrincipal(main);
   // Mismo fichero que el daemon: espera si el daemon está escribiendo (antes «database is locked»).
   const memoryDb = openSqlite(join(paths.state, 'memory.db'), { wal: true });
   const goalsDb = openSqlite(join(paths.state, 'goals.db'), { wal: true });
