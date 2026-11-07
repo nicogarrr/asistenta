@@ -6,7 +6,7 @@
 
 [WebDriverAgent](https://github.com/appium/WebDriverAgent) (WDA, open source) es un pequeño servidor que corre en el iPhone como una «prueba de interfaz» de Apple. Desde el PC se le puede pedir la pantalla, qué hay en ella (botones, textos y sus posiciones), y que toque o escriba. Asistenta lo usa con la herramienta `iphone_pantalla`:
 
-- **Mirar** (estado, pantalla, leer) no pide permiso.
+- **Mirar** (estado, pantalla, leer) no pide permiso. `leer` da una línea por elemento con texto («Wi-Fi», «Enviar»…), su centro en puntos para tocar y si un interruptor está en sí o no; gasta mucho menos que una captura. `leer` con `crudo` da el árbol entero.
 - **Tocar, escribir, abrir una app o ir al inicio** te lo pregunta en Telegram **cada vez**.
 
 Es lo mismo que hace POKI, pero hecho dentro de Asistenta y sin Mac.
