@@ -8,7 +8,15 @@
  * vuelve a arrancar por la misma tarea que usa el vigilante. Si algo falla, o el daemon no
  * vuelve sano, deja el commit y el dist de antes y avisa por Telegram.
  *
- * Nunca hace merge de verdad, nunca resetea encima de cambios locales y nunca toca otra rama.
+ * Si la copia tiene commits locales que ya están en origin/main por contenido (un arreglo
+ * hecho en el PC que luego se fusionó como squash), los guarda en una rama copia-local-… y
+ * hace `git reset --keep origin/main`. Los archivos sin seguimiento que la versión nueva
+ * pisaría, y un package-lock.json tocado por `npm install`, se apartan a
+ * <estado>/autoupdate/apartados/<fecha>/ (nunca se borran) y vuelven si hay marcha atrás.
+ * Cada paso queda en <estado>/log/autoupdate.log.
+ *
+ * Nunca hace merge de verdad, nunca resetea encima de cambios locales de verdad y nunca toca
+ * otra rama.
  * Todo efecto (git, npm, daemon, Telegram) llega inyectado: los tests no ejecutan nada real.
  */
 import {
@@ -225,6 +233,100 @@ export interface AutoupdateDeps {
   now(): number;
   /** Salida del paso que falló, para el registro de esta revisión. */
   log?(text: string): void;
+  /** Una línea por paso al log de la autoactualización (log/autoupdate.log). */
+  logStep?(line: string): void;
+  /**
+   * Aparta esos archivos (rutas relativas al repo) a una carpeta de copia, sin borrarlos.
+   * Devuelve la carpeta y cómo devolverlos si hay que volver atrás.
+   */
+  moveAside?(paths: string[]): { dir: string; restore(): void };
+}
+
+/** Lo que la revisión decide hacer con la copia local antes de instalar. */
+export type UpdatePlan =
+  | {
+      action: 'ff' | 'reset';
+      /** Archivos sin seguimiento que la versión nueva pisaría: se apartan, no se borran. */
+      aside: string[];
+      /** package-lock.json tocado por un `npm install`: se aparta y se reinstala con npm ci. */
+      discardLock: boolean;
+      /** reset: cuántos commits locales ya estaban en origin/main (por contenido). */
+      dupCommits: number;
+    }
+  | { action: 'refuse'; reason: 'cambios-locales' | 'divergida' };
+
+/** Rutas de `git status --porcelain` (las dos formas «XY ruta» y «XY viejo -> nuevo»). */
+export function porcelainPaths(out: string): string[] {
+  return out
+    .split('\n')
+    .filter((l) => l.trim())
+    .flatMap((l) =>
+      l
+        .slice(3)
+        .split(' -> ')
+        .map((x) => x.trim().replace(/^"(.*)"$/, '$1')),
+    );
+}
+
+/**
+ * ¿Los commits locales que no están en origin/main ya están ahí por contenido? Pasa cuando
+ * un arreglo hecho en el PC se fusionó luego en GitHub como squash (otro SHA, mismo cambio):
+ * `git cherry` los marca con «-» (mismo patch-id), o fusionar la copia local en origin/main
+ * no cambia nada (mismo árbol), que cubre también los commits de merge de un `git pull`.
+ */
+export async function localAlreadyUpstream(
+  git: AutoupdateDeps['git'],
+  old: string,
+  remote: string,
+): Promise<{ ok: boolean; commits: number }> {
+  const cherry = await git(['cherry', remote, old]);
+  const lines = cherry.out.split('\n').filter((l) => /^[+-] /.test(l));
+  if (cherry.code === 0 && lines.length > 0 && lines.every((l) => l.startsWith('- ')))
+    return { ok: true, commits: lines.length };
+  const merged = await git(['merge-tree', '--write-tree', remote, old]);
+  const tree = (await git(['rev-parse', `${remote}^{tree}`])).out.trim();
+  const ok = merged.code === 0 && tree !== '' && merged.out.split('\n')[0]?.trim() === tree;
+  return { ok, commits: lines.length };
+}
+
+/**
+ * La decisión, sin efectos: avanzar (fast-forward), volver a origin/main (los commits
+ * locales ya están arriba) o no tocar nada (cambios de verdad). Los archivos sueltos que la
+ * versión nueva traería se apartan a una copia; nunca se borran.
+ */
+export async function planUpdate(
+  git: AutoupdateDeps['git'],
+  old: string,
+  remote: string,
+): Promise<UpdatePlan> {
+  const status = await git(['status', '--porcelain', '--untracked-files=no']);
+  if (status.code !== 0) return { action: 'refuse', reason: 'cambios-locales' };
+  const dirty = porcelainPaths(status.out);
+  const discardLock = dirty.length > 0 && dirty.every((f) => f === 'package-lock.json');
+  if (dirty.length > 0 && !discardLock) return { action: 'refuse', reason: 'cambios-locales' };
+  let action: 'ff' | 'reset' = 'ff';
+  let dupCommits = 0;
+  if ((await git(['merge-base', '--is-ancestor', old, remote])).code !== 0) {
+    const up = await localAlreadyUpstream(git, old, remote);
+    if (!up.ok) return { action: 'refuse', reason: 'divergida' };
+    action = 'reset';
+    dupCommits = up.commits;
+  }
+  const others = await git(['ls-files', '-z', '--others', '--exclude-standard']);
+  const loose = others.code === 0 ? others.out.split('\0').filter(Boolean) : [];
+  let aside: string[] = [];
+  if (loose.length) {
+    const tree = await git(['ls-tree', '-r', '-z', '--name-only', remote]);
+    // Sin distinguir mayúsculas: en Windows «Notas.md» y «notas.md» son el mismo archivo.
+    const incoming = new Set(
+      tree.out
+        .split('\0')
+        .filter(Boolean)
+        .map((f) => f.toLowerCase()),
+    );
+    aside = loose.filter((f) => incoming.has(f.toLowerCase()));
+  }
+  return { action, aside, discardLock, dupCommits };
 }
 
 const SKIPS: Record<string, string> = {
@@ -437,6 +539,13 @@ export async function runAutoupdate(
     refreshLock(stateDir, deps.now());
     return deps.npm(args, t);
   };
+  const step = (line: string) => {
+    try {
+      deps.logStep?.(line);
+    } catch {
+      // Solo diagnóstico.
+    }
+  };
   try {
     const head = await git(['rev-parse', '--abbrev-ref', 'HEAD']);
     if (head.code !== 0) return skip('sin-git');
@@ -450,6 +559,7 @@ export async function runAutoupdate(
     const remote = (await git(['rev-parse', 'origin/main'])).out.trim();
     if (!old || !remote)
       return skip('no sé qué versión tengo instalada: prueba «pa doctor»', 'error');
+    step(`revisión: tengo ${old.slice(0, 7)}, origin/main ${remote.slice(0, 7)}`);
     if (old === remote) return done('al-dia', `al día (${old.slice(0, 7)})`);
     const failedAt =
       state.failedRemote === remote && state.failedAt ? Date.parse(state.failedAt) : Number.NaN;
@@ -457,11 +567,15 @@ export async function runAutoupdate(
       return skip(
         `esta versión (${remote.slice(0, 7)}) ya falló al instalarse: lo reintento más tarde`,
       );
-    const status = await git(['status', '--porcelain', '--untracked-files=no']);
-    if (status.code !== 0 || status.out.trim()) return skip('cambios-locales');
-    if ((await git(['merge-base', '--is-ancestor', old, remote])).code !== 0) {
-      return skip('divergida');
-    }
+    const plan = await planUpdate(git, old, remote);
+    step(
+      plan.action === 'refuse'
+        ? `no se actualiza: ${plan.reason}`
+        : `plan: ${plan.action}${plan.dupCommits ? ` (${plan.dupCommits} commits locales ya en origin/main)` : ''}, apartar ${plan.aside.length}${plan.discardLock ? ' + package-lock.json' : ''}`,
+    );
+    if (plan.action === 'refuse') return skip(plan.reason);
+    const toMove = [...plan.aside, ...(plan.discardLock ? ['package-lock.json'] : [])];
+    if (toMove.length && !deps.moveAside) return skip('cambios-locales');
     if (deps.daemonState() !== 'running') return skip('no-en-marcha', 'aplazada');
     const busy = deps.busy();
     if (busy === 'ocupada') {
@@ -473,7 +587,7 @@ export async function runAutoupdate(
     const log = await git(['log', '--no-merges', '--format=%s', `${old}..${remote}`]);
     const subjects = log.out.split('\n').filter((l) => l.trim());
     const lockDiff = await git(['diff', '--name-only', old, remote, '--', 'package-lock.json']);
-    const lockChanged = lockDiff.code !== 0 || lockDiff.out.trim() !== '';
+    const lockChanged = plan.discardLock || lockDiff.code !== 0 || lockDiff.out.trim() !== '';
     const health = opts.healthTimeoutMs ?? autoupdateHealthMs(opts.env);
 
     await opts.onUpdating?.({ from: old, to: remote, changes: subjects.length }).catch(() => {});
@@ -487,10 +601,17 @@ export async function runAutoupdate(
 
     // Siempre con await: un `return rollback()` sin esperar soltaba el candado (finally) en
     // plena vuelta atrás y el vigilante podía arrancar Asistenta a medio `npm ci`.
+    let moved: { dir: string; restore(): void } | undefined;
     const rollback = async (reason: string, out = ''): Promise<Outcome> => {
+      step(`fallo: ${reason}; vuelvo a ${old.slice(0, 7)}`);
       if (out) deps.log?.(`${reason}\n${out.slice(-4000)}`);
       const reset = await git(['reset', '--keep', old]);
       if (lockChanged) await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+      try {
+        moved?.restore();
+      } catch (err) {
+        step(`no pude devolver los archivos apartados (siguen en ${moved?.dir}): ${String(err)}`);
+      }
       deps.restoreDist();
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
       const back = (await startAndWait(deps, health)).ok;
@@ -511,16 +632,39 @@ export async function runAutoupdate(
 
     state.pending = { from: old, to: remote, at: new Date(deps.now()).toISOString() };
     writeAutoupdateState(stateDir, { ...readAutoupdateState(stateDir), pending: state.pending });
-    const merge = await git(['merge', '--ff-only', '--quiet', remote]);
+    if (toMove.length && deps.moveAside) {
+      try {
+        moved = deps.moveAside(toMove);
+        step(`apartados ${toMove.length} archivos a ${moved.dir}`);
+      } catch (err) {
+        return await rollback('no pude apartar los archivos sueltos', String(err));
+      }
+      if (plan.discardLock) await git(['checkout', '--', 'package-lock.json']);
+    }
+    let keptAs = '';
+    if (plan.action === 'reset') {
+      // Los commits locales ya están arriba, pero quedan en una rama por si acaso.
+      keptAs = `copia-local-${new Date(deps.now()).toISOString().slice(0, 16).replace(/[-:T]/g, '')}`;
+      await git(['branch', '-f', keptAs, old]);
+      step(`commits locales guardados en la rama ${keptAs}`);
+    }
+    const merge =
+      plan.action === 'reset'
+        ? await git(['reset', '--keep', remote])
+        : await git(['merge', '--ff-only', '--quiet', remote]);
+    step(`${plan.action === 'reset' ? 'git reset --keep' : 'git merge --ff-only'} → ${merge.code}`);
     if (merge.code !== 0) return await rollback('no pude aplicar los cambios nuevos', merge.out);
     if (lockChanged) {
       const ci = await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+      step(`npm ci → ${ci.code}`);
       if (ci.code !== 0)
         return await rollback('no pude instalar las piezas nuevas (¿sin internet?)', ci.out);
     }
     const build = await npm(['run', 'build'], 10 * 60_000);
+    step(`npm run build → ${build.code}`);
     if (build.code !== 0) return await rollback('la versión nueva no se pudo preparar', build.out);
     const health1 = await startAndWait(deps, health);
+    step(health1.ok ? 'arrancada y sana' : `no arrancó bien: ${health1.why}`);
     if (!health1.ok) {
       if (deps.daemonState() === 'running') await deps.stopDaemon().catch(() => {});
       return await rollback(health1.why);
@@ -533,7 +677,15 @@ export async function runAutoupdate(
     // Lo que no cabe en el aviso queda apuntado: un «sí» del dueño lo trae (daemon).
     const notice = buildUpdateNotice(subjects);
     savePendingNovedades(stateDir, notice.rest, deps.now());
-    await deps.notify(notice.text).catch(() => {});
+    const extra = [
+      keptAs
+        ? `Tus commits locales ya estaban en la versión nueva; por si acaso quedan en la rama ${keptAs}.`
+        : '',
+      moved
+        ? `Aparté ${toMove.length} archivo(s) sueltos que la versión nueva pisaba: ${moved.dir}`
+        : '',
+    ].filter(Boolean);
+    await deps.notify([notice.text, ...extra].join('\n')).catch(() => {});
     return done(
       'actualizada',
       `${old.slice(0, 7)} → ${remote.slice(0, 7)} (${subjects.length} ${subjects.length === 1 ? 'cambio' : 'cambios'})`,
