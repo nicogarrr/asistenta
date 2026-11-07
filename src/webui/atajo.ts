@@ -14,6 +14,8 @@
  * - Corre en el hilo principal, con la misma memoria y aprobaciones que Telegram.
  */
 
+import { sliceSafe } from '../text.js';
+
 /** Tope de espera antes de pasar la respuesta a Telegram (Atajos corta hacia los 60 s). */
 export const ATAJO_TOPE_MS = 50_000;
 /** Texto máximo de una petición desde Atajos (un dictado o un enlace compartido). */
@@ -88,7 +90,7 @@ export async function responderAtajo(
   const avisar = deps.avisar;
   if (!avisar) return ATAJO_TARDE_SIN_TELEGRAM;
   void turno.then(async (r) => {
-    const resumen = texto.length > 80 ? `${texto.slice(0, 79)}…` : texto;
+    const resumen = texto.length > 80 ? `${sliceSafe(texto, 79)}…` : texto;
     const cuerpo = r.ok ? r.text.trim() || 'Hecho.' : ATAJO_FALLO;
     try {
       await avisar(`📱 Lo que me pediste desde el iPhone («${resumen}»):\n\n${cuerpo}`);
