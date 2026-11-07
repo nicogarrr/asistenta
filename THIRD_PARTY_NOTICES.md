@@ -10,6 +10,9 @@ se adapta código de ellos.
 - Qué se tomó: la pantalla del iPhone como texto con posiciones (OCR fuera del modelo),
   quitar la barra de estado, marcar la flecha de volver, avisar con la pantalla de bloqueo.
   Código reescrito en `src/iphone/texto.ts`; no se ha copiado código.
+- También: tocar «por texto» sin adivinar (exacto, empieza por, o una letra mal leída), no tocar la
+  isla dinámica, y las recetas de abrir app (Cmd+H, Cmd+Espacio, nombre, Intro), bajar y escribir.
+  Reescritas en `src/iphone/texto.ts` y `src/iphone/gestos.ts`.
 - Licencia:
 
 ```

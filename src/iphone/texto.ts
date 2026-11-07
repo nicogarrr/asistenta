@@ -115,3 +115,96 @@ export function pantallaBloqueada(lineas: LineaPantalla[]): boolean {
   // En la pantalla de bloqueo la fecha va encima del reloj grande.
   return Math.min(...fecha.map((l) => l.y)) < Math.max(...reloj.map((l) => l.y));
 }
+
+/** Palabras de relleno que el modelo añade al describir un elemento («botón Wi-Fi»). */
+const RELLENO = new Set([
+  'boton',
+  'el',
+  'la',
+  'los',
+  'las',
+  'fila',
+  'enlace',
+  'opcion',
+  'pestana',
+  'celda',
+  'button',
+  'row',
+  'link',
+  'tab',
+  'the',
+]);
+
+/** Parecido entre dos textos, de 0 a 1 (1 - distancia de edición / longitud mayor). */
+export function parecido(a: string, b: string): number {
+  if (a === b) return 1;
+  const n = a.length;
+  const m = b.length;
+  if (!n || !m) return 0;
+  let prev = Array.from({ length: m + 1 }, (_, j) => j);
+  for (let i = 1; i <= n; i++) {
+    const cur = [i];
+    for (let j = 1; j <= m; j++) {
+      cur[j] = Math.min(
+        (prev[j] ?? 0) + 1,
+        (cur[j - 1] ?? 0) + 1,
+        (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = cur;
+  }
+  return 1 - (prev[m] ?? 0) / Math.max(n, m);
+}
+
+export type Busqueda =
+  | { ok: true; linea: LineaPantalla; como: 'exacto' | 'empieza' | 'parecido' }
+  | { ok: false; motivo: 'vacio' | 'no-esta' | 'ambiguo'; candidatas: LineaPantalla[] };
+
+/**
+ * Busca un texto en la pantalla para tocarlo. Exacto primero; si no, la ÚNICA línea que
+ * empiece por él; si no, la única muy parecida (el OCR a veces lee mal una letra). Nunca
+ * adivina: con dos candidatas o ninguna, no hay toque. Un modelo de «grounding» siempre
+ * responde aunque el elemento no esté; esto, no.
+ */
+export function buscarTexto(lineas: LineaPantalla[], que: string): Busqueda {
+  const palabras = normaliza(que)
+    .split(' ')
+    .filter((p) => p && !RELLENO.has(p));
+  if (!palabras.length) return { ok: false, motivo: 'vacio', candidatas: [] };
+  const buscado = palabras.join(' ');
+  const en = lineas
+    .filter((l) => l.y >= BARRA_ESTADO && l.texto !== '[atrás]')
+    .map((l) => ({ l, t: normaliza(l.texto) }));
+  const exactas = en.filter((e) => e.t === buscado);
+  if (exactas.length === 1 && exactas[0]) return { ok: true, linea: exactas[0].l, como: 'exacto' };
+  if (exactas.length > 1)
+    return { ok: false, motivo: 'ambiguo', candidatas: exactas.map((e) => e.l) };
+  const empiezan = en.filter((e) => e.t.startsWith(buscado));
+  if (empiezan.length === 1 && empiezan[0])
+    return { ok: true, linea: empiezan[0].l, como: 'empieza' };
+  if (empiezan.length > 1)
+    return { ok: false, motivo: 'ambiguo', candidatas: empiezan.map((e) => e.l) };
+  const puntuadas = en
+    .map((e) => ({ l: e.l, p: parecido(buscado, e.t) }))
+    .sort((a, b) => b.p - a.p);
+  const [mejor, segunda] = puntuadas;
+  if (mejor && mejor.p >= 0.85 && (!segunda || segunda.p < mejor.p - 0.1)) {
+    return { ok: true, linea: mejor.l, como: 'parecido' };
+  }
+  return { ok: false, motivo: 'no-esta', candidatas: [] };
+}
+
+/**
+ * Zonas donde no se toca: la isla dinámica (arriba en el centro) abre el aviso de
+ * «Detener duplicación», que corta la pantalla en directo; y fuera de 0..1 no hay nada.
+ * Devuelve el motivo o null si se puede tocar.
+ */
+export function zonaProhibida(x: number, y: number): string | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) {
+    return 'x e y van en fracciones de la pantalla, de 0 a 1.';
+  }
+  if (y < 0.06 && x > 0.3 && x < 0.7) {
+    return 'Ahí está la isla dinámica: tocarla abre «Detener duplicación» y se corta la pantalla. No toco ahí.';
+  }
+  return null;
+}

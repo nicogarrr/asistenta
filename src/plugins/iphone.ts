@@ -40,6 +40,11 @@ export async function ocrCapturaIphone(
   }
 }
 
+/** ¿Pasos sueltos en el iPhone? Solo con `PA_IPHONE_GESTOS=1` (por defecto, apagados). */
+export function gestosActivados(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.PA_IPHONE_GESTOS ?? '').trim() === '1';
+}
+
 /**
  * Cableado de la tool `iphone` al servidor hidagent (esp32-iphone-agent).
  * La URL vive en el vault (iphone:url) o en PA_IPHONE_URL. Sin ella, cada
@@ -63,6 +68,15 @@ export function iphoneToolDeps(): IphoneToolDeps {
     stop: async () => (await client()).stop(),
     home: async () => (await client()).home(),
     ocr: (jpeg) => ocrCapturaIphone(jpeg),
+    // Pasos sueltos (tocar, escribir, abrir app...): apagados salvo PA_IPHONE_GESTOS=1.
+    gestos: gestosActivados(),
+    manos: {
+      tap: async (x, y) => (await client()).tap(x, y),
+      swipe: async (x1, y1, x2, y2) => (await client()).swipe(x1, y1, x2, y2),
+      type: async (t) => (await client()).type(t),
+      key: async (k) => (await client()).key(k),
+      back: async () => (await client()).back(),
+    },
   };
 }
 

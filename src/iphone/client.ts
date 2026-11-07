@@ -124,6 +124,29 @@ export class IphoneClient {
   async home(): Promise<void> {
     await this.call('/api/home', 'POST', {});
   }
+
+  // Pasos sueltos del servidor hidagent (sus /api/tap, /api/swipe...): x e y en fracciones
+  // de la pantalla (0 a 1). Los usa la tool `iphone` con PA_IPHONE_GESTOS=1.
+
+  async tap(x: number, y: number): Promise<void> {
+    await this.call('/api/tap', 'POST', { x, y });
+  }
+
+  async swipe(x1: number, y1: number, x2: number, y2: number): Promise<void> {
+    await this.call('/api/swipe', 'POST', { x1, y1, x2, y2 });
+  }
+
+  async type(text: string): Promise<void> {
+    await this.call('/api/type', 'POST', { text });
+  }
+
+  async key(combo: string): Promise<void> {
+    await this.call('/api/key', 'POST', { text: combo });
+  }
+
+  async back(): Promise<void> {
+    await this.call('/api/back', 'POST', {});
+  }
 }
 
 /** Que falta para poder actuar. Vacio = listo. */
