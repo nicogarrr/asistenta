@@ -2551,6 +2551,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               ...(opts?.onOcupado ? { onOcupado: opts.onOcupado } : {}),
             });
           },
+          // Atajos del iPhone (/api/atajo): una respuesta que tarda más de lo que espera
+          // Atajos llega luego al chat privado del dueño.
+          avisarTelegram: async (text: string) => {
+            const chatId = resolveOwnerDmChatId(
+              [...threads.values()].map((t) => t.chatKey),
+              vigilanteOwnerId,
+            );
+            if (!chatId) return;
+            await telegram.send({ channel: 'telegram', account: telegram.account, chatId, text });
+          },
           // «Reintentar» del panel: lo mismo que /reintentar en el hilo principal, sin
           // enviar nada a Telegram. Un mensaje con fotos solo se repite desde Telegram
           // (el panel no tiene las fotos): se dice así, no «no hay nada que repetir».
