@@ -159,6 +159,7 @@ import { dedupeNewFacts } from './core/history.js';
 import {
   checkProviderKey,
   createProviderHandle,
+  fallbackChainIds,
   goHeaders,
   isOpenCodeEndpoint,
 } from './core/provider.js';
@@ -7083,7 +7084,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         return modelo;
       },
     });
-    const texto = textoDiagnostico(etapas);
+    const texto = textoDiagnostico(etapas, undefined, fallbackChainIds(config));
     log.info('voz: diagnostico', { etapas });
     await say(inbound, texto, { quote: false });
   };

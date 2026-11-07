@@ -120,10 +120,15 @@ export async function diagnosticoVoz(deps: DiagnosticoVozDeps): Promise<EtapaDia
 
 const ms = (n: number): string => `${Math.round(n).toLocaleString('es-ES')} ms`;
 
-/** El mensaje de Telegram: una línea por etapa, el total y la más lenta. */
+/**
+ * El mensaje de Telegram: una línea por etapa, el total, la más lenta y, si se sabe, el
+ * modelo de reserva (con uno, si el principal está saturado o sin cuota se cambia al
+ * momento en vez de esperar y reintentar).
+ */
 export function textoDiagnostico(
   etapas: readonly EtapaDiagnostico[],
   nucleos = availableParallelism(),
+  reserva?: readonly string[],
 ): string {
   const lineas = etapas.map((e) => {
     const marca = e.ok ? '✅' : '❌';
@@ -137,6 +142,11 @@ export function textoDiagnostico(
     ...lineas,
     `Total: ${ms(total)} · ${nucleos} núcleos`,
     lenta ? `Lo más lento: ${NOMBRES[lenta.etapa].toLowerCase()}.` : '',
+    reserva === undefined
+      ? ''
+      : reserva.length > 0
+        ? `Modelo de reserva si el principal se satura: ${reserva.join(', ')}.`
+        : 'Sin modelo de reserva: si el modelo se satura, espera y reintenta en vez de cambiar a otro (PA_FALLBACK_MODEL en .env).',
   ]
     .filter(Boolean)
     .join('\n');
