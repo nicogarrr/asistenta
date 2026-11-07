@@ -27,9 +27,8 @@
  * 4. PERFIL.md se deduplica igual por su API publica (load/removeEntries/
  *    appendEntry), con la misma copia previa.
  *
- * Opt-in por PA_MEMORY_CONSOLIDATE=1 y enganchada al tick de 10 minutos como
- * el backup de las 03:00: sin la flag, el comportamiento es exactamente el de
- * antes.
+ * Encendida por defecto desde asis-memoria-8 (PA_MEMORY_CONSOLIDATE=0 la
+ * apaga) y enganchada al tick de 10 minutos como el backup de las 03:00.
  */
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';

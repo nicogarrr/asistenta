@@ -264,7 +264,10 @@ import { createMailTriggerFeed, kvSeenIds } from './mail/trigger.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import {
+  archivarEpisodios,
   asegurarCarpetaMemoria,
+  escribirIndiceMemoria,
+  notaEpisodiosRecientes,
   registrarEpisodio,
   resumenCarpetaMemoria,
   textoCarpetaMemoria,
@@ -6006,11 +6009,20 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /**
-   * Consolidacion nocturna de la memoria (opt-in PA_MEMORY_CONSOLIDATE=1 o sí): fusiona
+   * Consolidacion nocturna de la memoria (encendida por defecto; PA_MEMORY_CONSOLIDATE=0 la apaga): fusiona
    * duplicados con supersedes y copia recuperable previa (src/memory/consolidate.ts).
    * Mismo patron que el backup de las 03:00: solo cuenta como hecha si termina bien;
    * un fallo se reintenta en el siguiente tick y queda en el log.
    */
+  /** Episodios recientes del chat para la nota del turno; nunca rompe el turno. */
+  const episodiosDelTurno = (chat: string): string => {
+    try {
+      return notaEpisodiosRecientes(paths.memoria, chat);
+    } catch {
+      return '';
+    }
+  };
+
   const consolidateIfDue = async (): Promise<void> => {
     if (!envSwitchOn('PA_MEMORY_CONSOLIDATE')) return;
     if (!isConsolidationDue(new Date(), weeklyState.lastSent('consolida'))) return;
@@ -6020,6 +6032,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         snapshot,
         backupDir: join(paths.state, 'memory-consolidation'),
         embedder: semanticRecall,
+      });
+      // Los diarios viejos pasan al archivo del mes (sin perder líneas) y el índice se rehace.
+      safeRemember(() => {
+        archivarEpisodios(paths.memoria);
+        escribirIndiceMemoria(paths.memoria);
       });
       weeklyState.markSent('consolida', Date.now());
       log.info('memory consolidation finished', {
@@ -8692,20 +8709,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         panelOwner: opts.panel === true && opts.out !== undefined && thread.name === 'main',
         ownerText: opts.external ? '' : text,
       });
-      const contextNote = buildContextNote(
-        thread,
-        store,
-        memory,
-        snapshot,
-        workstreams,
-        skills,
-        sessions,
-        ownerProfile,
-        prompt,
-        isOwnerDm(inboundFor(thread), vigilanteOwnerId),
-        projectContexts,
-        { consumeInterrupted: !opts.external },
-      );
+      const contextNote = [
+        buildContextNote(
+          thread,
+          store,
+          memory,
+          snapshot,
+          workstreams,
+          skills,
+          sessions,
+          ownerProfile,
+          prompt,
+          isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+          projectContexts,
+          { consumeInterrupted: !opts.external },
+        ),
+        // Memoria episódica: lo último que pasó en este chat (diario local de hoy y ayer).
+        episodiosDelTurno(thread.key),
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       // Primer turno de un hilo: qué otras conversaciones de este chat siguen vivas, en
       // pocas líneas (va en la nota del turno, nunca en el system prompt).
       const othersNote = otherThreadsForTurn(
