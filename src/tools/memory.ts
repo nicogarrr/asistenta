@@ -42,6 +42,7 @@ const MemoryParams = lazySchema(() =>
   Type.Object({
     action: Type.Union([
       Type.Literal('remember'),
+      Type.Literal('update'),
       Type.Literal('recall'),
       Type.Literal('forget'),
       Type.Literal('get'),
@@ -71,7 +72,7 @@ const MemoryParams = lazySchema(() =>
     ),
     id: Type.Optional(
       Type.String({
-        description: 'For forget/get: the entry id from the context index, recall or list.',
+        description: 'For forget/get/update: the entry id from the context index, recall or list.',
       }),
     ),
     include_superseded: Type.Optional(
@@ -217,6 +218,8 @@ export function createMemoryTool(
       'registration dates: when the note was saved, not when the fact happened.',
       'Replaced entries appear marked. from/to (YYYY-MM-DD) bound the range; a truncated',
       'page ends with a cursor token that continues exactly where it stopped.',
+      'action=update replaces the fact with that id by the new text (the old one stays',
+      'in the file as history, marked as replaced). Use it when a fact changed.',
       'action=forget deletes by id.',
       'action=save_profile appends a durable fact about the user to their profile,',
       'the part of memory that travels to every chat. action=profile shows it.',
@@ -260,6 +263,48 @@ export function createMemoryTool(
           } catch (err) {
             const error = safeError(err);
             log.warn('memory store failed', { scope, err: error });
+            return writeFailed(error);
+          }
+        }
+
+        case 'update': {
+          const text = String(args.text ?? '').trim();
+          const oldId = String(args.id ?? '').trim();
+          if (!text || !oldId) throw new Error('la acción update necesita id y text');
+          const reason = looksLikeSecret(text) ?? credentialReason(text);
+          if (reason) {
+            log.info('memory refused a secret-looking update', { scope, reason });
+            return refused(reason);
+          }
+          const old = store.get(write, oldId);
+          if (!old || old.supersededBy !== null) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: old
+                    ? `${oldId} ya estaba sustituida por ${old.supersededBy}; actualiza esa.`
+                    : `No hay nada con id ${oldId} en este chat para actualizar.`,
+                },
+              ],
+              details: { updated: false },
+            };
+          }
+          try {
+            const entry = store.supersede(write, oldId, text, { tags: args.tags ?? old.tags });
+            log.info('memory updated', { scope, id: entry.id, replaces: oldId });
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Actualizado (${entry.id}, sustituye a ${oldId}): ${entry.text}`,
+                },
+              ],
+              details: { updated: true, id: entry.id, replaces: oldId },
+            };
+          } catch (err) {
+            const error = safeError(err);
+            log.warn('memory update failed', { scope, err: error });
             return writeFailed(error);
           }
         }
