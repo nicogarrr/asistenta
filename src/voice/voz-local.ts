@@ -164,6 +164,24 @@ export interface VozLocalLista extends ModeloSherpa {
   dir: string;
 }
 
+/** Lo que trae Supertonic 3 (sin espeak-ng: no usa fonemas). */
+const ARCHIVOS_SUPERTONIC = {
+  durationPredictor: 'duration_predictor.int8.onnx',
+  textEncoder: 'text_encoder.int8.onnx',
+  vectorEstimator: 'vector_estimator.int8.onnx',
+  vocoder: 'vocoder.int8.onnx',
+  ttsJson: 'tts.json',
+  unicodeIndexer: 'unicode_indexer.bin',
+  voiceStyle: 'voice.bin',
+} as const;
+
+/** Los ficheros que tiene que traer el archivo de la voz para darla por buena. */
+function archivosDeVoz(voz: VozLocal): string[] {
+  return voz.motor === 'supertonic'
+    ? Object.values(ARCHIVOS_SUPERTONIC)
+    : [voz.onnx, 'espeak-ng-data'];
+}
+
 /** El modelo ya descargado, comprobado y colocado, o null. */
 export function vozLocalLista(raiz: string, voz: VozLocal): VozLocalLista | null {
   const dir = carpetaVozLocal(raiz, voz);
@@ -173,14 +191,15 @@ export function vozLocalLista(raiz: string, voz: VozLocal): VozLocalLista | null
     return null;
   }
   if (voz.motor === 'supertonic') {
+    const a = ARCHIVOS_SUPERTONIC;
     const supertonic = {
-      durationPredictor: join(dir, 'duration_predictor.int8.onnx'),
-      textEncoder: join(dir, 'text_encoder.int8.onnx'),
-      vectorEstimator: join(dir, 'vector_estimator.int8.onnx'),
-      vocoder: join(dir, 'vocoder.int8.onnx'),
-      ttsJson: join(dir, 'tts.json'),
-      unicodeIndexer: join(dir, 'unicode_indexer.bin'),
-      voiceStyle: join(dir, 'voice.bin'),
+      durationPredictor: join(dir, a.durationPredictor),
+      textEncoder: join(dir, a.textEncoder),
+      vectorEstimator: join(dir, a.vectorEstimator),
+      vocoder: join(dir, a.vocoder),
+      ttsJson: join(dir, a.ttsJson),
+      unicodeIndexer: join(dir, a.unicodeIndexer),
+      voiceStyle: join(dir, a.voiceStyle),
     };
     if (!Object.values(supertonic).every((f) => existsSync(f))) return null;
     return { dir, onnx: supertonic.vectorEstimator, tokens: '', datos: '', supertonic };
@@ -311,8 +330,11 @@ async function descargar(
   try {
     await extraer(parcial, tmp);
     const dentro = join(tmp, voz.id);
-    if (!existsSync(join(dentro, voz.onnx)) || !existsSync(join(dentro, 'espeak-ng-data'))) {
-      throw new Error('el archivo de la voz local no trae el modelo esperado');
+    // Supertonic no trae espeak-ng-data: antes se pedía a todas y Supertonic nunca
+    // quedaba lista (se bajaba y descomprimía otra vez cada 10 min, y hablaba Kokoro).
+    const falta = archivosDeVoz(voz).find((f) => !existsSync(join(dentro, f)));
+    if (falta) {
+      throw new Error(`el archivo de la voz local no trae el modelo esperado (falta ${falta})`);
     }
     writeFileSync(join(dentro, '.ok'), voz.sha256);
     rmSync(final, { recursive: true, force: true });
