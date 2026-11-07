@@ -7050,6 +7050,53 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const r = await tailscaleCommand(kind, { env: process.env, run: defaultTailscaleRun() });
     await say(inbound, r.text, { quote: true, buttons: r.buttons });
   };
+  /** /atajos: cómo montar los atajos del iPhone (docs/atajos-iphone.md), con la URL y el token. */
+  const cmdAtajos = async (inbound: Inbound): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    if (panelPlan.kind !== 'start') {
+      await say(
+        inbound,
+        'Los atajos del iPhone van por el panel, y ahora está apagado o con un problema. Escribe /tailscale para ver qué falta.',
+        { quote: true },
+      );
+      return;
+    }
+    const { defaultTailscaleRun, tailscaleCommand } = await import('./tailscale.js');
+    const { ATAJO_TOKEN_BORRAR_MS, atajosInstrucciones, urlPanelDeBotones } = await import(
+      './webui/atajo.js'
+    );
+    const r = await tailscaleCommand('panel', { env: process.env, run: defaultTailscaleRun() });
+    const url = urlPanelDeBotones(r.buttons);
+    if (!url) {
+      await say(
+        inbound,
+        `Para los atajos del iPhone antes tiene que ir el panel por Tailscale. ${r.text}`,
+        {
+          quote: true,
+        },
+      );
+      return;
+    }
+    await say(inbound, atajosInstrucciones(url), { quote: true });
+    // El token solo, para copiarlo con una pulsación larga; se borra solo del chat.
+    const id = await telegram.send({
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: inbound.chatId,
+      text: `Bearer ${panelPlan.token}`,
+    });
+    if (id) {
+      const borrar = setTimeout(() => {
+        void telegram.deleteMessage(inbound.chatId, id).catch(() => {});
+      }, ATAJO_TOKEN_BORRAR_MS);
+      borrar.unref?.();
+    }
+  };
   /** «/voz diagnostico»: una ida y vuelta de una frase en este PC, con los ms de cada etapa. */
   const cmdVozDiagnostico = async (inbound: Inbound): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -10004,6 +10051,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['altavoz'], run: (inbound, args) => cmdAltavoz(inbound, args) },
     { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
+    { names: ['atajos', 'atajo', 'siri'], run: (inbound) => cmdAtajos(inbound) },
     {
       names: ['voz'],
       run: (inbound, args) =>

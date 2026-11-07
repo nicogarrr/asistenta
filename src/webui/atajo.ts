@@ -100,3 +100,40 @@ export async function responderAtajo(
   });
   return ATAJO_TARDE;
 }
+
+/** El token que manda /atajos se borra solo del chat pasado este tiempo. */
+export const ATAJO_TOKEN_BORRAR_MS = 10 * 60_000;
+
+/** La dirección https del panel que da `/panel` (su botón `webapp:<url>`), acabada en «/». */
+export function urlPanelDeBotones(
+  buttons?: ReadonlyArray<{ label: string; action: string }>,
+): string | null {
+  const action = buttons?.find((b) => b.action.startsWith('webapp:'))?.action;
+  if (!action) return null;
+  const url = action.slice('webapp:'.length).trim();
+  if (!/^https:\/\/[^\s/]+/.test(url)) return null;
+  return url.endsWith('/') ? url : `${url}/`;
+}
+
+/** `/atajos` en Telegram: cómo montar los atajos del iPhone con la dirección real del panel. */
+export function atajosInstrucciones(panelUrl: string): string {
+  const url = `${panelUrl}api/atajo`;
+  return [
+    '📱 Atajos del iPhone: Siri, botón de acción y Compartir. El iPhone dicta y lee la respuesta, así que va más rápido que /voz. Necesita Tailscale encendido en el móvil.',
+    '',
+    '1) «Pregunta a Asistenta». En la app Atajos, crea un atajo con 3 acciones:',
+    '• Dictar texto',
+    `• Obtener contenido de URL: ${url}`,
+    '  Método POST. Encabezado Authorization = el token que te mando abajo.',
+    '  Cuerpo JSON: text = Texto dictado, modo = voz',
+    '• Leer texto: Contenido de la URL',
+    'Luego: «Oye Siri, pregunta a Asistenta». Para el botón de acción: Ajustes → Botón de acción → Atajo.',
+    '',
+    '2) «Mandar a Asistenta» (desde Compartir). Activa «Mostrar en la hoja de compartir» y pon:',
+    `• Obtener contenido de URL: la misma, con text = Entrada del atajo y modo = texto`,
+    '• Mostrar resultado: Contenido de la URL',
+    '',
+    'Si tardo más de 50 s, el atajo te dice que la respuesta llega por Telegram, y llega aquí.',
+    '🔑 Abajo va el token, tal cual para el encabezado Authorization. Lo borro de este chat en 10 minutos.',
+  ].join('\n');
+}
