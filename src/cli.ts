@@ -10,6 +10,7 @@ import {
 } from './cli-uso.js';
 import { doneCheckLine } from './core/hecho.js';
 import { resolveModelCaps } from './core/models.js';
+import { RouteStore, routeAfterTurn, routesOn } from './core/rutas.js';
 import { CreadosStore } from './creados.js';
 import {
   learnNameAnswer,
@@ -2076,6 +2077,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const skillUsage = new SkillUsage(join(paths.state, 'skills', '.uso.json'));
   // «Esto ya lo he hecho 3 veces, ¿lo guardo como habilidad?» (src/skills/repeats.ts).
   const skillRepeats = new RepeatTracker(join(paths.state, 'habilidades-repetidas.json'));
+  // Rutas aprendidas (core/rutas.ts): una tarea de navegador que salió bien se repite sola.
+  const learnedRoutes = new RouteStore(join(paths.state, 'rutas-aprendidas.json'));
   // Skills de ingeniería incluidas (diagnosticar bugs, TDD): solo las que falten.
   seedBuiltinSkills(skills);
   seedGeneralSkills(skills);
@@ -9110,7 +9113,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       /** Especialistas que hicieron algo en este turno (Telegram los dice al final). */
       const specialistsUsed: string[] = [];
       const specialistsDenied: string[] = [];
+      // Ruta aprendida: solo el dueño, solo texto escrito tal cual (sin voz, fotos ni citas).
+      const routeAsked =
+        routesOn() &&
+        !opts.external &&
+        prompt === text &&
+        !images?.length &&
+        isOwnerDm(inboundFor(thread), vigilanteOwnerId)
+          ? text
+          : '';
+      const routeMatch = routeAsked ? learnedRoutes.match(routeAsked) : null;
       result = await thread.agent.run(prompt, images, {
+        ...(routeMatch ? { route: routeMatch } : {}),
         // /voz: el texto según llega, para empezar a hablar con la primera frase.
         ...(out?.delta ? { onTextDelta: out.delta } : {}),
         onToolCall: (info) => {
@@ -9148,6 +9162,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (doneNote) {
         log.info('done claim not verified', { thread: thread.name });
         result = { ...result, text: `${result.text}\n\n${doneNote}`.trim() };
+      }
+      if (routeAsked) {
+        const routeLine = routeAfterTurn(learnedRoutes, routeAsked, result, doneNote);
+        if (result.route) log.info('learned route outcome', { ...result.route });
+        if (routeLine) result = { ...result, text: `${result.text}\n\n${routeLine}`.trim() };
       }
 
       // Lo que contó de sí mismo ya está en su perfil (se apuntó al llegar): que lo sepa.
