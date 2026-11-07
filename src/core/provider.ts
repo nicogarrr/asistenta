@@ -54,6 +54,14 @@ export interface ProviderHandle {
   utilityFor?: (sessionId?: string) => Model<string>;
 }
 
+/** PA_MODELO_RAPIDO si hay que registrarlo (no es el principal ni el respaldo). */
+export function fastModelIds(
+  config: Pick<Config, 'model' | 'fallbackModel' | 'fastModel'>,
+): string[] {
+  const id = config.fastModel?.trim() ?? '';
+  return id === '' || id === config.model || id === config.fallbackModel ? [] : [id];
+}
+
 /** PA_UTILITY_MODEL si hay que registrarlo (no es el principal ni el respaldo). */
 export function utilityModelIds(
   config: Pick<Config, 'model' | 'fallbackModel' | 'utilityModel'>,
@@ -245,6 +253,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
           ...fallbackChainIds(config).filter((id) => id !== config.fallbackModel),
           ...extraModelIds(config),
           ...utilityModelIds(config),
+          ...fastModelIds(config),
         ]),
       ].map((id) => extraModelDef(config, id)),
     ],

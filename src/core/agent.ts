@@ -35,7 +35,7 @@ import {
   retryRecoveryNote,
   sleep,
 } from './retry.js';
-import { classifyRequest, iterationBudgetFor } from './router.js';
+import { classifyRequest, fastRouteFor, iterationBudgetFor } from './router.js';
 import { ToolLoadout } from './toolset.js';
 
 /**
@@ -1283,6 +1283,10 @@ export class PersonalAgent {
     // back again (loudly) if the quota is still dead.
     let fellBack = false;
     const primaryModel = this.#agent.state.model;
+    // Ruta rápida (PA_MODELO_RAPIDO): lo fácil va al modelo rápido solo en ESTE run y
+    // se restaura en finally; /modelo manda sobre ella.
+    let onFast = false;
+    let restorePrimary = false;
     // Cadena de respaldo (gap #6): con una sola reserva es exactamente lo de antes.
     // Cada salto a otra clave o a un modelo más allá del primero da un intento más,
     // así una cadena larga no se queda sin intentos a medio camino.
@@ -1296,6 +1300,21 @@ export class PersonalAgent {
       const slim = forgetUnsentImages(this.#agent.state.messages);
       if (slim) this.#agent.state.messages = slim;
       await this.#compact();
+      const fastId = this.#config.fastModel?.trim() ?? '';
+      if (fastId && fastId !== this.#config.model && this.#modelChoice === undefined) {
+        const route = fastRouteFor(prompt);
+        const fast = route.fast ? this.#modelById?.(fastId, `pa-${this.#sessionId}`) : undefined;
+        if (fast) {
+          this.#agent.state.model = fast;
+          onFast = true;
+          restorePrimary = true;
+        }
+        log.info('model route', {
+          model: fast ? fastId : primaryModel.id,
+          fast: Boolean(fast),
+          reason: route.reason,
+        });
+      }
       if (this.#loadout) {
         const added = this.#loadout.loadFor(prompt);
         if (added.length) log.info('tools loaded for this message', { added });
@@ -1318,6 +1337,26 @@ export class PersonalAgent {
           ? { text: RETRY_CONTINUE + retryRecoveryNote(shared.steps), images: undefined }
           : { text: prompt + retryRecoveryNote(shared.steps), images };
       };
+
+      // El modelo rápido falló (caído, sin cuota, contexto corto, lo que sea): este
+      // turno se repite UNA vez con el principal, sin gastar los reintentos de este.
+      const escalateFast =
+        onFast &&
+        Boolean(result.error) &&
+        !this.#externalAbort &&
+        !this.#runAbort.signal.aborted &&
+        Date.now() < shared.deadline;
+      if (escalateFast) {
+        onFast = false;
+        this.#agent.state.model = primaryModel;
+        log.warn('fast model failed: this run goes to the main model', {
+          from: this.#config.fastModel,
+          to: primaryModel.id,
+          error: result.error?.slice(0, 120),
+        });
+        const next = retryInput();
+        result = await this.#attempt(next.text, next.images, hooks, shared);
+      }
 
       // Un solo reintento por desbordamiento de contexto, pero ese reintento sigue
       // teniendo derecho a los reintentos transitorios que queden: antes, un 503
@@ -1407,7 +1446,7 @@ export class PersonalAgent {
 
       return { ...result, attempts: attempt + 1 };
     } finally {
-      if (fellBack) this.#agent.state.model = primaryModel;
+      if (fellBack || restorePrimary) this.#agent.state.model = primaryModel;
       // Un /steer que llegó tras el último paso no debe aplicarse al turno siguiente.
       this.#agent.clearSteeringQueue();
     }

@@ -79,8 +79,14 @@ const LEVEL2 = [
 /** Direct-answer questions and chatter, level 1. */
 const LEVEL1 = [
   /^\s*(hola|buenas|hey|gracias|ok|vale|si|no)\b/i,
-  /^(qu[eé]|cu[aá]l|cu[aá]ndo|d[oó]nde|qui[eé]n|cu[aá]nto)\b.*\??\s*$/i,
+  // «¿» de apertura opcional: en español casi toda pregunta escrita bien lo lleva, y
+  // sin él «¿qué hora es?» nunca era nivel 1.
+  // Fin de palabra a mano: con \b, «qué» no casaba (la «é» no cuenta como letra para \b).
+  /^\s*¿?\s*(qu[eé]|cu[aá]l|cu[aá]ndo|d[oó]nde|qui[eé]n|cu[aá]nto)(?![\p{L}\p{N}_]).*\??\s*$/iu,
 ];
+
+/** Motivo de un texto sin ninguna señal: nivel 3 por prudencia, no por contenido. */
+const SIN_SENALES = 'sin senales de mayor nivel: estandar';
 
 const OVERRIDE = /^\s*(?:n([1-4])|nivel\s+([1-4]))\s*[:.-]\s*/i;
 
@@ -129,7 +135,7 @@ export function classifyRequest(text: string): RequestClassification {
     reasons.push('pregunta directa o charla corta');
     return { level: 1, reasons, override: false };
   }
-  reasons.push('sin senales de mayor nivel: estandar');
+  reasons.push(SIN_SENALES);
   return { level: 3, reasons, override: false };
 }
 
@@ -150,4 +156,46 @@ export function iterationBudgetFor(level: RequestLevel, base: number): number {
     default:
       return base;
   }
+}
+
+/**
+ * Marca con que /voz envuelve lo que oyó (webui/voz-turno.ts vozPanelPrompt). Se busca
+ * en todo el texto: el turno puede llevar algo delante (fecha, contexto) y la marca
+ * no deja de ser de /voz por eso.
+ */
+const VOZ_MARCA = /\[Por voz desde \/voz[^\]]*\]\s*/;
+
+export interface FastRoute {
+  /** true = este turno puede ir al modelo rápido (PA_MODELO_RAPIDO). */
+  fast: boolean;
+  /** Por qué, para el log. */
+  reason: string;
+}
+
+/**
+ * Ruta por tipo de tarea (idea de los modelos especializados de Meta, 6-nov-2026):
+ * lo corto y lo hablado va a un modelo rápido; lo que pide trabajo de verdad, al
+ * principal. Pura y sin coste, como classifyRequest, y conservadora: ante la duda
+ * (o un nivel forzado 2-4) se queda en el principal.
+ *
+ * - Charla o pregunta directa (nivel 1, también «n1: …»): rápido.
+ * - Turno de /voz: rápido salvo señal clara de investigar, cambiar o construir
+ *   (nivel 3-4 por palabras como «investiga», «compara», «implementa»…). Lo que solo
+ *   cae en nivel 3 por no tener señales es una frase hablada normal: rápido.
+ * - Todo lo demás: principal.
+ */
+export function fastRouteFor(prompt: string): FastRoute {
+  const voz = VOZ_MARCA.test(prompt);
+  const body = voz ? prompt.replace(VOZ_MARCA, ' ').trim() : prompt;
+  const c = classifyRequest(body);
+  if (c.override) {
+    return c.level === 1
+      ? { fast: true, reason: 'nivel 1 forzado por el usuario' }
+      : { fast: false, reason: `nivel ${c.level} forzado por el usuario` };
+  }
+  if (c.level === 1) return { fast: true, reason: 'charla o pregunta directa' };
+  if (voz && (c.level === 2 || c.reasons[0] === SIN_SENALES)) {
+    return { fast: true, reason: 'turno de voz' };
+  }
+  return { fast: false, reason: `nivel ${c.level}: va al principal` };
 }
