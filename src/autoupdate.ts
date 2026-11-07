@@ -479,6 +479,36 @@ async function finishInterrupted(
   return finish(`se quedó a medias; he vuelto a la versión anterior${tail}`);
 }
 
+/** Un archivo que Windows aún tiene abierto (otro proceso, el antivirus, un handle que tarda). */
+const LOCKED_FILE = /\b(EPERM|EBUSY|ENOTEMPTY|EACCES)\b/;
+
+/**
+ * `npm ci` con dos reintentos si falla por un archivo bloqueado: en Windows un proceso que
+ * acaba de cerrarse (Asistenta, un worker de voz) o el antivirus sueltan los .node con unos
+ * segundos de retraso, y el primer `npm ci` choca con ellos (EPERM/EBUSY).
+ */
+export async function npmCiRetrying(
+  npm: AutoupdateDeps['npm'],
+  sleep: AutoupdateDeps['sleep'],
+  step: (line: string) => void = () => {},
+): Promise<CmdResult> {
+  const waits = [5_000, 15_000];
+  for (let i = 0; ; i++) {
+    const ci = await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+    step(`npm ci → ${ci.code}${i ? ` (reintento ${i})` : ''}`);
+    const wait = waits[i];
+    if (ci.code === 0 || wait === undefined || !LOCKED_FILE.test(ci.out)) return ci;
+    await sleep(wait);
+  }
+}
+
+/** Por qué no se pudo instalar, en llano: archivo bloqueado o red. */
+export function npmCiFailReason(out: string): string {
+  return LOCKED_FILE.test(out)
+    ? 'algún archivo de Asistenta seguía abierto en Windows (¿otra Asistenta o una ventana de node abierta?)'
+    : 'no pude instalar las piezas nuevas (¿sin internet?)';
+}
+
 export async function runAutoupdate(
   stateDir: string,
   deps: AutoupdateDeps,
@@ -606,7 +636,7 @@ export async function runAutoupdate(
       step(`fallo: ${reason}; vuelvo a ${old.slice(0, 7)}`);
       if (out) deps.log?.(`${reason}\n${out.slice(-4000)}`);
       const reset = await git(['reset', '--keep', old]);
-      if (lockChanged) await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
+      if (lockChanged) await npmCiRetrying(npm, deps.sleep, step);
       try {
         moved?.restore();
       } catch (err) {
@@ -655,10 +685,8 @@ export async function runAutoupdate(
     step(`${plan.action === 'reset' ? 'git reset --keep' : 'git merge --ff-only'} → ${merge.code}`);
     if (merge.code !== 0) return await rollback('no pude aplicar los cambios nuevos', merge.out);
     if (lockChanged) {
-      const ci = await npm(['ci', '--no-audit', '--no-fund'], 15 * 60_000);
-      step(`npm ci → ${ci.code}`);
-      if (ci.code !== 0)
-        return await rollback('no pude instalar las piezas nuevas (¿sin internet?)', ci.out);
+      const ci = await npmCiRetrying(npm, deps.sleep, step);
+      if (ci.code !== 0) return await rollback(npmCiFailReason(ci.out), ci.out);
     }
     const build = await npm(['run', 'build'], 10 * 60_000);
     step(`npm run build → ${build.code}`);
@@ -676,6 +704,7 @@ export async function runAutoupdate(
     state.failedAt = undefined;
     // Lo que no cabe en el aviso queda apuntado: un «sí» del dueño lo trae (daemon).
     const notice = buildUpdateNotice(subjects);
+    notice.text = `${notice.text}\nVersión nueva: ${remote.slice(0, 7)}`;
     savePendingNovedades(stateDir, notice.rest, deps.now());
     const extra = [
       keptAs

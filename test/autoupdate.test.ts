@@ -167,7 +167,9 @@ describe('runAutoupdate', () => {
       'start',
       'drop',
     ]);
-    expect(f.sent).toEqual(['🆕 Me he actualizado\n• Sube a tope\n• Algo roto']);
+    expect(f.sent).toEqual([
+      '🆕 Me he actualizado\n• Sube a tope\n• Algo roto\nVersión nueva: bbbbbbb',
+    ]);
     expect(readAutoupdateState(dir).lastUpdateAt).toBeTruthy();
     expect(lockHeld(dir)).toBe(false);
   });
