@@ -39,6 +39,15 @@ import {
   sleep,
 } from './retry.js';
 import { classifyRequest, fastRouteFor, iterationBudgetFor } from './router.js';
+import { type RouteMatch, refsOf, routesOn, type TrailCall } from './rutas.js';
+import {
+  collapseRouteMessages,
+  loadReplay,
+  noteRouteResult,
+  type ReplayState,
+  scriptedStep,
+  startReplay,
+} from './rutas-replay.js';
 import { ToolLoadout } from './toolset.js';
 
 /**
@@ -72,6 +81,13 @@ export interface AgentRunResult {
    * Only the count leaves the run; paths stay private to it.
    */
   filesWritten: number;
+  /**
+   * Las llamadas de herramienta del turno con sus argumentos (para aprender rutas,
+   * core/rutas.ts). Solo en memoria; nunca se registra.
+   */
+  trail?: TrailCall[];
+  /** Si el turno repitió una ruta aprendida: cuál y cómo fue. */
+  route?: { id: string; status: 'ok' | 'mismatch' | 'running'; steps: number; reason?: string };
 }
 
 /**
@@ -132,6 +148,11 @@ export interface RunHooks {
    * aparte. Si el callback lanza, se registra y el turno continua.
    */
   onTextEnd?: (full: string) => void;
+  /**
+   * Ruta aprendida que encaja con este mensaje (core/rutas.ts): sus pasos se repiten sin
+   * preguntar al modelo en cada uno, por el mismo bucle y el mismo control de permisos.
+   */
+  route?: RouteMatch | null;
 }
 
 /**
@@ -804,6 +825,8 @@ export class PersonalAgent {
     );
     // Assigned before any tool call can run; the hooks below only fire inside a run.
     let personal!: PersonalAgent;
+    /** La ruta que se repite ahora en este agente, si hay (core/rutas-replay.ts). */
+    const replayOf = (): ReplayState | null => (personal ? personal.#replay : null);
 
     // Calls the gate let through, by tool-call id, so afterToolCall can settle the same fingerprint.
     const calls = new Map<string, GateCall>();
@@ -815,14 +838,23 @@ export class PersonalAgent {
         model,
         tools: loadout ? loadout.active() : tools,
       },
-      streamFn,
+      // Rutas aprendidas: mientras una ruta va bien, el siguiente paso sale de la receta
+      // y no del proveedor (core/rutas-replay.ts).
+      streamFn: (m, context, options) =>
+        scriptedStep(replayOf(), m, options?.signal, context.messages) ??
+        streamFn(m, context, options),
       sessionId: `pa-${sessionId}`,
       // Screenshots older than the latest few are stale by definition. Truncating
       // them per request (and, since fiable2, in the stored transcript at the start of
       // the next run: forgetUnsentImages) is the difference between
       // a 20-step run costing 30k image tokens and costing 6k.
       transformContext: async (messages) =>
-        truncateOldImages(pruneOldToolResults(messages), IMAGES_SENT),
+        truncateOldImages(
+          pruneOldToolResults(
+            collapseRouteMessages(messages, replayOf()?.template, replayOf()?.status === 'running'),
+          ),
+          IMAGES_SENT,
+        ),
       // The model may ask for a deferred tool mid-run; the next request carries it.
       prepareNextTurnWithContext: loadout
         ? (ctx) => {
@@ -1119,6 +1151,8 @@ export class PersonalAgent {
   }
 
   #summarize?: Summarize;
+  /** La ruta aprendida que se está repitiendo en este turno (core/rutas-replay.ts). */
+  #replay: ReplayState | null = null;
   /** Extractor P6b (mismo modelo que el resumen, salida JSON corta). */
   #extractFacts?: (transcript: string) => Promise<string[]>;
   #factMemory?: { existing: () => string[]; write: (facts: string[]) => number };
@@ -1243,9 +1277,25 @@ export class PersonalAgent {
   ): Promise<AgentRunResult> {
     // Mientras dura el turno, la autoactualización no reinicia el daemon.
     const endBusy = busyBegin('turnos', prompt.replace(/\s+/g, ' ').trim(), this.busyOwner);
+    const replay = hooks?.route && routesOn() ? startReplay(hooks.route) : null;
+    if (replay) await loadReplay();
+    this.#replay = replay;
+    if (replay)
+      log.info('learned route replay', { route: replay.routeId, steps: replay.steps.length });
     try {
-      return await this.#runTurn(prompt, images, hooks);
+      const result = await this.#runTurn(prompt, images, hooks);
+      if (!replay) return result;
+      return {
+        ...result,
+        route: {
+          id: replay.routeId,
+          status: replay.status,
+          steps: replay.done,
+          ...(replay.reason ? { reason: replay.reason } : {}),
+        },
+      };
     } finally {
+      this.#replay = null;
       endBusy();
     }
   }
@@ -1283,6 +1333,8 @@ export class PersonalAgent {
       cacheReadTokens: 0,
       steps: [],
       startActions: new Map(),
+      startArgs: new Map(),
+      trail: [],
       fingerprints: [],
       sameTool: '',
       sameToolCount: 0,
@@ -1513,6 +1565,13 @@ export class PersonalAgent {
         shared.toolCalls++;
         activeTools++;
         shared.startActions.set(event.toolCallId, actionLabel(event.args));
+        if (
+          event.args &&
+          typeof event.args === 'object' &&
+          shared.trail.length < MAX_TRACKED_STEPS
+        ) {
+          shared.startArgs.set(event.toolCallId, event.args as Record<string, unknown>);
+        }
         hooks?.onToolCall?.({
           tool: event.toolName,
           summary: describeToolStart(event.toolName, event.args),
@@ -1571,6 +1630,28 @@ export class PersonalAgent {
         const action = shared.startActions.get(event.toolCallId) ?? '';
         shared.startActions.delete(event.toolCallId);
         const gateBlocked = event.isError && this.#gateBlockedIds.has(event.toolCallId);
+        // Ruta aprendida: lo que volvió de su paso (también si el permiso lo paró).
+        if (this.#replay) {
+          noteRouteResult(
+            this.#replay,
+            event.toolCallId,
+            event.isError,
+            resultTextOf(event.result),
+          );
+        }
+        const startArgs = shared.startArgs.get(event.toolCallId);
+        shared.startArgs.delete(event.toolCallId);
+        if (startArgs && shared.trail.length < MAX_TRACKED_STEPS) {
+          const trailWarn = event.isError ? '' : stepWarning(resultTextOf(event.result));
+          const trailRefs = event.toolName === 'browser' ? refsOf(resultTextOf(event.result)) : {};
+          shared.trail.push({
+            tool: event.toolName,
+            args: startArgs,
+            ok: !event.isError && !gateBlocked,
+            ...(trailWarn ? { warn: trailWarn } : {}),
+            ...(Object.keys(trailRefs).length ? { refs: trailRefs } : {}),
+          });
+        }
         if (!gateBlocked && shared.steps.length < MAX_TRACKED_STEPS) {
           const warn = event.isError ? '' : stepWarning(resultTextOf(event.result));
           shared.steps.push({
@@ -1703,6 +1784,7 @@ export class PersonalAgent {
       blocked: shared.blocked,
       toolErrors: shared.toolErrors,
       steps: shared.steps,
+      trail: shared.trail,
       stopReason,
       error,
       attempts: 1,
@@ -1793,6 +1875,9 @@ interface AttemptState {
   steps: RunStep[];
   /** toolCallId -> action label, set at start and consumed at end. */
   startActions: Map<string, string>;
+  /** Argumentos de cada llamada en curso, para el rastro de rutas (core/rutas.ts). */
+  startArgs: Map<string, Record<string, unknown>>;
+  trail: TrailCall[];
   fingerprints: string[];
   /** Last tool executed, and how many times in a row. */
   sameTool: string;

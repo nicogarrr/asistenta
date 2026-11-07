@@ -194,6 +194,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     what: 'recetas repetidas y la oferta pendiente de guardarlas como habilidad',
     backup: 'file',
   },
+  {
+    name: 'rutas-aprendidas.json',
+    what: 'rutas aprendidas del navegador (pasos que se repiten solos, sin pagos)',
+    backup: 'file',
+  },
   { name: 'playbooks', what: 'playbooks', backup: 'dir' },
   { name: 'undo', what: 'deshacer de memoria', backup: 'dir' },
   { name: 'calendar', what: 'agenda local (sin Google)', backup: 'dir' },
