@@ -6,6 +6,7 @@ import { childEnv } from '../child-env.js';
 import type { Config } from '../config.js';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { log } from '../log.js';
+import { selfInstallBlock } from './actualizarme.js';
 import { buildSandboxSpawn, sandboxMode, sandboxSpawnError } from './shell-sandbox.js';
 
 /**
@@ -230,7 +231,13 @@ export function shellEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 
 export function createShellTool(
   config: Config,
-  deps: { spawn?: typeof spawn; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+  deps: {
+    spawn?: typeof spawn;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    /** Carpeta de la propia Asistenta: no se reinstala desde su shell (ver actualizarme.ts). */
+    selfRepo?: string;
+  } = {},
 ): AgentTool<ReturnType<typeof ShellParams>> {
   const spawnImpl = deps.spawn ?? spawn;
   const onWindows = (deps.platform ?? process.platform) === 'win32';
@@ -248,6 +255,16 @@ export function createShellTool(
       if (!sandbox.ok) {
         return {
           content: [{ type: 'text', text: sandbox.error }],
+          details: { exitCode: -1, wallMs: 0, timedOut: false, shell: 'none' },
+        };
+      }
+      const selfBlock =
+        onWindows && sandbox.mode === 'off' && deps.selfRepo
+          ? selfInstallBlock(args.command, process.cwd(), deps.selfRepo)
+          : null;
+      if (selfBlock) {
+        return {
+          content: [{ type: 'text', text: selfBlock }],
           details: { exitCode: -1, wallMs: 0, timedOut: false, shell: 'none' },
         };
       }

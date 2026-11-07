@@ -111,4 +111,12 @@ describe('mercadona (pedido semanal)', () => {
     expect(THREAD_ALLOW_TOOLS).not.toContain('mercadona');
     expect([...MACHINE_TOOLS]).not.toContain('mercadona');
   });
+
+  it('«actualizarme» está en el catálogo y en lo que sé hacer (no es libre ni de máquina)', () => {
+    const c = CAPABILITIES.find((x) => x.name === 'actualizarme');
+    expect(c).toBeDefined();
+    expect(c?.threadAllow).toBeFalsy();
+    expect(c?.machine).toBeFalsy();
+    expect(TOOL_ABILITIES.actualizarme?.area).toBe('sistema');
+  });
 });

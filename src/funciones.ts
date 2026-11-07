@@ -237,6 +237,10 @@ export const TOOL_ABILITIES: Readonly<
   computer: { area: 'pc', text: 'uso el ratón y el teclado de tu PC por ti, con tu permiso' },
   windows: { area: 'pc', text: 'miro qué ventanas tienes abiertas y dónde pulsar' },
   system: { area: 'pc', text: 'bloqueo, suspendo o ajusto el volumen y el brillo del PC' },
+  actualizarme: {
+    area: 'sistema',
+    text: 'me actualizo a la última versión cuando me lo pides, y vuelvo atrás si algo falla',
+  },
   ocr: { area: 'pc', text: 'leo el texto que hay en la pantalla o en una imagen' },
   shell: { area: 'pc', text: 'ejecuto comandos en tu PC, con tu permiso' },
   read: { area: 'pc', text: 'leo ficheros de tu PC' },
