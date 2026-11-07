@@ -28,6 +28,17 @@ export const UPDATE_NOT_WINDOWS =
 export const UPDATE_LAUNCH_FAILED =
   'No he podido lanzar la búsqueda de actualización. En el PC, en la carpeta de Asistenta: pa autoupdate now.';
 /** Ninguna búsqueda dura tanto: pasado esto, una que no avisó de su final ya no cuenta. */
+export const UPDATE_LATER_CALLBACK = `${UPDATE_CALLBACK_PREFIX}luego`;
+export const UPDATE_LATER_NOTICE = 'Vale, luego. Te lo vuelvo a ofrecer mañana.';
+
+/** «Actualizar» / «Luego»: la oferta diaria del modo PA_AUTOUPDATE_MODO=preguntar. */
+export function offerButtons(): UpdateButton[] {
+  return [
+    { label: '✅ Actualizar', action: UPDATE_CALLBACK },
+    { label: '⏰ Luego', action: UPDATE_LATER_CALLBACK },
+  ];
+}
+
 export const UPDATE_RUN_MAX_MS = 45 * 60_000;
 
 export type UpdateButton = { label: string; action: string };
@@ -65,6 +76,7 @@ export function createUpdateButton(
 ): (press: { data: string; isOwner: boolean }) => UpdateButtonReply {
   let runningSince: number | null = null;
   return ({ data, isOwner }) => {
+    if (data === UPDATE_LATER_CALLBACK) return { notice: UPDATE_LATER_NOTICE };
     if (data !== UPDATE_CALLBACK) return { notice: UPDATE_STALE };
     if (!isOwner) return { notice: UPDATE_OWNER_ONLY };
     if (deps.platform !== 'win32') return { notice: 'Solo en Windows.', reply: UPDATE_NOT_WINDOWS };

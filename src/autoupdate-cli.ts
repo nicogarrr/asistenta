@@ -35,6 +35,7 @@ import {
   writeAutoupdateState,
 } from './autoupdate.js';
 import {
+  offerButtons,
   UPDATE_NOT_WINDOWS,
   type UpdateButton,
   updateButtons,
@@ -273,6 +274,9 @@ export function realAutoupdateDeps(
       }
     },
     moveAside: (paths) => movePathsAside(repo, stateDir, paths),
+    offer: async (text) => {
+      await send(text, undefined, offerButtons());
+    },
     log: (text) => {
       try {
         mkdirSync(join(stateDir, AUTOUPDATE_DIR), { recursive: true });
