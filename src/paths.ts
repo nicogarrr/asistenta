@@ -41,6 +41,11 @@ export const paths = {
   browser: join(STATE_DIR, 'browser'),
   /** Long-term memory markdown, one file per scope. */
   memory: join(STATE_DIR, 'memory'),
+  /**
+   * La carpeta de memoria legible (src/memory/carpeta.ts): perfil, episodios
+   * diarios, procedimientos, notas e índice, en Markdown que Nico abre a mano.
+   */
+  memoria: join(STATE_DIR, 'memoria'),
   /** Document memory: the FTS5 index plus the extracted-text mirror. */
   docs: join(STATE_DIR, 'docs'),
   /** Voice scratch files (decoded pcm, synthesized wav, opus). */
@@ -61,6 +66,10 @@ export function ensureDirs(): void {
     paths.sessions,
     paths.browser,
     paths.memory,
+    paths.memoria,
+    join(paths.memoria, 'episodios'),
+    join(paths.memoria, 'procedimientos'),
+    join(paths.memoria, 'notas'),
     paths.voice,
     paths.models,
   ]) {

@@ -171,6 +171,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   // Carpetas que solo existen aquí.
+  {
+    name: 'memoria',
+    what: 'carpeta de memoria: PERFIL.md, episodios, procedimientos, notas e índice',
+    backup: 'dir',
+  },
   { name: 'memory', what: 'memoria a largo plazo (markdown por ámbito)', backup: 'dir' },
   { name: 'snapshot', what: 'instantáneas de memoria', backup: 'dir' },
   { name: 'skills', what: 'habilidades aprendidas', backup: 'dir' },

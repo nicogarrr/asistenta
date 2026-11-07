@@ -263,6 +263,12 @@ import { mailAttentionText } from './mail/triage.js';
 import { createMailTriggerFeed, kvSeenIds } from './mail/trigger.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
+import {
+  asegurarCarpetaMemoria,
+  registrarEpisodio,
+  resumenCarpetaMemoria,
+  textoCarpetaMemoria,
+} from './memory/carpeta.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
 import { DecisionLedger } from './memory/decisions.js';
 import { canExtract, DocMemory } from './memory/docs.js';
@@ -1878,6 +1884,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const routineBornAt = (scope: string, name: string): string | undefined =>
     store.getRoutine(scope, name)?.createdAt;
   const memory = new MemoryStore();
+  // La carpeta de memoria legible existe desde el primer arranque (src/memory/carpeta.ts).
+  safeRemember(() => asegurarCarpetaMemoria(paths.memoria));
   const docMemory = new DocMemory({
     dbPath: join(paths.docs, 'docs.sqlite'),
     directory: join(paths.docs, 'mirror'),
@@ -7288,6 +7296,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * borrar una entrada y sacarla fuera (JSON) es lo que la hace auditable. El
    * scope lo pone el hilo, nunca el texto del comando.
    */
+  /** Ruta de la carpeta de memoria y qué tiene: lo primero que /memoria debe decir. */
+  const carpetaMemoriaTexto = (): string => {
+    try {
+      return textoCarpetaMemoria(resumenCarpetaMemoria(paths.memoria));
+    } catch {
+      return `📁 Carpeta de memoria: ${paths.memoria}`;
+    }
+  };
   const cmdMemoria = async (thread: Thread, inbound: Inbound, args: string): Promise<void> => {
     const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
     const sub = (subRaw ?? '').toLowerCase();
@@ -7297,14 +7313,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!sub || sub === 'listar' || sub === 'lista' || sub === 'list') {
       const entries = vigentes();
       if (!entries.length) {
-        await say(inbound, 'Este chat no tiene memoria guardada todavía.', { quote: true });
+        await say(
+          inbound,
+          `Este chat no tiene memoria guardada todavía.\n\n${carpetaMemoriaTexto()}`,
+          { quote: true },
+        );
         return;
       }
       await say(
         inbound,
         `Memoria de este chat (${entries.length}):\n${entries
           .map((e) => `- [${e.id}] (${e.date}) ${e.text}`)
-          .join('\n')}`,
+          .join('\n')}\n\n${carpetaMemoriaTexto()}`,
         { quote: true },
       );
       return;
@@ -8894,6 +8914,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // when the user asks "what did you tell me about that?".
       const finalText = result.text;
       safeRemember(() => sessions.addTurn(sessionId, 'assistant', finalText));
+      // Y una línea en el diario del día (memoria/episodios/AAAA-MM-DD.md), al momento.
+      safeRemember(() => {
+        registrarEpisodio(paths.memoria, {
+          fecha: new Date(),
+          chat: thread.key,
+          pedido: inbound.text,
+          respuesta: finalText,
+        });
+      });
 
       // What happened, kept where the user can ask about it later: "¿qué enviaste
       // anoche?" is a question about a past action, and without a record the honest
