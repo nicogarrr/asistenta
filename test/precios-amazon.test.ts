@@ -198,7 +198,7 @@ describe('regla del error de precio', () => {
       [],
     );
     expect(v).toMatchObject({ ok: false });
-    if (!v.ok) expect(v.motivo).toMatch(/ChinaShopES/);
+    if (!v.ok) expect(v.motivo).toMatch(/falta histórico real/);
   });
 
   it('verificación: precio oculto, distinto del listado o agotado → no avisa', () => {
@@ -590,10 +590,10 @@ describe('casos reales de Quique: ghd Gold y Chivas Regal Mizunara', () => {
     expect(chivas).toContain('12,50 €');
     expect(chivas).toMatch(/referencia 69,\d\d €/);
     expect(chivas).toContain('histórico real: lo que ha visto Asistenta');
-    // El recambio ni se abre; el del vendedor externo se descarta al verificar.
+    // El recambio ni se abre; el del vendedor externo, sin histórico real, se descarta al verificar.
     expect(avisos.some((a) => a.includes('repuesto'))).toBe(false);
     const pend = v.leer().pendientes;
-    expect(pend.find((p) => p.asin === 'B0LOOKALK2')?.motivo).toMatch(/BeautyOutletES/);
+    expect(pend.find((p) => p.asin === 'B0LOOKALK2')?.motivo).toMatch(/histórico/);
     expect(pend.some((p) => p.asin === 'B0LOOKALK1')).toBe(false);
   });
 

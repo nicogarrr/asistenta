@@ -402,11 +402,13 @@ import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.
 import { ensureDirs, paths } from './paths.js';
 import { Gate, runPermisosCommand } from './permissions.js';
 import { PRECIOS_SOLO_DUENO, preciosAccion } from './precios/comando.js';
+import { fuentesDesde } from './precios/fuentes.js';
 import { PlanPrecios } from './precios/planificador.js';
 import {
   configPrecios,
   conRespaldo,
   leerFichaNavegador,
+  leerFuenteHttp,
   leerHistorialNavegador,
   leerHttp,
   leerListadoNavegador,
@@ -6305,6 +6307,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     leerListado: (url) => preciosListado(url),
     leerFicha: (url) => preciosFicha(url),
     leerHistorial: (url) => preciosHistorial(url),
+    // Chollos públicos (RSS de Chollometro por defecto) solo como pistas; PA_PRECIOS_FUENTES.
+    fuentes: fuentesDesde(preciosConf.fuentes),
+    leerFuente: leerFuenteHttp(),
     avisar: async (text, buttons) => {
       const owner = briefingOwner();
       if (!owner) throw new Error('no sé cuál es el chat del dueño');

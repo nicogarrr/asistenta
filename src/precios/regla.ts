@@ -208,7 +208,14 @@ export function candidato(
 }
 
 export type Verificacion =
-  | { ok: true; cents: number; ref: Referencia; vendedor: string }
+  | {
+      ok: true;
+      cents: number;
+      ref: Referencia;
+      vendedor: string;
+      /** No lo vende Amazon (vendedor externo); `enviaAmazon`: lo envía Amazon (Logística). */
+      externo?: { nombre: string | null; enviaAmazon: boolean };
+    }
   /** `soloPvp`: pasaría con el PVP/«Recomendado»; falta un histórico real (externo) para saberlo. */
   | { ok: false; motivo: string; soloPvp?: boolean };
 
@@ -237,14 +244,10 @@ export function verificar(
   if (Math.abs(ficha.cents - visto) > visto * cfg.tolerancia) {
     return { ok: false, motivo: 'el precio del listado y el de la ficha no coinciden' };
   }
+  // Vendedor externo (ni lo vende ni lo envía Amazon): también avisa (Nico, 7-nov-2026, 14:04),
+  // marcado «⚠️ vendedor externo». Su tachado no cuenta nunca: hace falta un histórico real.
   const vendeAmazon = esAmazon(ficha.vendedor);
   const enviaAmazon = esAmazon(ficha.envio);
-  if (!vendeAmazon && !enviaAmazon) {
-    return {
-      ok: false,
-      motivo: `lo vende ${ficha.vendedor ?? 'un vendedor desconocido'} y no lo envía Amazon`,
-    };
-  }
   const tachado =
     ficha.refCents !== null
       ? { cents: ficha.refCents, tipo: ficha.refTipo }
@@ -267,6 +270,15 @@ export function verificar(
       ok: false,
       motivo: 'en la ficha el descuento no llega al umbral',
       ...(soloPvp ? { soloPvp } : {}),
+    };
+  }
+  if (!vendeAmazon) {
+    return {
+      ok: true,
+      cents: ficha.cents,
+      ref,
+      vendedor: ficha.vendedor ?? 'un vendedor externo',
+      externo: { nombre: ficha.vendedor, enviaAmazon },
     };
   }
   return { ok: true, cents: ficha.cents, ref, vendedor: ficha.vendedor ?? 'Amazon' };
