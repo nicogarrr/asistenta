@@ -170,6 +170,9 @@ function describeError(err: unknown): string {
  * own. Everything else is transient.
  */
 export function backoffFor(err: unknown, attempt: number): number | null {
+  // Un envío que quizá ya llegó no se repite: Telegram no tiene forma de evitar el
+  // duplicado, y un mismo mensaje dos veces confunde más que un aviso en el log.
+  if (sendMayHaveArrived(err)) return null;
   if (err instanceof GrammyError) {
     if (err.error_code === 429) {
       const retryAfter = (err as { parameters?: { retry_after?: number } }).parameters?.retry_after;
@@ -182,6 +185,82 @@ export function backoffFor(err: unknown, attempt: number): number | null {
   // Timeouts and socket resets are the documented failure mode of long polling over
   // laptop wifi, so they get a couple of cheap retries before giving up.
   return attempt < 3 ? Math.min(5_000, 2 ** attempt * 500) : null;
+}
+
+/**
+ * Errores de red de ANTES de que la petición salga del PC (sin conexión, sin DNS,
+ * conexión rechazada): a Telegram no llegó nada y reintentar es seguro.
+ */
+const NOT_SENT_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/**
+ * Llamadas que crean un mensaje nuevo en el chat. Repetirlas tras un fallo dudoso
+ * puede dejarlo DOS veces; editar, borrar o «escribiendo…» se pueden repetir sin daño.
+ */
+const SEND_METHOD = /\b(?:send(?!ChatAction\b)[A-Z][A-Za-z]*|copyMessages?|forwardMessages?)\b/;
+
+/**
+ * ¿Pudo llegar a Telegram un envío que falló? Idea tomada de POKI (reescrita): un
+ * envío sin respuesta no es un envío fallido, es un envío de resultado desconocido.
+ *
+ * - Telegram contestó (GrammyError): el resultado se sabe, así que `false`.
+ * - No es un envío (edición, borrado, «escribiendo…»): `false`, repetirlo no duplica.
+ * - Fallo de conexión antes de enviar (lista de arriba, o la llamada `connect`/DNS):
+ *   `false`, no salió nada.
+ * - Lo demás (se agotó la espera, se cortó la conexión a medias): `true`. La
+ *   petición pudo leerse y perderse solo la respuesta.
+ *
+ * El método se lee del propio error: `withTimeout` lo nombra («sendMessage timed
+ * out») y grammY también («Network request for 'sendMessage' failed!»).
+ */
+export function sendMayHaveArrived(err: unknown): boolean {
+  if (err instanceof GrammyError) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  if (!SEND_METHOD.test(message)) return false;
+  const holder = err as { error?: unknown; cause?: unknown };
+  const cause = (holder.error ?? holder.cause) as
+    | { code?: unknown; erroredSysCall?: unknown; syscall?: unknown }
+    | undefined;
+  if (cause && typeof cause === 'object') {
+    if (typeof cause.code === 'string' && NOT_SENT_CODES.has(cause.code)) return false;
+    const call = cause.erroredSysCall ?? cause.syscall;
+    if (call === 'connect' || call === 'getaddrinfo') return false;
+  }
+  return true;
+}
+
+/** Cuánto más se espera la respuesta de un envío que superó su tiempo, antes de darlo por dudoso. */
+const SEND_LATE_GRACE_MS = 30_000;
+
+/** Espera `promise` como mucho `ms`; nunca lanza. */
+async function settleWithin<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<{ state: 'ok'; value: T } | { state: 'error'; error: unknown } | { state: 'pending' }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const pending = new Promise<{ state: 'pending' }>((resolve) => {
+    timer = setTimeout(() => resolve({ state: 'pending' }), Math.max(0, ms));
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([
+      promise.then(
+        (value) => ({ state: 'ok' as const, value }),
+        (error: unknown) => ({ state: 'error' as const, error }),
+      ),
+      pending,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -2129,9 +2208,32 @@ export class TelegramChannel implements ChannelAdapter {
           this.#lastSentAt.set(GLOBAL_KEY, Date.now());
           return value;
         });
-      } catch (err) {
+      } catch (caught) {
+        let err = caught;
+        // Se agotó la espera de un envío, pero la petición sigue viva: se espera su
+        // respuesta un rato más. Si llega, el mensaje está entregado UNA vez; si falla
+        // sin haber salido, se reintenta; si sigue sin saberse, no se repite.
+        const pending = (err as { pending?: Promise<T> } | null)?.pending;
+        if (pending && sendMayHaveArrived(err)) {
+          const late = await settleWithin(
+            pending,
+            Math.min(SEND_LATE_GRACE_MS, Math.max(0, deadline - Date.now())),
+          );
+          if (late.state === 'ok') {
+            log.info('telegram send answered late; delivered once, not resending', {
+              error: describeError(err),
+            });
+            return late.value;
+          }
+          if (late.state === 'error') err = late.error;
+        }
         const wait = backoffFor(err, attempt);
         if (wait === null || attempt + 1 >= SEND_MAX_ATTEMPTS || Date.now() + wait > deadline) {
+          if (sendMayHaveArrived(err)) {
+            log.warn('telegram send may have arrived; not resending to avoid a duplicate', {
+              error: describeError(err),
+            });
+          }
           throw err;
         }
         log.warn('telegram send failed, retrying', { attempt, wait, error: describeError(err) });
