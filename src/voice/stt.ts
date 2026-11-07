@@ -668,6 +668,22 @@ function scheduleRelease(): void {
   releaseTimer.unref?.();
 }
 
+/**
+ * Deja cargado el whisper que usará la próxima nota (el grande si ya está en el disco;
+ * si no, small), para que la primera nota tras arrancar o abrir /voz no espere a la
+ * carga. Cuenta como uso: sin notas, el grande se suelta tras el reposo de siempre.
+ */
+export async function precalentarWhisper(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const preferido = sttModelFromEnv(env);
+  const modelo =
+    preferido === SMALL_STT_MODEL || whisperCached(preferido) ? preferido : SMALL_STT_MODEL;
+  await loadWhisperPipeline(modelo);
+  readyModels.add(modelo);
+  lastNoteAt = Date.now();
+  scheduleRelease();
+  return modelo;
+}
+
 /** Solo para tests: vuelve al estado de un proceso recién arrancado. */
 export function resetSttStateForTests(): void {
   readyModels.clear();

@@ -47,3 +47,11 @@ Con `PA_PIPER_MODEL` puesto: si SAPI tiene voz española, SAPI va primero y Pipe
 /voz ya no lee con la voz del iPhone: el PC sintetiza la respuesta con esta voz local y el móvil reproduce ese audio. Si el PC no puede (voz sin bajar y sin SAPI), el móvil vuelve a su propia voz.
 
 No hay que bajar nada a mano: al arrancar, Asistenta descarga Supertonic sola (verás `Voz local «supertonic-f2»: descargando 129 MB…` y luego `… lista`). Queda en la carpeta de modelos de Asistenta (`models/tts/sherpa-onnx-supertonic-3-tts-int8-…`, junto a los logs). Para volver a la voz anterior: `PA_TTS_LOCAL=kokoro` en `.env`.
+
+### Rápida y nunca callada (7 nov)
+
+- Empieza a hablar con la primera frase mientras Asistenta sigue pensando el resto (la respuesta llega en flujo, frase a frase), y por voz contesta corto (1–3 frases).
+- Whisper y la voz se cargan al arrancar (a los 20 s) y al abrir /voz, no con la primera nota. `PA_VOZ_PRECALENTAR=0` lo apaga.
+- Si algo falla o tarda demasiado, lo dice por escrito y en voz alta («Perdona, no te he oído bien…», «Sigo pensándolo…»); nunca se queda en silencio.
+- Se ve en qué está: «Escuchando…», «Pensando…», «Hablando…». La casilla «Ver tiempos» enseña cuánto tardó cada etapa (recibir, oír, pensar, primera voz, total); el log apunta lo mismo en `voz movil: tiempos`.
+- **`/voz diagnostico`** en Telegram hace una ida y vuelta de una frase en el PC (voz → oír → pensar → voz) y contesta con los milisegundos de cada etapa y la más lenta.

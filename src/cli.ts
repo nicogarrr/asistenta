@@ -806,7 +806,7 @@ import { createMciSpeaker, type Playback } from './voice/speaker.js';
 import { SpeakerVerifier, speakerGateConfigFromEnv } from './voice/speaker-verify.js';
 import { stopSpokenReply } from './voice/stop-speech.js';
 import {
-  loadWhisperPipeline,
+  precalentarWhisper,
   SMALL_STT_MODEL,
   SttError,
   sttModelFromEnv,
@@ -2128,8 +2128,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   });
   // Al arrancar (también tras autoactualizar) baja la voz si falta o cambió; no bloquea.
   void tts.precargar();
-  /** Última vez que /voz precargó whisper y la voz (ver `prewarm` del panel). */
+  /** Última vez que se precargó whisper y la voz (al arrancar o al abrir /voz). */
   let vozCalentadaEn = 0;
+  /**
+   * Whisper y la voz cargados ya (como mucho una vez cada 5 min), para que la primera
+   * nota no espere a cargarlos. La voz nueva se descarga si falta; mientras, habla la de
+   * siempre (createTtsConVozLocal).
+   */
+  const calentarVoz = (por: string): void => {
+    // Whisper siempre (si ya está cargado no cuesta nada y aplaza soltarlo: con /voz
+    // abierta el grande no se descarga de memoria; recargarlo tardaba hasta 2 min).
+    void precalentarWhisper().then(
+      (modelo) => log.debug('voz: whisper listo', { modelo, por }),
+      (err: unknown) => log.warn('voz: no pude precargar whisper', { err: String(err), por }),
+    );
+    const ahora = Date.now();
+    if (ahora - vozCalentadaEn < 5 * 60_000) return;
+    vozCalentadaEn = ahora;
+    // Con la voz local ya bajada, una frase de prueba deja el motor cargado (en frío,
+    // la primera frase tardaba ~8 s con 4 núcleos).
+    void tts.precargar().then((lista) =>
+      lista
+        ? tts.speak('Vale.').then(
+            () => undefined,
+            () => undefined,
+          )
+        : undefined,
+    );
+  };
+  // Al arrancar (Nico, 7 nov: «tarda muchísimo en contestarme al hablar»), no en la
+  // primera nota. Tras 20 s para no frenar el arranque; PA_VOZ_PRECALENTAR=0 lo apaga.
+  if ((process.env.PA_VOZ_PRECALENTAR ?? '').trim() !== '0') {
+    setTimeout(() => calentarVoz('arranque'), 20_000).unref?.();
+  }
 
   /**
    * One mutex for everything that moves the machine. Reasoning runs outside it;
@@ -2564,25 +2595,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           transcribe: async (audio: Buffer, mime: string) =>
             (await transcribeVoiceNote(audio, { mimeType: mime })).text,
           // Al abrir /voz: whisper y la voz se cargan ya (como mucho una vez cada 5 min).
-          prewarm: () => {
-            const ahora = Date.now();
-            if (ahora - vozCalentadaEn < 5 * 60_000) return;
-            vozCalentadaEn = ahora;
-            const modelo = sttModelFromEnv();
-            void loadWhisperPipeline(whisperCached(modelo) ? modelo : SMALL_STT_MODEL).catch(
-              (err: unknown) =>
-                log.warn('voz movil: no pude precargar whisper', { err: String(err) }),
-            );
-            // Con la voz local ya bajada, una frase de prueba deja el motor cargado.
-            void tts.precargar().then((lista) =>
-              lista
-                ? tts.speak('Vale.').then(
-                    () => undefined,
-                    () => undefined,
-                  )
-                : undefined,
-            );
-          },
+          prewarm: () => calentarVoz('abrir /voz'),
           // …y la respuesta vuelve con la voz local del PC, no con la robótica del móvil.
           speak: (text: string) =>
             speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
@@ -7020,6 +7033,56 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const r = await tailscaleCommand(kind, { env: process.env, run: defaultTailscaleRun() });
     await say(inbound, r.text, { quote: true, buttons: r.buttons });
   };
+  /** «/voz diagnostico»: una ida y vuelta de una frase en este PC, con los ms de cada etapa. */
+  const cmdVozDiagnostico = async (inbound: Inbound): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    await say(inbound, 'Mido la voz con una frase de prueba; tarda unos segundos…', {
+      quote: true,
+    });
+    const { diagnosticoVoz, textoDiagnostico } = await import('./voice/diagnostico-voz.js');
+    const modeloStt = sttModelFromEnv();
+    const oido = whisperCached(modeloStt)
+      ? (modeloStt.split('/').pop() ?? modeloStt)
+      : 'whisper-small (el grande aún no está descargado)';
+    let modelo: string | undefined;
+    const pensar = async (texto: string): Promise<string> => {
+      const handle = await createProviderHandle(config);
+      modelo = handle.model.id;
+      const reply = await handle.models.completeSimple(
+        handle.modelFor('pa-voz-diagnostico'),
+        {
+          systemPrompt: 'Eres Asistenta. Contesta en una sola frase corta, en castellano.',
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: texto }], timestamp: Date.now() },
+          ],
+        },
+        { maxTokens: 120, sessionId: 'pa-voz-diagnostico', signal: AbortSignal.timeout(45_000) },
+      );
+      return reply.content
+        .map((b) => (b.type === 'text' ? b.text : ''))
+        .join('')
+        .trim();
+    };
+    const etapas = await diagnosticoVoz({
+      speak: (t) => speakWithin(tts, trimForSpeech(t), 30_000),
+      transcribe: async (audio, mime) =>
+        (await transcribeVoiceNote(audio, { mimeType: mime })).text,
+      pensar,
+      voz: tts.estado(),
+      oido,
+      get modelo() {
+        return modelo;
+      },
+    });
+    const texto = textoDiagnostico(etapas);
+    log.info('voz: diagnostico', { etapas });
+    await say(inbound, texto, { quote: false });
+  };
   const cmdAltavoz = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
       await say(inbound, 'El altavoz solo se controla desde tu chat privado conmigo.', {
@@ -9924,7 +9987,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['altavoz'], run: (inbound, args) => cmdAltavoz(inbound, args) },
     { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
-    { names: ['voz'], run: (inbound) => cmdTailscale(inbound, 'voz') },
+    {
+      names: ['voz'],
+      run: (inbound, args) =>
+        /^diagn/i.test(args.trim()) ? cmdVozDiagnostico(inbound) : cmdTailscale(inbound, 'voz'),
+    },
     { names: ['spotify'], run: (inbound, args) => cmdSpotify(inbound, args) },
     { names: ['google'], run: (inbound, args) => cmdGoogle(inbound, args) },
     { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
