@@ -34,7 +34,14 @@ export function stableStringify(value: unknown): string {
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer = setTimeout(() => {
+      // La espera se acaba, pero la petición original sigue en marcha: quien la
+      // necesite (un envío a Telegram que quizá ya llegó) la encuentra en `pending`
+      // y puede esperar su respuesta en vez de mandarla otra vez.
+      const err = new Error(message);
+      Object.defineProperty(err, 'pending', { value: promise, enumerable: false });
+      reject(err);
+    }, ms);
     timer.unref?.();
   });
   return Promise.race([promise, timeout]).finally(() => {
