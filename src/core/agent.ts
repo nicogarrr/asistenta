@@ -14,6 +14,7 @@ import { extractDoneSummary, isTerminalToolName } from '../tools/done.js';
 import { stableStringify } from '../utils.js';
 import { IterationBudget } from './budget.js';
 import { FileWriteTracker } from './filewrites.js';
+import { stepWarning } from './hecho.js';
 import type { ContextComposition } from './history.js';
 import {
   compactHistory,
@@ -443,6 +444,17 @@ export function resolveIterationBudget(
 export const MAX_TOOL_RESULT_CHARS = 24_000;
 
 const MAX_TRACKED_STEPS = 200;
+
+/** El texto de un resultado de herramienta (solo para buscar avisos, nunca se guarda). */
+function resultTextOf(result: unknown): string {
+  const content = (result as { content?: Array<{ type?: string; text?: unknown }> } | undefined)
+    ?.content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((c) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : ''))
+    .join('\n')
+    .slice(0, 20_000);
+}
 
 /**
  * Cap the text parts of a tool result at `max` chars in total, keeping the head and
@@ -1560,7 +1572,13 @@ export class PersonalAgent {
         shared.startActions.delete(event.toolCallId);
         const gateBlocked = event.isError && this.#gateBlockedIds.has(event.toolCallId);
         if (!gateBlocked && shared.steps.length < MAX_TRACKED_STEPS) {
-          shared.steps.push({ tool: event.toolName, action, ok: !event.isError });
+          const warn = event.isError ? '' : stepWarning(resultTextOf(event.result));
+          shared.steps.push({
+            tool: event.toolName,
+            action,
+            ok: !event.isError,
+            ...(warn ? { warn } : {}),
+          });
         }
         if (hooks?.onToolEnd) {
           try {
