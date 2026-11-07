@@ -115,6 +115,7 @@ export const BATTERY_CALL_KIND: Readonly<Record<string, 'lee' | 'actua'>> = {
   'memory.suggest_nudge': 'lee',
   'memory.remember': 'actua',
   'memory.forget': 'actua',
+  'memory.update': 'actua',
   'memory.save_profile': 'actua',
   'memory.forget_profile': 'actua',
   'reminder.list': 'lee',

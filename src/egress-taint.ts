@@ -90,6 +90,7 @@ const NON_TAINTING_ACTIONS: ReadonlySet<string> = new Set([
   'media:play',
   'memory:remember',
   'memory:forget',
+  'memory:update',
   'memory:save_profile',
   'memory:forget_profile',
   'reminder:create',
