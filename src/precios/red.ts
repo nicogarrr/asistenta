@@ -19,6 +19,19 @@ export const CABECERAS: Record<string, string> = {
   Accept: 'text/html,application/xhtml+xml',
 };
 
+/** Fuente pública de chollos (RSS o t.me/s/<canal>): GET normal, solo https, 20 s, 2 MB. */
+export function leerFuenteHttp(f: typeof fetch = fetch, timeoutMs = 20_000) {
+  return async (url: string): Promise<Respuesta> => {
+    if (!/^https:\/\//.test(url)) throw new Error('solo leo fuentes https');
+    const r = await f(url, {
+      headers: { ...CABECERAS, Accept: 'application/rss+xml,application/xml,text/html' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return { status: r.status, html: (await r.text()).slice(0, 2_000_000) };
+  };
+}
+
 export function leerHttp(f: typeof fetch = fetch, timeoutMs = 20_000) {
   return async (url: string): Promise<Respuesta> => {
     if (!/^https:\/\/www\.amazon\.es\//.test(url)) throw new Error('solo leo páginas de amazon.es');
@@ -222,6 +235,8 @@ export interface ConfigPrecios {
   rapidoMin: number;
   paginasRapido: number;
   rapidas: string | undefined;
+  /** Fuentes públicas de chollos (`PA_PRECIOS_FUENTES`, ver fuentes.ts). */
+  fuentes: string | undefined;
   /** Marcas que cuentan como «sin marca» (las de por defecto + `PA_PRECIOS_SIN_MARCA`). */
   sinMarca: string[];
 }
@@ -257,6 +272,7 @@ export function configPrecios(env: NodeJS.ProcessEnv = process.env): ConfigPreci
     })(),
     paginasRapido: Math.round(num(env.PA_PRECIOS_RAPIDO_PAGINAS, 4, 1, 10)),
     rapidas: env.PA_PRECIOS_RAPIDAS,
+    fuentes: env.PA_PRECIOS_FUENTES,
     sinMarca: [
       ...SIN_MARCA_POR_DEFECTO,
       ...(env.PA_PRECIOS_SIN_MARCA ?? '')
