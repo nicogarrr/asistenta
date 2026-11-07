@@ -33,9 +33,30 @@
    * that is on screen but belongs to some other control would be reported as this field's
    * suggestions, which is worse than reporting nothing.
    */
+  /**
+   * Only a control that takes typed input can own a suggestion panel. Before this, every
+   * link with a list below it (a whole Wikipedia menu) was reported as «ABIERTO» and the
+   * snapshot opened with «120 campo(s) con sugerencias abiertas» on a page with none.
+   */
+  function isField(el) {
+    var tag = el.tagName.toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return true;
+    if (el.isContentEditable) return true;
+    var role = (el.getAttribute('role') || '').toLowerCase();
+    if (role === 'combobox' || role === 'textbox' || role === 'searchbox') return true;
+    if (tag !== 'input') return false;
+    var type = (el.getAttribute('type') || 'text').toLowerCase();
+    return ['checkbox', 'radio', 'button', 'submit', 'reset', 'hidden', 'image', 'file'].indexOf(type) === -1;
+  }
+
   function openPanelFor(input) {
+    // A plain list (ul/ol/menu) under a field is a suggestion panel only while the field
+    // is being used: focused, or declaring itself expanded. Lists marked up as listbox /
+    // option / menuitem are panels by their own declaration.
+    var engaged =
+      global.document.activeElement === input || input.getAttribute('aria-expanded') === 'true';
     var candidates = global.document.querySelectorAll(
-      '[role=option],[role=menuitem],[role=listbox],ul,ol,menu',
+      engaged ? '[role=option],[role=menuitem],[role=listbox],ul,ol,menu' : '[role=option],[role=menuitem],[role=listbox]',
     );
     var box = input.getBoundingClientRect();
     var best = null;
@@ -196,6 +217,72 @@
     return parts.length ? parts.join(' > ') : tag;
   }
 
+  var MONEY =
+    /(\d[\d.,]*\s?(€|eur\b|usd\b|gbp\b|\$|£))|((€|\$|£|us\$)\s?\d[\d.,]*)/i;
+
+  /**
+   * What the page says, as opposed to what can be clicked: the headings, the amounts
+   * that read like money, and the opening of the main text. Small and capped, because
+   * the element list alone left the model blind to the price on a product page.
+   */
+  // Rendered text, so block boundaries become spaces («libre que», not «libreque»).
+  function readable(el) {
+    var raw = typeof el.innerText === 'string' ? el.innerText : el.textContent || '';
+    return raw.replace(/\s+/g, ' ').trim();
+  }
+
+  function pageFacts() {
+    var doc = global.document;
+    var headings = [];
+    var hs = doc.querySelectorAll('h1,h2,h3');
+    for (var i = 0; i < hs.length && headings.length < 12; i++) {
+      if (!visible(hs[i])) continue;
+      var t = readable(hs[i]).slice(0, 70);
+      if (t && headings.indexOf(t) === -1) headings.push(t);
+    }
+
+    var prices = [];
+    if (doc.body && doc.createTreeWalker) {
+      var walker = doc.createTreeWalker(doc.body, 4 /* NodeFilter.SHOW_TEXT */);
+      var node;
+      var scanned = 0;
+      while ((node = walker.nextNode()) && prices.length < 6 && scanned < 20000) {
+        scanned++;
+        var raw = node.nodeValue || '';
+        if (raw.length > 400 || !MONEY.test(raw)) continue;
+        var host = node.parentElement;
+        if (!host || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(host.tagName) || !visible(host)) continue;
+        // The amount with a little of the element it sits in ("Precio: 12,99 €"), which
+        // is what tells a price from a shipping cost.
+        var around = host.parentElement && textOf(host).length < 25 ? host.parentElement : host;
+        var line = textOf(around);
+        if (line.length > 80) line = (raw.replace(/\s+/g, ' ').trim() || line).slice(0, 80);
+        if (line && prices.indexOf(line) === -1) prices.push(line);
+      }
+    }
+
+    var main =
+      doc.querySelector('main,[role=main],article,#mw-content-text,#content') || doc.body;
+    var text = '';
+    if (main) {
+      // Paragraphs first: an infobox cell or a menu item is not the opening of the text.
+      var passes = ['p', 'li,dd,td'];
+      for (var q = 0; q < passes.length && !text; q++) {
+        var ps = main.querySelectorAll(passes[q]);
+        for (var j = 0; j < ps.length && text.length < 480; j++) {
+          var p = ps[j];
+          if (!visible(p)) continue;
+          var pt = readable(p);
+          if (pt.length < 40 || text.indexOf(pt.slice(0, 60)) !== -1) continue;
+          text += (text ? ' ' : '') + pt;
+        }
+      }
+      if (!text) text = readable(main).slice(0, 480);
+    }
+    if (text.length > 480) text = text.slice(0, 477) + '…';
+    return { headings: headings, prices: prices, text: text };
+  }
+
   global.__paScanPage = function (args) {
     var max = args && args.max ? args.max : 120;
     var interesting =
@@ -205,6 +292,11 @@
 
     var nodes = Array.prototype.slice.call(global.document.querySelectorAll(interesting));
     var elements = [];
+    var dedupe = !!(args && args.dedupe);
+    var seenLinks = {};
+    var duplicates = 0;
+    var vw = global.innerWidth || 0;
+    var vh = global.innerHeight || 0;
     for (var i = 0; i < nodes.length; i++) {
       if (elements.length >= max) break;
       var el = nodes[i];
@@ -214,6 +306,31 @@
       var name = nameOf(el);
       if (!name) continue;
       var role = roleOf(el);
+      var href = el.tagName === 'A' ? el.getAttribute('href') || '' : '';
+      // The same link twice (a logo and a title to the same page, a menu repeated in the
+      // footer) is one thing to click, not two lines to read.
+      if (dedupe && href) {
+        var key = name.toLowerCase() + '\u0000' + href;
+        if (seenLinks[key]) {
+          duplicates++;
+          continue;
+        }
+        seenLinks[key] = true;
+      }
+      // A short ref that stays on the node: the same element keeps the same ref across
+      // snapshots for as long as it is in the page, and `[data-pa-ref="e7"]` reaches it
+      // however the classes around it change.
+      var ref = el.getAttribute('data-pa-ref');
+      if (!ref) {
+        global.__paRefSeq = (global.__paRefSeq || 0) + 1;
+        ref = 'e' + global.__paRefSeq;
+        try {
+          el.setAttribute('data-pa-ref', ref);
+        } catch (e) {
+          ref = '';
+        }
+      }
+      var r = el.getBoundingClientRect();
       elements.push({
         index: elements.length,
         kind: kindOf(el, role),
@@ -222,6 +339,9 @@
         value: value === null ? '' : value,
         sensitive: sensitive,
         selector: selectorOf(el),
+        ref: ref,
+        href: href ? href.slice(0, 80) : '',
+        inView: r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw,
         // Kept so the panel lookup below can measure distance to the actual node. It
         // never leaves this function.
         _el: el,
@@ -236,9 +356,17 @@
 
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i]._el;
-      if (!el) continue;
+      if (!el || !isField(el)) continue;
       var panel = openPanelFor(el);
       if (!panel) continue;
+      // The nearest hit is often one option of the panel; its options are its siblings.
+      var role0 = (panel.getAttribute('role') || '').toLowerCase();
+      if (role0 === 'option' || role0 === 'menuitem' || panel.tagName === 'LI') {
+        panel =
+          (panel.parentElement && panel.parentElement.closest('[role=listbox],[role=menu],ul,ol,menu')) ||
+          panel.parentElement ||
+          panel;
+      }
       if (seenPanels.indexOf(panel) === -1) seenPanels.push(panel);
       var opts = panel.querySelectorAll('[role=option],[role=menuitem],li');
       var count = 0;
@@ -255,7 +383,13 @@
       }
     }
 
+    var facts = args && args.facts ? pageFacts() : null;
+
     return {
+      duplicates: duplicates,
+      headings: facts ? facts.headings : undefined,
+      prices: facts ? facts.prices : undefined,
+      text: facts ? facts.text : undefined,
       title: global.document.title,
       url: global.location.href,
       total: nodes.length,

@@ -3,6 +3,7 @@ import { notePageAfterFailedCall } from '../browser/page-after-call.js';
 import {
   type BrowserService,
   type ExecJsResult,
+  expandRef,
   looksLikeCssSelector,
   type TargetResult,
   type WaitResult,
@@ -169,6 +170,13 @@ const BrowserParams = lazySchema(() =>
       }),
     ),
     fullPage: Type.Optional(Type.Boolean({ description: 'For screenshot.' })),
+    full: Type.Optional(
+      Type.Boolean({
+        description:
+          'For snapshot: list every element of the page, not only the ones in view. Use it ' +
+          'when the snapshot says «+N fuera de la vista» and what you need is not listed.',
+      }),
+    ),
     mobile: Type.Optional(
       Type.Boolean({
         description:
@@ -505,10 +513,12 @@ export function createBrowserTool(
       '   root (https://site.com) and navigate from there with links and searches. If a url',
       '   404s, the browser has already retried from the home page for you and the result',
       '   says so (retryFromRoot).',
-      '2. action=snapshot to list the interactive elements. Each line gives the selector,',
-      '   what kind of control it is, its ARIA role, the value a field currently holds, and',
-      '   its [index]. If a field has suggestions open it says so on that field line and at',
-      '   the top of the snapshot.',
+      '2. action=snapshot to read the page: title, headings, prices, the opening text, then',
+      '   the interactive elements in view, one line each: ref[kind] value="..." "name".',
+      '   The ref (e12, or a short selector like input#q) goes straight into selector=.',
+      '   Refs stay the same for the same element across snapshots. Elements out of view are',
+      '   counted at the end; full: true lists them all. If a field has suggestions open it',
+      '   says so on that field line and at the top of the snapshot.',
       '3. action=click / fill / press with a selector from that snapshot. You may also pass',
       '   the visible text instead of a selector; it is resolved by role, then text, then',
       '   label, then by similarity, and a miss lists the closest things that do exist.',
@@ -591,6 +601,7 @@ export function createBrowserTool(
     // Read by the agent before the permission gate runs: the page's own words about the
     // element the model is about to act on.
     gateHint: async (args: Record<string, unknown>) => {
+      expandRefArgs(args);
       const action = String(args.action ?? '');
       const selector = typeof args.selector === 'string' ? args.selector : '';
       if (!selector || !['click', 'fill', 'press', 'choose'].includes(action)) return '';
@@ -611,6 +622,7 @@ export function createBrowserTool(
     execute: async (_id, args) => {
       const scope = scopeOf();
       const record = args as unknown as Record<string, unknown>;
+      expandRefArgs(record);
       // El elemento que Nico aprobó tiene que ser el que recibe la acción. Si entre
       // la pregunta y la respuesta (una aprobación lenta) la página cambió y el mismo
       // selector apunta ahora a otro elemento, no se actúa: se avisa y se vuelve a mirar.
@@ -656,7 +668,7 @@ export function createBrowserTool(
         }
 
         case 'snapshot': {
-          const text = await service.snapshot(scope);
+          const text = await service.snapshot(scope, 120, { full: record.full === true });
           const note = await challengeNote(service, scope, sendImage);
           return {
             content: [
@@ -1123,6 +1135,18 @@ function withPageUrl<T extends { details?: unknown }>(
  * `selector=Buscar` and a model that typed `with=Buscar` are both expressing the same
  * intent, and making one of them fail on a parameter name is a wasted turn.
  */
+/**
+ * A snapshot ref (`e12`) in selector / with / from becomes the selector that reaches its
+ * node, before the gate reads the target and before the action runs, so both see the
+ * same element. Idempotent.
+ */
+function expandRefArgs(record: Record<string, unknown>): void {
+  for (const key of ['selector', 'with', 'from'] as const) {
+    const value = record[key];
+    if (typeof value === 'string') record[key] = expandRef(value);
+  }
+}
+
 function requireTarget(record: Record<string, unknown>): string {
   const selector = String(record.selector ?? '').trim();
   if (selector) return selector;

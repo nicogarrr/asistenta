@@ -7,7 +7,7 @@ import { modoAhorro } from '../ahorro.js';
 import { uniqueTmpPath } from '../fs-tmp.js';
 import { log } from '../log.js';
 import { paths } from '../paths.js';
-import { foldAccents, urlHostname } from '../text.js';
+import { foldAccents, sliceSafe, urlHostname } from '../text.js';
 import { isFetchableResolved } from '../tools/fetch.js';
 import { AD_ARGS, type AdSkipResult, type MediaState } from './ads.js';
 import { type ChooseResult, chooseSuggestion } from './autocomplete.js';
@@ -267,6 +267,12 @@ export interface PageElement {
   sensitive?: boolean;
   /** Best-effort selector that addresses exactly this element. */
   selector: string;
+  /** Short ref stamped on the node (`e7`), stable while the node stays in the page. */
+  ref?: string;
+  /** Inside the current viewport. */
+  inView?: boolean;
+  /** href of a link, as written in the page. */
+  href?: string;
   /**
    * Suggestions currently open for THIS field. Reported per element because a panel is
    * only actionable through the field it belongs to, and a page can hold several
@@ -289,6 +295,14 @@ export interface PageScan {
   suggestions: string[];
   /** The listed elements, capped. */
   elements: PageElement[];
+  /** Links left out because the same name and href were already listed (dedupe scans). */
+  duplicates?: number;
+  /** Visible h1–h3 texts (facts scans). */
+  headings?: string[];
+  /** Visible text that reads like money, with a little of its context (facts scans). */
+  prices?: string[];
+  /** Opening of the main text, capped (facts scans). */
+  text?: string;
 }
 
 /** Result of waiting for something to appear. */
@@ -766,7 +780,7 @@ export function formatSnapshot(scan: PageScan): string {
     // The panel count sits on the field's own line, because that is where the next
     // action goes. A count in the header would have to be matched back to a field by
     // reading, and the model would guess wrong as often as right.
-    const open = el.openSuggestions > 0 ? ` ABIERTO:${el.openSuggestions} opciones` : '';
+    const open = (el.openSuggestions ?? 0) > 0 ? ` ABIERTO:${el.openSuggestions} opciones` : '';
     return `${el.selector}${role}${value} "${name}" [${el.index}]${safe}${open}`;
   });
   const head = [
@@ -787,6 +801,109 @@ export function formatSnapshot(scan: PageScan): string {
     );
   }
   return [...head, ...lines].join('\n');
+}
+
+/**
+ * A snapshot ref (`e12`, `@e12`, `[e12]`) as the CSS selector that reaches its node.
+ * Anything else comes back unchanged, so this is safe on every target the model passes.
+ */
+export function expandRef(target: string): string {
+  const m = /^\[?@?(e\d{1,6})\]?$/i.exec(target.trim());
+  return m?.[1] ? `[data-pa-ref="${m[1].toLowerCase()}"]` : target;
+}
+
+/** `PA_BROWSER_SNAPSHOT=verbose` brings back the long pre-compact snapshot. */
+export function snapshotVerbose(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(verbose|largo|full|old|1|true)$/i.test((env.PA_BROWSER_SNAPSHOT ?? '').trim());
+}
+
+/** Elements the compact snapshot lists before it says «+N más». */
+export const COMPACT_SNAPSHOT_ELEMENTS = 45;
+const COMPACT_NAME_CHARS = 60;
+
+/** The selector a compact line leads with: a short own selector, else the ref. */
+function compactTarget(el: PageElement): string {
+  const own = el.selector;
+  const short =
+    own.length <= 40 && !own.includes('nth-of-type') && !own.includes('>') && /[#[]/.test(own);
+  return short || !el.ref ? own : el.ref;
+}
+
+/**
+ * Pick what the compact snapshot shows: everything in the viewport first, then the rest
+ * of the page in document order, up to `cap`. Display order stays document order.
+ */
+export function compactPick(elements: readonly PageElement[], cap: number): PageElement[] {
+  if (elements.length <= cap) return [...elements];
+  // A field with suggestions open always makes it: it decides the next step.
+  const open = (el: PageElement) => (el.openSuggestions ?? 0) > 0;
+  const must = elements.filter(open);
+  const inView = elements.filter((el) => el.inView !== false && !open(el));
+  const rest = elements.filter((el) => el.inView === false && !open(el));
+  const chosen = new Set<PageElement>(must);
+  for (const el of [...inView, ...rest]) {
+    if (chosen.size >= cap) break;
+    chosen.add(el);
+  }
+  return elements.filter((el) => chosen.has(el));
+}
+
+/**
+ * The compact snapshot: what the page says (headings, prices, opening text) and what can
+ * be done on it, one short line per element.
+ *
+ * Line shape: `ref[kind] value="..." "name"`, where ref is the element's own short
+ * selector (`input#q`, `[data-testid="x"]`) or its stamped ref (`e12`) when it only had
+ * a long nth-of-type path. Either goes straight into selector= on the next call. The
+ * Wikipedia home page went from 16,159 characters to about a fifth of that.
+ */
+export function formatCompactSnapshot(
+  scan: PageScan,
+  opts: { cap?: number; full?: boolean; truncated?: boolean } = {},
+): string {
+  const cap = opts.full ? Number.POSITIVE_INFINITY : (opts.cap ?? COMPACT_SNAPSHOT_ELEMENTS);
+  const shown = compactPick(scan.elements, cap);
+  const clip = (s: string, n: number) => (s.length > n ? `${sliceSafe(s, n - 1)}…` : s);
+  const out: string[] = [`${scan.title}\n${scan.url}`];
+  if (scan.openSuggestions > 0) {
+    const list = scan.suggestions
+      .slice(0, 12)
+      .map((s) => `"${s}"`)
+      .join(', ');
+    out.push(
+      `ATENCION: ${scan.openSuggestions} campo(s) con sugerencias abiertas ahora mismo` +
+        (list ? `: ${list}` : '') +
+        '. Elige con action=pick, o pulsa la que quieras.',
+    );
+  }
+  if (scan.headings?.length) out.push(`Encabezados: ${clip(scan.headings.join(' · '), 420)}`);
+  if (scan.prices?.length) out.push(`Precios: ${scan.prices.map((p) => `«${p}»`).join(' ')}`);
+  if (scan.text) out.push(`Texto: ${scan.text}`);
+  out.push(`Elementos (${shown.length} de ${scan.total}; usa el ref como selector):`);
+  for (const el of shown) {
+    const kind = el.role && el.role !== el.kind ? el.role : el.kind;
+    const value = el.value?.trim()
+      ? ` value="${clip(el.value.replace(/\s+/g, ' '), COMPACT_NAME_CHARS)}"`
+      : '';
+    const safe = el.sensitive ? ' [sensible]' : '';
+    const raw = (el.name || el.selector).replace(/\s+/g, ' ').trim();
+    // A link with no words of its own (a logo, an image) is named by where it goes.
+    const named = raw === kind && el.href ? el.href : raw;
+    const name = clip(named, COMPACT_NAME_CHARS);
+    const open = (el.openSuggestions ?? 0) > 0 ? ` ABIERTO:${el.openSuggestions} opciones` : '';
+    const label = name === kind ? '' : ` "${name}"`;
+    out.push(`${compactTarget(el)}[${kind}]${value}${label}${safe}${open}`);
+  }
+  const hidden = scan.elements.length - shown.length;
+  if (hidden > 0) {
+    out.push(
+      `(+${hidden}${opts.truncated ? ' o más' : ''} fuera de la vista: action=snapshot ` +
+        'full=true para verlos; el texto visible también vale como selector)',
+    );
+  } else if (opts.truncated) {
+    out.push('(la página tiene más elementos: action=snapshot full=true para verlos)');
+  }
+  return out.join('\n');
 }
 
 export class BrowserService {
@@ -1595,8 +1712,9 @@ export class BrowserService {
    * the next action.
    */
   /** What the element behind `selector` is and does, for the permission gate. */
-  async describeTarget(scope: string, selector: string): Promise<string> {
+  async describeTarget(scope: string, rawSelector: string): Promise<string> {
     const session = await this.#session(scope);
+    const selector = expandRef(rawSelector);
     const literal = await describeTarget(session.page, selector, 1_000, 1_000);
     if (literal !== UNREADABLE_TARGET) return literal;
     // The model may name the element by the text it reads on screen. The action resolves
@@ -1635,9 +1753,26 @@ export class BrowserService {
     return pageSummary(session.page);
   }
 
-  async snapshot(scope: string, limit = 120): Promise<string> {
-    const scan = await this.elements(scope, limit);
-    return formatSnapshot(scan);
+  /**
+   * The page for the model. Compact by default (see formatCompactSnapshot);
+   * `full` lists every element instead of the viewport-first slice, and
+   * PA_BROWSER_SNAPSHOT=verbose brings back the old long format unchanged.
+   */
+  async snapshot(scope: string, limit = 120, opts: { full?: boolean } = {}): Promise<string> {
+    if (snapshotVerbose()) {
+      const scan = await this.elements(scope, limit);
+      return formatSnapshot(scan);
+    }
+    const session = await this.#session(scope);
+    const capped = Math.max(1, Math.min(600, opts.full ? Math.max(limit, 200) : limit));
+    const scan = await callPageScan<{ max: number; dedupe: boolean; facts: boolean }, PageScan>(
+      session.page,
+      { max: capped, dedupe: true, facts: true },
+    );
+    return formatCompactSnapshot(scan, {
+      full: opts.full,
+      truncated: scan.elements.length >= capped,
+    });
   }
 
   /** The structured version of the snapshot, for anything that wants the fields. */
@@ -1675,10 +1810,11 @@ export class BrowserService {
    */
   async #resolveLocator(
     session: Session,
-    target: string,
+    rawTarget: string,
     budgetMs: number,
   ): Promise<Resolved | null> {
     const page = session.page;
+    const target = expandRef(rawTarget);
     const attempts: Array<{
       how: string;
       js: string;
@@ -1896,7 +2032,7 @@ export class BrowserService {
     const session = await this.#session(scope);
     const started = Date.now();
     const wanted: Array<{ label: string; make: () => Locator }> = [];
-    const selector = target.selector?.trim() ?? '';
+    const selector = expandRef(target.selector?.trim() ?? '');
     const text = target.text?.trim() ?? '';
     if (selector) {
       wanted.push({ label: selector, make: () => session.page.locator(selector).first() });
