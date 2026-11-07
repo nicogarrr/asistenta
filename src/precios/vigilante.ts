@@ -18,11 +18,14 @@ import {
   parseListado,
   urlFicha,
 } from './amazon.js';
+import { type Pista, parseFuente, urlPista } from './fuentes.js';
 import { parseCamel, urlCamel } from './historial.js';
 import {
   CONFIG_REGLA,
   type ConfigRegla,
   candidato,
+  claveModelo,
+  descarteListado,
   type Lectura,
   type Referencia,
   referenciaPares,
@@ -252,6 +255,15 @@ export interface DepsVigilante {
   paginasRapido?: number;
   /** Histórico externo (camelcamelcamel) de un candidato que solo tiene PVP. */
   leerHistorial?(url: string): Promise<Respuesta>;
+  /**
+   * Fuentes públicas de chollos (RSS, t.me/s/<canal>) que se leen en el barrido rápido como
+   * PISTAS (src/precios/fuentes.ts): cada una es una búsqueda más en amazon.es; avisar sigue
+   * necesitando la ficha y un histórico real.
+   */
+  fuentes?: string[];
+  leerFuente?(url: string): Promise<Respuesta>;
+  /** Pistas nuevas que se buscan como mucho por barrido rápido (por defecto 2). */
+  pistas?: number;
   /** Fichas que se abren como mucho por barrido para verificar (por defecto 3). */
   fichas?: number;
   /** Pausa entre peticiones [mín, máx] en ms (por defecto 6–12 s). */
@@ -295,6 +307,9 @@ export interface Resumen {
 
 export interface Estado {
   cursorRapido?: number;
+  /** Fuente de chollos que toca leer y pistas ya buscadas (las últimas 500). */
+  cursorFuente?: number;
+  fuentesVistas?: string[];
   ultimoRapido?: Resumen | null;
   /** null = lo que diga PA_PRECIOS (encendido por defecto). */
   encendido: boolean | null;
@@ -394,10 +409,18 @@ export function textoAviso(a: {
   cents: number;
   ref: Referencia;
   vendedor: string;
+  externo?: { nombre: string | null; enviaAmazon: boolean };
 }): string {
   const pct = Math.round((1 - a.cents / a.ref.cents) * 100);
+  const ext = a.externo
+    ? [
+        `⚠️ vendedor externo${a.externo.nombre ? `: ${a.externo.nombre}` : ''}` +
+          (a.externo.enviaAmazon ? ' (lo envía Amazon)' : ' (no lo vende ni lo envía Amazon)'),
+      ]
+    : [];
   return [
     '🚨 ERROR DE PRECIO',
+    ...ext,
     a.titulo.slice(0, 160),
     `💶 ${eurosTexto(a.cents)} (referencia ${eurosTexto(a.ref.cents)}, −${pct} %)`,
     `📏 Referencia: ${eurosTexto(a.ref.cents)} (${FUENTE[a.ref.fuente]})`,
@@ -476,6 +499,31 @@ export class VigilantePrecios {
     }
   }
 
+  /** Lee la fuente de chollos que toca (rotando) y devuelve las pistas nuevas. Nunca lanza. */
+  async #pistas(e: Estado, r: Resumen): Promise<Pista[]> {
+    const fuentes = this.#d.fuentes ?? [];
+    if (!fuentes.length || !this.#d.leerFuente) return [];
+    const i = (e.cursorFuente ?? 0) % fuentes.length;
+    e.cursorFuente = (i + 1) % fuentes.length;
+    const url = fuentes[i] as string;
+    try {
+      const res = await this.#d.leerFuente(url);
+      if (res.status >= 400) {
+        r.errores.push(`fuente ${url}: respuesta ${res.status}`);
+        return [];
+      }
+      const vistas = new Set(e.fuentesVistas ?? []);
+      const nuevas = parseFuente(res.html)
+        .filter((p) => !vistas.has(p.id))
+        .slice(0, this.#d.pistas ?? 2);
+      e.fuentesVistas = [...(e.fuentesVistas ?? []), ...nuevas.map((p) => p.id)].slice(-500);
+      return nuevas;
+    } catch (err) {
+      r.errores.push(`fuente ${url}: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  }
+
   async #barrer(rapido: boolean): Promise<Resumen | null> {
     const e = this.leer();
     const inicio = this.#now();
@@ -493,12 +541,17 @@ export class VigilantePrecios {
       avisos: 0,
       errores: [],
     };
-    const porVerificar: { it: ItemListado; lecturas: Lectura[] }[] = [];
+    const porVerificar: { it: ItemListado; lecturas: Lectura[]; pista?: boolean }[] = [];
+    const pistas = rapido ? await this.#pistas(e, r) : [];
     let mejor: Hoy['mejor'] = null;
     let bloqueado = false;
     const n = Math.min(rapido ? (this.#d.paginasRapido ?? 4) : (this.#d.paginas ?? 6), urls.length);
-    for (let i = 0; i < n && !bloqueado; i++) {
-      const url = urls[(cursor + i) % urls.length] as string;
+    const paginas: { url: string; pista?: Pista }[] = [
+      ...pistas.map((p) => ({ url: urlPista(p), pista: p })),
+      ...Array.from({ length: n }, (_, i) => ({ url: urls[(cursor + i) % urls.length] as string })),
+    ];
+    for (let i = 0; i < paginas.length && !bloqueado; i++) {
+      const { url, pista } = paginas[i] as { url: string; pista?: Pista };
       if (i > 0) await this.#pausa();
       let res: Respuesta;
       try {
@@ -524,6 +577,15 @@ export class VigilantePrecios {
         continue;
       }
       r.paginas++;
+      // La pista es UN producto: el de su ASIN o, si no lo trae, el primero con su marca y modelo.
+      const dePista = pista
+        ? items.find((it) =>
+            pista.asin
+              ? it.asin === pista.asin
+              : claveModelo(it.titulo) !== '' &&
+                claveModelo(it.titulo) === claveModelo(pista.titulo),
+          )
+        : undefined;
       for (const it of items) {
         if (it.cents === null) continue;
         r.vistos++;
@@ -537,7 +599,10 @@ export class VigilantePrecios {
         const lecturas = a.l.map(([at, cents]) => ({ at, cents }));
         if (!porVerificar.some((p) => p.it.asin === it.asin)) {
           if (candidato(it, lecturas, cfg)) porVerificar.push({ it, lecturas });
-          else {
+          else if (it === dePista && !descarteListado(it)) {
+            // Pista de una fuente de chollos: se abre la ficha aunque el listado no lo delate.
+            porVerificar.push({ it, lecturas, pista: true });
+          } else {
             // Sin tachado: comparado con sus iguales de esta página (solo pista; la ficha y un
             // histórico real deciden).
             const pares = referenciaPares(it, items, cfg);
@@ -556,11 +621,11 @@ export class VigilantePrecios {
     else e.cursor = (cursor + n) % urls.length;
     r.candidatos = porVerificar.length;
     // Lo más jugoso primero; como mucho `fichas` por barrido.
-    porVerificar.sort(
-      (x, y) => (x.it.cents ?? 0) / (x.it.refCents || 1) - (y.it.cents ?? 0) / (y.it.refCents || 1),
-    );
+    const clave = (p: { it: ItemListado; pista?: boolean }) =>
+      p.it.refCents ? (p.it.cents ?? 0) / p.it.refCents : p.pista ? 0.5 : 1;
+    porVerificar.sort((x, y) => clave(x) - clave(y));
     let abiertas = 0;
-    for (const { it, lecturas } of porVerificar) {
+    for (const { it, lecturas, pista } of porVerificar) {
       if (bloqueado || abiertas >= (this.#d.fichas ?? 3)) break;
       const prev = e.avisados[it.asin];
       if (prev && inicio - prev.at < REAVISO_MS && (it.cents ?? 0) > prev.cents * 0.9) continue;
@@ -586,7 +651,9 @@ export class VigilantePrecios {
       const ficha = parseFicha(res.html);
       let v = verificar(it, ficha, lecturas, cfg);
       // Solo con PVP: se confirma con el histórico externo de ESTE candidato (nunca en el barrido).
-      if (!v.ok && v.soloPvp && this.#d.leerHistorial) {
+      // Una pista sin referencia en la ficha también se mira en el histórico externo.
+      const sinRef = !v.ok && pista === true && v.motivo === 'sin referencia fiable';
+      if (!v.ok && (v.soloPvp || sinRef) && this.#d.leerHistorial) {
         await this.#pausa();
         try {
           const h = await this.#d.leerHistorial(urlCamel(it.asin));
@@ -613,6 +680,7 @@ export class VigilantePrecios {
             cents: v.cents,
             ref: v.ref,
             vendedor: v.vendedor,
+            ...(v.externo ? { externo: v.externo } : {}),
           }),
           botonesAviso(it.asin),
         );

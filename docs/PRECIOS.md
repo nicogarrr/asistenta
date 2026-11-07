@@ -31,6 +31,18 @@ barriendo, al doble de intervalo (normal cada 60 min, rápido cada ~24 min). El 
 «🚨 ERROR DE PRECIO» sale en el momento aunque sea de madrugada; nada más del vigilante manda
 mensajes de noche.
 
+**Pistas de webs de chollos.** En cada barrido rápido lee una fuente pública de chollos (por
+defecto el RSS de Chollometro, solo las ofertas de Amazon) y busca en amazon.es hasta 2 pistas
+nuevas: por su ASIN si lo trae o por marca y modelo. Una pista solo dice dónde mirar: el aviso
+sigue necesitando la ficha y un histórico real (el propio o camelcamelcamel). Así salen productos
+de cola larga que no están en ningún «más vendidos» (la dashcam RexingUSA a 19,73 €, ~170 € esa
+semana, 7-nov-2026). Cambiarlas: `PA_PRECIOS_FUENTES=https://www.chollometro.com/rss,https://t.me/s/<canal>`
+(RSS o la página pública t.me/s/ de un canal de Telegram); `PA_PRECIOS_FUENTES=no` las quita.
+
+**Vendedores externos.** Si no lo vende Amazon, también avisa, marcado «⚠️ vendedor externo:
+<nombre>» (y si lo envía Amazon o no). Su «Recomendado»/tachado no cuenta nunca: hace falta el
+histórico real, y tiene que ser de marca.
+
 **Sin precio tachado.** Un resultado sin tachado se compara con 3 o más iguales (misma marca y
 modelo: las dos primeras palabras del título y las que llevan cifras) de la misma página. Si
 cuesta ≤40 % de su mediana (p. ej. una ghd Gold a 29,90 € entre otras a 185–239 €), se abre la
