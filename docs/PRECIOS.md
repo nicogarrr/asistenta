@@ -19,8 +19,8 @@ Barrer ya: `/precios ahora`.
 ## Qué barre
 
 Por categoría (por defecto: informática, electrónica, grandes electrodomésticos, hogar y cocina,
-videojuegos, juguetes, deportes, bricolaje, belleza, bebé, bebidas/licores y relojes inteligentes —este por
-búsqueda—), tres listados: «Los más vendidos»,
+videojuegos, juguetes, deportes, bricolaje, belleza, bebé, bebidas/licores, coche y moto, jardín,
+iluminación, salud, mascotas, instrumentos musicales y relojes inteligentes —este por búsqueda—), tres listados: «Los más vendidos»,
 «Los que más suben» y las novedades de la búsqueda. Cada barrido lee 6 páginas (rotando), con
 6–12 s entre petición y petición. Elegir categorías:
 

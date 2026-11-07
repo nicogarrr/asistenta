@@ -48,6 +48,14 @@ const CATALOGO: Record<string, [string, string, string]> = {
   belleza: ['Belleza', 'beauty', 'beauty'],
   bebe: ['Bebé', 'baby', 'baby'],
   licores: ['Bebidas y licores', 'grocery', 'grocery'],
+  // Más cobertura (7-nov-2026: la dashcam RexingUSA a 19,73 € —antes ~170 €— era de «Coche y
+  // moto/Electrónica para vehículos», una categoría que no se barría).
+  coche: ['Coche y moto', 'automotive', 'automotive'],
+  jardin: ['Jardín', 'lawn-garden', 'lawngarden'],
+  iluminacion: ['Iluminación', 'lighting', 'lighting'],
+  salud: ['Salud y cuidado personal', 'hpc', 'hpc'],
+  mascotas: ['Productos para mascotas', 'pet-supplies', 'pets'],
+  instrumentos: ['Instrumentos musicales', 'musical-instruments', 'mi'],
 };
 
 /** Categorías sin «más vendidos» propio en Amazon.es: se barren por búsqueda (id → [nombre, búsquedas]). */

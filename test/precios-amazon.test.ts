@@ -315,7 +315,7 @@ describe('vigilante: barrido, aviso, duplicados y captcha', () => {
       'https://www.amazon.es/s?k=robot+aspirador',
     ]);
     expect(r.desconocidas).toEqual(['foo']);
-    expect(categoriasDesde('').categorias.length).toBe(12);
+    expect(categoriasDesde('').categorias.length).toBe(18);
   });
 });
 
