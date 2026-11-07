@@ -5,6 +5,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import {
+  appendFileSync,
   closeSync,
   cpSync,
   existsSync,
@@ -183,6 +184,44 @@ export function readLogTail(file: string, max = 64 * 1024): string | null {
   }
 }
 
+/**
+ * Aparta archivos del repo a `<estado>/autoupdate/apartados/<fecha>/` (misma ruta relativa),
+ * sin borrar nada; `restore` los devuelve a su sitio.
+ */
+export function movePathsAside(
+  repo: string,
+  stateDir: string,
+  paths: string[],
+  now: Date = new Date(),
+): { dir: string; restore(): void } {
+  const dir = join(stateDir, AUTOUPDATE_DIR, 'apartados', now.toISOString().replace(/[:.]/g, '-'));
+  const done: string[] = [];
+  for (const rel of paths) {
+    const from = join(repo, rel);
+    const to = join(dir, rel);
+    if (!existsSync(from)) continue;
+    mkdirSync(dirname(to), { recursive: true });
+    try {
+      renameSync(from, to);
+    } catch {
+      // Otra unidad u otro volumen: copia y luego borra el original.
+      cpSync(from, to, { recursive: true });
+      rmSync(from, { recursive: true, force: true });
+    }
+    done.push(rel);
+  }
+  return {
+    dir,
+    restore: () => {
+      for (const rel of done) {
+        const to = join(repo, rel);
+        mkdirSync(dirname(to), { recursive: true });
+        cpSync(join(dir, rel), to, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
 export function realAutoupdateDeps(
   repo: string,
   stateDir: string,
@@ -222,6 +261,18 @@ export function realAutoupdateDeps(
     },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
+    logStep: (line) => {
+      try {
+        mkdirSync(join(stateDir, 'log'), { recursive: true });
+        appendFileSync(
+          join(stateDir, 'log', 'autoupdate.log'),
+          `${new Date().toISOString()} ${line}\n`,
+        );
+      } catch {
+        // Solo diagnóstico.
+      }
+    },
+    moveAside: (paths) => movePathsAside(repo, stateDir, paths),
     log: (text) => {
       try {
         mkdirSync(join(stateDir, AUTOUPDATE_DIR), { recursive: true });
