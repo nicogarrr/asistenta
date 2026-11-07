@@ -7148,6 +7148,30 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const r = await tailscaleCommand(kind, { env: process.env, run: defaultTailscaleRun() });
     await say(inbound, r.text, { quote: true, buttons: r.buttons });
   };
+  /** /obsidian: la carpeta de memoria como bóveda de Obsidian, en el PC y en el iPhone. */
+  const cmdObsidian = async (inbound: Inbound): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const { BOVEDA } = await import('./paths.js');
+    const { copiasDuplicadas, obsidianActivo, textoObsidian } = await import(
+      './memory/obsidian.js'
+    );
+    await say(
+      inbound,
+      textoObsidian({
+        memoria: paths.memoria,
+        pedida: BOVEDA.pedida,
+        motivo: BOVEDA.motivo,
+        activo: obsidianActivo(),
+        duplicados: copiasDuplicadas(paths.memory),
+      }),
+      { quote: true },
+    );
+  };
   /** /atajos: cómo montar los atajos del iPhone (docs/atajos-iphone.md), con la URL y el token. */
   const cmdAtajos = async (inbound: Inbound): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -10200,6 +10224,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['tailscale'], run: (inbound) => cmdTailscale(inbound, 'estado') },
     { names: ['panel'], run: (inbound) => cmdTailscale(inbound, 'panel') },
     { names: ['atajos', 'atajo', 'siri'], run: (inbound) => cmdAtajos(inbound) },
+    { names: ['obsidian', 'boveda'], run: (inbound) => cmdObsidian(inbound) },
     { names: ['iphone'], run: (inbound) => cmdIphone(inbound) },
     {
       names: ['voz'],

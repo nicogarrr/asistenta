@@ -48,8 +48,8 @@ describe('indice.md con temas y cuentas', () => {
     m.remember(OTRO, 'Mi coche es rojo');
     escribirIndiceMemoria(dir, new Date(2026, 10, 7));
     const indice = readFileSync(join(dir, 'indice.md'), 'utf8');
-    expect(indice).toContain('- notas/coches.md — 2 hechos');
-    expect(indice).toContain('- notas/salud.md — 1 hecho');
+    expect(indice).toContain('- [[notas/coches.md|coches]] — 2 hechos');
+    expect(indice).toContain('- [[notas/salud.md|salud]] — 1 hecho');
     expect(textoCarpetaMemoria(resumenCarpetaMemoria(dir))).toContain(
       'notas por tema: coches (2), salud (1)',
     );
@@ -61,7 +61,9 @@ describe('indice.md con temas y cuentas', () => {
       alEscribir: () => escribirIndiceMemoria(dir),
     });
     m.remember(DM, 'Le encanta Spotify');
-    expect(readFileSync(join(dir, 'indice.md'), 'utf8')).toContain('notas/musica.md — 1 hecho');
+    expect(readFileSync(join(dir, 'indice.md'), 'utf8')).toContain(
+      '[[notas/musica.md|musica]] — 1 hecho',
+    );
   });
 });
 
