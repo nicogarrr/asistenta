@@ -249,6 +249,33 @@ export class LlegadaStore {
     this.#write(data);
     return fired;
   }
+
+  /**
+   * Una automatización del iPhone dice que Nico acaba de llegar a (o salir de) un sitio
+   * (`/api/atajo/lugar`): sin coordenadas suyas, el sitio es el punto. Saltan (y se
+   * borran) los avisos de ese modo cuyo sitio es ese; los del modo contrario quedan
+   * armados, porque ya se sabe dónde está. iOS solo dispara al cruzar el borde, así que
+   * aquí no hace falta haberle visto antes al otro lado.
+   */
+  evento(
+    chatId: string,
+    modo: 'llegar' | 'salir',
+    at: { latitude: number; longitude: number },
+  ): LlegadaAviso[] {
+    const data = this.#read();
+    const fired: LlegadaAviso[] = [];
+    data.avisos = data.avisos.filter((a) => {
+      if (a.chatId !== chatId || distanceM(a, at) > a.radiusM) return true;
+      if ((a.modo ?? 'llegar') === modo) {
+        fired.push(a);
+        return false;
+      }
+      a.armed = true;
+      return true;
+    });
+    this.#write(data);
+    return fired;
+  }
 }
 
 /** El mensaje cuando salta. */
@@ -259,7 +286,7 @@ export function llegadaFiredText(a: LlegadaAviso): string {
 }
 
 export const LLEGADA_COMO =
-  'Para que funcione, compárteme tu ubicación en directo: 📎 → Ubicación → «Compartir mi ubicación en tiempo real» (mejor «hasta que la desactive»).';
+  'Para que funcione, compárteme tu ubicación en directo: 📎 → Ubicación → «Compartir mi ubicación en tiempo real» (mejor «hasta que la desactive»). Con iPhone, mejor la automatización «Al llegar a casa» de /atajos: no hace falta compartir nada.';
 
 /**
  * «cuando llegue a casa recuérdame sacar la basura», «recuérdame comprar pan cuando
@@ -352,6 +379,43 @@ export async function crearLlegada(
   return modo === 'salir'
     ? `🚪 Hecho: cuando salgas ${deSitio(label)} te recuerdo «${aviso.text}». ${LLEGADA_COMO}`
     : `📍 Hecho: cuando llegues ${aSitio(label)} te recuerdo «${aviso.text}». ${LLEGADA_COMO}`;
+}
+
+/**
+ * `/api/atajo/lugar`: la automatización «al llegar a casa» o «al salir de casa» del
+ * iPhone. Devuelve los avisos que saltan (para mandarlos también a Telegram) y la frase
+ * para el atajo: vacía si no había nada (la automatización no enseña nada). Nunca lanza.
+ */
+export async function atajoLugar(
+  deps: LlegadaDeps,
+  chatId: string,
+  modo: 'llegar' | 'salir',
+  sitio: string,
+): Promise<{ texto: string; avisos: LlegadaAviso[]; error?: boolean }> {
+  const name = sitio.trim() || 'casa';
+  const saved = deps.store.sitio(chatId, name);
+  let where: { latitude: number; longitude: number } | null = saved;
+  if (!where && /^casa$/i.test(name)) {
+    try {
+      where = deps.home();
+    } catch {
+      where = null;
+    }
+  }
+  if (!where)
+    return {
+      texto: /^casa$/i.test(name)
+        ? 'No sé dónde está tu casa: pon PA_BRIEFING_LAT y PA_BRIEFING_LON en el .env, o mándame la ubicación estando en casa y dime «guarda esto como casa».'
+        : comoGuardar(name),
+      avisos: [],
+      error: true,
+    };
+  const avisos = deps.store.evento(chatId, modo, where);
+  if (!avisos.length) return { texto: '', avisos };
+  const lugar = saved ? saved.name : 'casa';
+  const cabeza = modo === 'salir' ? `Sales ${deSitio(lugar)}.` : `Has llegado ${aSitio(lugar)}.`;
+  const lista = avisos.map((a) => a.text.replace(/[.\s]+$/, '')).join('. ');
+  return { texto: `${cabeza} Te recuerdo: ${lista}.`, avisos };
 }
 
 /**

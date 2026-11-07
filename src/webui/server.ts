@@ -1,9 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gzipSync } from 'node:zlib';
+import { leerLugar } from '../iphone/atajos.js';
 import { log } from '../log.js';
 import { createServer } from '../node-http.js';
-import { ATAJO_MAX_TEXTO, atajoModo, responderAtajo } from './atajo.js';
+import { ATAJO_FALLO, ATAJO_MAX_TEXTO, atajoModo, responderAtajo } from './atajo.js';
 import { panelFunciones } from './funciones-view.js';
 import { renderManifest, renderPage, renderServiceWorker } from './page.js';
 import { renderVozPage } from './voz-page.js';
@@ -78,6 +79,15 @@ export interface WebUiDeps {
   avisarTelegram?(text: string): Promise<unknown>;
   /** Tope (ms) antes de pasar la respuesta de un atajo a Telegram. Solo para tests. */
   atajoTopeMs?: number;
+  /**
+   * Atajos del iPhone, automatizaciones (`POST /api/atajo/lugar`): Nico llega a (o sale
+   * de) un sitio. Devuelve la frase para el atajo ('' si no había avisos).
+   */
+  atajoLugar?(evento: 'llegar' | 'salir', sitio: string): Promise<string>;
+  /** `POST /api/atajo/resumen`: el resumen de la mañana en texto para leerlo en voz alta. */
+  atajoResumen?(): Promise<string>;
+  /** `POST /api/atajo/datos`: Salud o calendario a la memoria; devuelve la frase. */
+  atajoDatos?(body: Record<string, unknown>): Promise<string>;
   /**
    * «Reintentar» del panel: repite el último mensaje del hilo principal sin la
    * respuesta anterior (como /reintentar). `null` = no hay nada que repetir (409);
@@ -252,6 +262,9 @@ type ApiRoute =
   | { method: 'GET'; kind: 'approvals' }
   | { method: 'POST'; kind: 'chat' }
   | { method: 'POST'; kind: 'atajo' }
+  | { method: 'POST'; kind: 'atajoLugar' }
+  | { method: 'POST'; kind: 'atajoResumen' }
+  | { method: 'POST'; kind: 'atajoDatos' }
   | { method: 'POST'; kind: 'chatRetry' }
   | { method: 'POST'; kind: 'modelo' }
   | { method: 'POST'; kind: 'clave' }
@@ -407,6 +420,12 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'chat' };
     case '/api/atajo':
       return { method: 'POST', kind: 'atajo' };
+    case '/api/atajo/lugar':
+      return { method: 'POST', kind: 'atajoLugar' };
+    case '/api/atajo/resumen':
+      return { method: 'POST', kind: 'atajoResumen' };
+    case '/api/atajo/datos':
+      return { method: 'POST', kind: 'atajoDatos' };
     case '/api/chat/retry':
       return { method: 'POST', kind: 'chatRetry' };
     case '/api/modelo':
@@ -832,6 +851,67 @@ async function respondAtajo(
   send(res, 200, texto, textPlain);
 }
 
+function esRutaAtajo(kind: ApiRoute['kind']): boolean {
+  return (
+    kind === 'atajo' || kind === 'atajoLugar' || kind === 'atajoResumen' || kind === 'atajoDatos'
+  );
+}
+
+/**
+ * Las automatizaciones y los datos del iPhone (src/iphone/atajos.ts): mismo token y
+ * misma regla que `/api/atajo`, texto plano de vuelta y nunca un error mudo.
+ */
+async function respondAtajoExtra(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WebUiDeps,
+  kind: 'atajoLugar' | 'atajoResumen' | 'atajoDatos',
+): Promise<void> {
+  const textPlain = 'text/plain; charset=utf-8';
+  let body: Record<string, unknown> = {};
+  if (kind !== 'atajoResumen') {
+    try {
+      body = await readJsonBody(req);
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 400;
+      send(
+        res,
+        status,
+        'No he entendido la petición del atajo: revisa que el cuerpo sea JSON.',
+        textPlain,
+      );
+      return;
+    }
+  }
+  const fn =
+    kind === 'atajoLugar'
+      ? deps.atajoLugar
+      : kind === 'atajoResumen'
+        ? deps.atajoResumen
+        : deps.atajoDatos;
+  if (!fn) {
+    send(res, 503, 'Esa parte de Asistenta aún no está lista. Prueba en un momento.', textPlain);
+    return;
+  }
+  try {
+    if (kind === 'atajoLugar') {
+      const lugar = leerLugar(body);
+      if ('error' in lugar) {
+        send(res, 400, lugar.error, textPlain);
+        return;
+      }
+      send(res, 200, await (deps.atajoLugar?.(lugar.evento, lugar.sitio) ?? ''), textPlain);
+    } else if (kind === 'atajoResumen') {
+      send(res, 200, (await deps.atajoResumen?.()) || 'Hoy no tengo nada que contarte.', textPlain);
+    } else {
+      send(res, 200, (await deps.atajoDatos?.(body)) ?? '', textPlain);
+    }
+  } catch (err) {
+    log.warn('atajo iPhone: falló', { kind, err: String(err) });
+    send(res, 200, ATAJO_FALLO, textPlain);
+  }
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -867,12 +947,20 @@ async function handleRequest(
     if (route.kind !== 'miniapp' && !authorized(req, deps.token)) {
       res.setHeader('WWW-Authenticate', 'Bearer realm="asistenta"');
       // El atajo lee en voz alta lo que recibe: una frase, no JSON.
-      if (route.kind === 'atajo') send(res, 401, ATAJO_SIN_TOKEN, 'text/plain; charset=utf-8');
+      if (esRutaAtajo(route.kind)) send(res, 401, ATAJO_SIN_TOKEN, 'text/plain; charset=utf-8');
       else sendJson(res, 401, { error: 'No autorizado' });
       return;
     }
     if (route.kind === 'atajo') {
       await respondAtajo(req, res, deps);
+      return;
+    }
+    if (
+      route.kind === 'atajoLugar' ||
+      route.kind === 'atajoResumen' ||
+      route.kind === 'atajoDatos'
+    ) {
+      await respondAtajoExtra(req, res, deps, route.kind);
       return;
     }
     await respondApi(req, res, deps, route, url);
