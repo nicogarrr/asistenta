@@ -1,7 +1,9 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
 import { type IphoneStatus, readiness, setupGuide } from '../iphone/client.js';
+import { formatearPantalla, lineasDePantalla, pantallaBloqueada } from '../iphone/texto.js';
 import { log } from '../log.js';
+import type { OcrResult } from '../screen/ocr.js';
 
 /**
  * Herramienta del iPhone (esp32-iphone-agent).
@@ -22,6 +24,11 @@ export interface IphoneToolDeps {
   start: (goal: string) => Promise<void>;
   stop: () => Promise<void>;
   home: () => Promise<void>;
+  /**
+   * OCR de una captura JPEG (en el PC, el de Windows: src/screen/ocr.ts). Sin él,
+   * action=texto explica que no puede leer y remite a screenshot.
+   */
+  ocr?: (jpeg: Buffer) => Promise<OcrResult>;
   /** Pausa entre sondeos; los tests la sustituyen. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -32,6 +39,7 @@ const Params = lazySchema(() =>
       Type.Literal('status'),
       Type.Literal('setup'),
       Type.Literal('screenshot'),
+      Type.Literal('texto'),
       Type.Literal('run'),
       Type.Literal('stop'),
       Type.Literal('home'),
@@ -40,6 +48,12 @@ const Params = lazySchema(() =>
       Type.String({
         description:
           'Para run: el objetivo en lenguaje natural ("abre Ajustes y ve a Wi-Fi"). Una tarea concreta y acotada.',
+      }),
+    ),
+    todo: Type.Optional(
+      Type.Boolean({
+        description:
+          'Para texto: true incluye la barra de estado y los iconos que el OCR lee como letras.',
       }),
     ),
     waitSeconds: Type.Optional(
@@ -84,6 +98,8 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
       'action=setup es el alta guiada: lista los pasos para dejar el telefono listo, marca los hechos y dice el siguiente.',
       'Usala cuando Nico quiera conectarlo o status diga que no esta listo. Es de solo lectura.',
       'action=screenshot devuelve la pantalla del telefono ahora mismo.',
+      'action=texto devuelve esa misma pantalla como lineas de texto con su posicion (x y en fracciones, 0 a 1):',
+      'gasta mucho menos que una captura; usala primero y pide screenshot solo para fotos o iconos sin texto.',
       'action=run con goal le da una tarea al agente del telefono y espera (waitSeconds) a que acabe;',
       'devuelve cuantos pasos dio y la pantalla final. Es un agente aparte con su propio modelo:',
       'puede equivocarse o no terminar. Comprueba el resultado con la captura final, no con su palabra.',
@@ -143,6 +159,24 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
               { type: 'image' as const, mimeType: 'image/jpeg', data: image.toString('base64') },
             ],
             details: { bytes: image.length },
+          };
+        }
+        case 'texto': {
+          if (!deps.ocr) {
+            throw new Error(
+              'No puedo leer la pantalla en texto aqui (hace falta el OCR de Windows). Usa action=screenshot.',
+            );
+          }
+          const jpeg = await deps.frame();
+          const ocr = await deps.ocr(jpeg);
+          const lineas = lineasDePantalla(ocr, { todo: args.todo === true });
+          const bloqueado = pantallaBloqueada(lineasDePantalla(ocr, { todo: true }));
+          const aviso = bloqueado
+            ? 'AVISO: el iPhone esta BLOQUEADO (pantalla de bloqueo o de codigo). No escribas ni toques nada: pide a Nico que lo desbloquee el.\n'
+            : '';
+          return {
+            content: [text(aviso + formatearPantalla(lineas))],
+            details: { lineas: lineas.length, bloqueado },
           };
         }
         case 'run': {
