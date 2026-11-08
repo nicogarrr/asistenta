@@ -1,4 +1,4 @@
-<#
+﻿<#
 Asistente guiado «Preparar iPhone» (esp32-iphone-agent). Doble clic en preparar-iphone.bat.
 Todo gratis. Pregunta antes de cada paso. Las claves y la contrasena del wifi se piden
 SIN ECO en esta ventana: no se imprimen, no van a chat ni a ningun fichero del repo.
