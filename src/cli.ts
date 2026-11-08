@@ -911,6 +911,7 @@ Uso:
   pa opengym pair [url] <código>  emparejar openGym (registro del gimnasio, solo lectura)
   pa opengym status       comprobar la conexión con openGym
   pa evolve [--idea <texto>]  una vuelta de automejora sobre esta copia git (necesita PA_EVOLVE_PROPOSER)
+  pa apuntar pc|tele [--puerto N]  el iPhone como mando de apuntado (Safari, sin app ni Mac)
   pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]  arrancar sola al encender el PC
   pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
@@ -1084,6 +1085,10 @@ export async function main(argv: string[]): Promise<number> {
     case 'status': {
       const { statusCommand } = await import('./daemon-status.js');
       return statusCommand(rest);
+    }
+    case 'apuntar': {
+      const { apuntarCommand } = await import('./aim/cli.js');
+      return apuntarCommand(rest);
     }
     case 'autostart': {
       const { autostartCommand } = await import('./autostart.js');

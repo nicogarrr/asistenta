@@ -1036,7 +1036,7 @@ export async function tvToast(
  * conocidos y sin credenciales embebidas. Cualquier otra cosa es un destino
  * arbitrario decidido por la red y se rechaza (SSRF).
  */
-function parseTvUrl(value: unknown, safeHost: string, schemes: string[]): string | null {
+export function parseTvUrl(value: unknown, safeHost: string, schemes: string[]): string | null {
   if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return null;
   let url: URL;
   try {
