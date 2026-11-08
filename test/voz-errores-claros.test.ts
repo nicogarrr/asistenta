@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Sin red ni modelo de verdad: el decodificador devuelve voz falsa y la descarga del modelo falla.
 const state = vi.hoisted(() => ({ err: new Error('x') as unknown }));
@@ -17,9 +17,25 @@ vi.mock('@huggingface/transformers', () => ({
 }));
 
 import { failedReply, forwardedAudioFailNote } from '../src/cli.js';
-import { SttError, transcribeVoiceNote } from '../src/voice/stt.js';
+import { SttError, setImportTransformersForTests, transcribeVoiceNote } from '../src/voice/stt.js';
 
 const nota = Buffer.from('OggS falso');
+
+// vi.mock sobre un import() dinámico se salta a veces (en CI cargaba el whisper de verdad y
+// fallaba con «Bim»): el cargador inyectado hace el test determinista (ver stt.ts).
+beforeAll(() =>
+  setImportTransformersForTests(
+    async () =>
+      ({
+        LogLevel: { ERROR: 40 },
+        env: {},
+        pipeline: async () => {
+          throw state.err;
+        },
+      }) as never,
+  ),
+);
+afterAll(() => setImportTransformersForTests(null));
 
 describe('nota de voz: errores en castellano claro', () => {
   it('sin internet la primera vez: dice que hace falta conexión, no «error interno»', async () => {
