@@ -146,5 +146,7 @@ describe('rutinas «cada 2 días» y «cada 2 semanas» (bugs29)', () => {
     } finally {
       runner.stop();
     }
-  });
+    // shortcut: simula 29 días de reloj falso (~27 s en local, más con cobertura en CI);
+    // timeout propio para no caer en los 60 s globales. Mejorar si se acelera el tick del runner.
+  }, 240_000);
 });

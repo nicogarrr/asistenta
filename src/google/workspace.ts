@@ -4,7 +4,7 @@
  * paso exacto («/google conectar») en vez de fallar con un 403. Todo vuelve como texto en
  * castellano para el chat; los tokens nunca salen de aquí.
  */
-import { localTimeZone } from '../datecontext.js';
+import { localDay, localTimeZone } from '../datecontext.js';
 import {
   faltaPermiso,
   GoogleAuth,
@@ -94,7 +94,8 @@ function addHour(t: { date: string } | { dateTime: string; timeZone: string }) {
   if ('date' in t) {
     const d = new Date(`${t.date}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + 1);
-    return { date: d.toISOString().slice(0, 10) };
+    // `d` es medianoche UTC: su día de calendario UTC es el que queremos (no el de Madrid).
+    return { date: localDay(new Date(d.getTime() + 12 * 3_600_000)) };
   }
   const [day, hm] = t.dateTime.split('T');
   const [h = 0, mi = 0] = (hm ?? '').split(':').map(Number);
