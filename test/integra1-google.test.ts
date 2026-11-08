@@ -93,6 +93,21 @@ describe('Google: calendario, contactos y Drive', () => {
     });
   });
 
+  it('un evento de todo el día acaba al día siguiente, también a fin de mes', async () => {
+    const { f, calls } = fake(() => ({
+      status: 200,
+      json: { id: 'ev2', start: { date: '2026-11-30' } },
+    }));
+    await crearEvento(
+      { vault: vault(), fetch: f, timeZone: TZ },
+      { titulo: 'Viaje', inicio: '2026-11-30' },
+    );
+    const post = calls.find((c) => c.method === 'POST' && c.url.includes('/calendar/v3/'));
+    const body = JSON.parse(post?.body ?? '{}');
+    expect(body.start).toEqual({ date: '2026-11-30' });
+    expect(body.end).toEqual({ date: '2026-12-01' });
+  });
+
   it('mover usa PATCH sobre el id; fechas de todo el día', async () => {
     const { f, calls } = fake(() => ({
       status: 200,
