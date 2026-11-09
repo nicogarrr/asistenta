@@ -199,7 +199,7 @@ describe('tool iphone: pasos sueltos (PA_IPHONE_GESTOS=1)', () => {
     expect(calls).toEqual(['tap 0.25 0.26']);
     expect(r.content[0]?.text).toMatch(/Tocado «Wi-Fi»/);
     expect(r.content[0]?.text).toMatch(/Pantalla despues:[\s\S]*Casa/);
-    expect(r.details).toEqual({ entrega: 'hecho', verified: false });
+    expect(r.details).toMatchObject({ entrega: 'hecho', verified: false });
   });
 
   it('no toca la isla dinámica ni con el móvil bloqueado', async () => {

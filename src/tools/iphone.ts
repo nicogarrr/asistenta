@@ -11,6 +11,7 @@ import {
   type ManosIphone,
   type OjosIphone,
 } from '../iphone/gestos.js';
+import { esperarQuieta, firmaLineas } from '../iphone/quieta.js';
 import {
   buscarTexto,
   formatearPantalla,
@@ -123,7 +124,10 @@ const Params = lazySchema(() =>
 );
 
 const POLL_MS = 3000;
-/** Lo que se deja al telefono para mostrar el resultado de un paso antes de leerlo. */
+/**
+ * Sin OCR, lo que se deja al telefono para mostrar el resultado de un paso. Con OCR se
+ * espera a que la pantalla se quede quieta (src/iphone/quieta.ts).
+ */
 export const PAUSA_TRAS_PASO_MS = 800;
 
 type PasoArgs = {
@@ -159,8 +163,13 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   /** La pantalla en texto (con la barra de estado, para reconocer el bloqueo), o null sin OCR. */
-  const ojos: OjosIphone = async () =>
-    deps.ocr ? lineasDePantalla(await deps.ocr(await deps.frame()), { todo: true }) : null;
+  let firmaPrevia: string | null = null;
+  const ojos: OjosIphone = async () => {
+    if (!deps.ocr) return null;
+    const ocr = await deps.ocr(await deps.frame());
+    firmaPrevia = firmaLineas(lineasDePantalla(ocr));
+    return lineasDePantalla(ocr, { todo: true });
+  };
 
   /**
    * Un paso suelto en el teléfono. Antes de mandar nada: activado, puente listo, sin el
@@ -296,11 +305,28 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
       };
     }
     log.info('iphone paso', { action: args.action });
-    await sleep(PAUSA_TRAS_PASO_MS);
     let despues = 'Mira el resultado con action=texto o action=screenshot.';
-    if (deps.ocr) {
+    let quieta: { cambio: boolean | null; quieta: boolean; ms: number } | null = null;
+    const ocr = deps.ocr;
+    if (!ocr) {
+      await sleep(PAUSA_TRAS_PASO_MS);
+    } else {
       try {
-        despues = `Pantalla despues:\n${formatearPantalla(lineasDePantalla(await deps.ocr(await deps.frame())))}`;
+        // En vez de una pausa fija: esperar a que la pantalla cambie y se quede quieta.
+        const r = await esperarQuieta({
+          leer: async () => lineasDePantalla(await ocr(await deps.frame())),
+          firma: firmaLineas,
+          antes: firmaPrevia,
+          espera: sleep,
+        });
+        quieta = { cambio: r.cambio, quieta: r.quieta, ms: r.ms };
+        const nota =
+          r.cambio === false
+            ? 'La pantalla NO ha cambiado tras el paso: puede que no haya hecho efecto (mira antes de repetirlo). '
+            : !r.quieta
+              ? 'La pantalla seguia moviendose al leerla: puede faltar algo por cargar. '
+              : '';
+        despues = `${nota}Pantalla despues:\n${formatearPantalla(r.lectura)}`;
       } catch {
         despues =
           'No he podido leer la pantalla despues: mira con action=texto o action=screenshot.';
@@ -308,7 +334,7 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
     }
     return {
       content: [text(`${hecho} ${despues}`)],
-      details: { entrega: 'hecho', verified: false },
+      details: { entrega: 'hecho', verified: false, ...(quieta ? { pantalla: quieta } : {}) },
     };
   }
 
