@@ -285,7 +285,8 @@ describe('dónde sale el botón (cableado en el daemon)', () => {
 
   it('/estado y /actualizacion lo llevan debajo, solo para el dueño en privado', () => {
     const uses = cli.match(
-      /buttons: isOwnerDm\(inbound, vigilanteOwnerId\) \? updateButtons\(\) : undefined/g,
+      // Con «⏸️ Parar todo en el PC» al lado (pausa-pc.ts), también solo para el dueño.
+      /buttons: isOwnerDm\(inbound, vigilanteOwnerId\)\s*\? \[\.\.\.updateButtons\(\), \.\.\.pausaPcButtons\(\)\]\s*: undefined/g,
     );
     expect(uses).toHaveLength(2);
   });

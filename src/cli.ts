@@ -361,7 +361,7 @@ import { type OcrMode, parseOcrMode, runOcrJob } from './ocrdoc/job.js';
 import { createOcrEspera, OCR_SIN_ARCHIVO, ocrWordsMode } from './ocrdoc/palabras.js';
 import { OcrFolderWatcher, watchModeFromEnv } from './ocrdoc/watcher.js';
 import { windowsDeps } from './ocrdoc/windows.js';
-import { describeBusy, releaseBusyOpenedBefore, trackBusyIn } from './ocupada.js';
+import { describeBusy, openBusyItems, releaseBusyOpenedBefore, trackBusyIn } from './ocupada.js';
 import { inQuietHours, type QuietHours } from './ojo.js';
 import {
   createDownloadsController,
@@ -404,6 +404,15 @@ import { openGymCliError, openGymPaired } from './opengym/cli-text.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
 import { ensureDirs, paths } from './paths.js';
+import { launchPausaHelper, pausaPcButtons } from './pausa-cli.js';
+import {
+  type Comprobacion,
+  clearPausa,
+  createPausaConfirm,
+  informarLevantado,
+  LAUNCH_FAILED as PAUSA_LAUNCH_FAILED,
+  writePausa,
+} from './pausa-pc.js';
 import { Gate, runPermisosCommand } from './permissions.js';
 import { PRECIOS_SOLO_DUENO, preciosAccion } from './precios/comando.js';
 import { fuentesDesde } from './precios/fuentes.js';
@@ -914,6 +923,7 @@ Uso:
   pa apuntar pc|tele [--puerto N]  el iPhone como mando de apuntado (Safari, sin app ni Mac)
   pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]  arrancar sola al encender el PC
   pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
+  pa pausa [status]                 si el PC está en pausa (⏸️/▶️ desde Telegram, /pausa_pc)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo
@@ -1104,6 +1114,11 @@ export async function main(argv: string[]): Promise<number> {
       }
       const { autoupdateCommand } = await import('./autoupdate-cli.js');
       return autoupdateCommand(rest, { stateDir: paths.state, repo: autostartRepo() });
+    }
+    case 'pausa': {
+      // «⏸️ Parar todo en el PC» / «▶️ Levantar todo» de Telegram (pausa-pc.ts).
+      const { pausaCommand } = await import('./pausa-cli.js');
+      return pausaCommand(rest, { stateDir: paths.state });
     }
     case 'autostart-notify': {
       const { notifyAutostart } = await import('./autostart.js');
@@ -1902,6 +1917,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   if (!allowed?.length) {
     process.stderr.write(`${missingPieceMessage('owner')}\n`);
     return 1;
+  }
+
+  // PC en pausa (⏸️ de Telegram, pausa-pc.ts): solo Telegram para el dueño, hasta «Levantar».
+  // Va antes del modelo: en pausa no se carga nada más, ni siquiera el proveedor.
+  {
+    const { readPausa } = await import('./pausa-pc.js');
+    if (readPausa(paths.state) && process.env.PA_QA_CHANNEL !== '1') {
+      const { servePausa } = await import('./pausa-cli.js');
+      const ownerSet = Number((await vaultGet('vigilante:ownerUserId').catch(() => ''))?.trim());
+      return servePausa({
+        stateDir: paths.state,
+        token,
+        allowed,
+        ownerId: resolveOwnerUserId(
+          allowed,
+          Number.isSafeInteger(ownerSet) && ownerSet > 0 ? ownerSet : null,
+        ),
+        control,
+        timeZone: localTimeZone(),
+      });
+    }
   }
 
   // Resolve credentials before announcing readiness or creating a thread.
@@ -7504,6 +7540,53 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   /** /estado: salud de Asistenta desde Telegram (herramientas, log de hoy, vigilancias). */
+  // ⏸️ «Parar todo en el PC» (pausa-pc.ts): lo que hay en marcha, para el aviso y el informe.
+  const pausaConfirm = createPausaConfirm();
+  const pausaActivoAhora = (): string[] => {
+    const out: string[] = [];
+    const busy = openBusyItems();
+    if (busy.length > 0) out.push(`lo que estoy haciendo (se cancela): ${describeBusy(busy)}`);
+    out.push('rutinas, recordatorios, objetivos y avisos programados');
+    if (attentionFreeConfig(config) || hasMailTrigger()) out.push('vigilancia del correo');
+    if (currentWake()?.isRunning()) out.push(`micrófono (palabra «${wakeWord}»)`);
+    if (panelPlan.kind === 'start') out.push('panel web');
+    if (currentTvButton()) out.push('botón de la tele');
+    const abiertos = [...browsers.values()].length;
+    if (abiertos > 0) out.push(`navegador${abiertos === 1 ? '' : `es (${abiertos})`}`);
+    if (desktop) out.push('control del escritorio, OCR y voz');
+    return out;
+  };
+  const cmdPausaPc = async (inbound: Inbound, args: string): Promise<void> => {
+    const d = pausaConfirm(args, pausaActivoAhora(), {
+      isOwnerDm: isOwnerDm(inbound, vigilanteOwnerId),
+      platform: process.platform,
+      now: Date.now,
+      nonce: () => randomUUID().replace(/-/g, '').slice(0, 10),
+    });
+    if (d.kind === 'reply') {
+      await say(inbound, d.text);
+      return;
+    }
+    if (d.kind === 'ask') {
+      const yes = commandButton('✅ Sí, parar todo', 'pausa_pc', d.nonce, 'confirmar');
+      const no = commandButton('❌ No', 'pausa_pc', d.nonce, 'cancelar');
+      await say(inbound, d.text, { buttons: [yes, no].filter((b) => b !== undefined) });
+      return;
+    }
+    writePausa(paths.state, { since: new Date().toISOString(), activo: pausaActivoAhora() });
+    try {
+      launchPausaHelper('aplicar');
+    } catch (err) {
+      clearPausa(paths.state);
+      log.warn('pausa: no pude lanzar aplicar', { err: String(err) });
+      await say(inbound, PAUSA_LAUNCH_FAILED);
+      return;
+    }
+    await say(
+      inbound,
+      '⏸️ Parando todo… Me cierro un momento y vuelvo en modo pausa (solo este chat) con la lista de lo parado.',
+    );
+  };
   const cmdEstado = async (inbound: Inbound): Promise<void> => {
     const { localLlmHealthy } = await import('./autostart.js');
     const localLlmOk = await localLlmHealthy();
@@ -7573,7 +7656,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, marksWithTitles(text, isStatusTitle), {
       quote: true,
       format: 'marks',
-      buttons: isOwnerDm(inbound, vigilanteOwnerId) ? updateButtons() : undefined,
+      buttons: isOwnerDm(inbound, vigilanteOwnerId)
+        ? [...updateButtons(), ...pausaPcButtons()]
+        : undefined,
     });
   };
 
@@ -10202,9 +10287,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         const { autoupdateStatusLine } = await import('./autoupdate-cli.js');
         const { updateButtons } = await import('./autoupdate-boton.js');
         await say(inbound, autoupdateStatusLine(paths.state), {
-          buttons: isOwnerDm(inbound, vigilanteOwnerId) ? updateButtons() : undefined,
+          buttons: isOwnerDm(inbound, vigilanteOwnerId)
+            ? [...updateButtons(), ...pausaPcButtons()]
+            : undefined,
         });
       },
+    },
+    // «⏸️ Parar todo en el PC»: pide confirmación con botón y lo para todo menos este chat.
+    { names: ['pausa_pc', 'pausa'], run: (inbound, args) => cmdPausaPc(inbound, args) },
+    {
+      // Sin pausa no hay nada que levantar (en pausa contesta el modo pausa, pausa-cli.ts).
+      names: ['levantar'],
+      run: (inbound) =>
+        say(inbound, 'No estoy en pausa: todo funciona normal. Para pararlo todo: /pausa_pc.').then(
+          () => {},
+        ),
     },
     {
       // Lo mismo que el botón «🔄 Buscar actualización ahora», escrito.
@@ -10861,6 +10958,57 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   await startAlerts();
 
   control?.ready();
+  // Viene de «▶️ Levantar todo» (pausa-pc.ts): comprueba cada pieza y manda su estado.
+  setTimeout(() => {
+    const owner = briefingOwner();
+    if (!owner) return;
+    const checks: Comprobacion[] = [
+      { nombre: 'Telegram', comprobar: async () => ({ ok: true }) },
+      {
+        nombre: 'Modelo',
+        comprobar: async () => ({ ok: true, detalle: 'clave cargada (sin gastar una llamada)' }),
+      },
+      {
+        nombre: 'Rutinas y recordatorios',
+        comprobar: async () => ({ ok: true, detalle: 'programador en marcha' }),
+      },
+    ];
+    if (panelPlan.kind !== 'off')
+      checks.push({
+        nombre: 'Panel web',
+        comprobar: async () => {
+          const r = panelStarted ? await panelStarted : undefined;
+          if (typeof r !== 'string')
+            return {
+              ok: false,
+              detalle: panelPlan.kind === 'problem' ? panelPlan.message : 'no arrancó',
+            };
+          const res = await fetch(r, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+          return res ? { ok: true } : { ok: false, detalle: 'no contesta' };
+        },
+      });
+    if (wakeWanted)
+      checks.push({
+        nombre: `Micrófono (palabra «${wakeWord}»)`,
+        comprobar: async () =>
+          currentWake()?.isRunning() ? { ok: true } : { ok: false, detalle: 'no está escuchando' },
+      });
+    if (desktop)
+      checks.push({
+        nombre: 'OCR de Windows',
+        comprobar: async () =>
+          (await ocrAvailable().catch(() => false))
+            ? { ok: true }
+            : { ok: false, detalle: 'no disponible' },
+      });
+    if (attentionFreeConfig(config) || hasMailTrigger())
+      checks.push({ nombre: 'Vigilancia del correo', comprobar: async () => ({ ok: true }) });
+    void informarLevantado(paths.state, checks, (text) =>
+      telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text }),
+    ).catch((err: unknown) =>
+      log.warn('pausa: informe de levantar no enviado', { err: String(err) }),
+    );
+  }, 15_000).unref();
   log.info('daemon running', {
     wake: currentWake()?.isRunning() ?? false,
     wakeWord,

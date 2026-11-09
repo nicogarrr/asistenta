@@ -44,10 +44,14 @@ import {
 import { stopDaemon } from './daemon-control.js';
 import { daemonStatus } from './daemon-status.js';
 import { describeBusy, readBusy, readBusyDetail } from './ocupada.js';
+import { readPausa } from './pausa-pc.js';
 import { sameProcessAsRecorded } from './process-identity.js';
 import { futureDated, span, withPeriod } from './startup-record.js';
 import { unlock as unlockVault, vaultGet } from './vault.js';
 import { resolveOwnerUserId } from './vigilante.js';
+
+export const AUTOUPDATE_PAUSED =
+  'Autoactualización: omitida, el PC está en pausa (⏸️ desde Telegram). Se reanuda al pulsar «▶️ Levantar todo».';
 
 export function runExe(
   exe: string,
@@ -462,6 +466,11 @@ export async function autoupdateCommand(
     writeAutoupdateState(stateDir, { ...readAutoupdateState(stateDir), off: action === 'off' });
   }
   if (action === 'now' || action === 'aplicar' || action === 'boton') {
+    // PC en pausa (⏸️ de Telegram): ni el vigilante ni nadie reinicia para actualizar.
+    if (readPausa(stateDir)) {
+      process.stdout.write(`${AUTOUPDATE_PAUSED}\n`);
+      return 0;
+    }
     if (process.platform !== 'win32' && !opts.deps) {
       process.stderr.write(`${AUTOUPDATE_NOT_WINDOWS}\n`);
       return 2;
