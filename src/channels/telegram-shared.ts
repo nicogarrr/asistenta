@@ -53,6 +53,11 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // «⏹ Pararlo» del aviso de cola (daemon/busy-note.ts): arg = ficha de ESA tarea; si ya
   // terminó no para nada, y nunca vacía la cola (eso es /stop a secas).
   ['stop', new Set([''])],
+  // «⏸️ Parar todo en el PC» (pausa-pc.ts): el primer toque solo PREGUNTA; «confirmar»
+  // lleva el código de ESE aviso (caduca a los 5 min) y el daemon exige dueño en privado.
+  ['pausa_pc', new Set(['', 'confirmar', 'cancelar'])],
+  // «▶️ Levantar todo» del modo pausa: vuelve a arrancar lo configurado.
+  ['levantar', new Set([''])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 
