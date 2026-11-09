@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BrowserService,
   classifyChallenge,
+  isBrowserLaunchTimeoutError,
   isMissingBrowserError,
 } from '../src/browser/service.js';
 import { loadConfig, resetConfigForTests } from '../src/config.js';
@@ -124,6 +125,22 @@ describe('isMissingBrowserError', () => {
       isMissingBrowserError(new Error("Executable doesn't exist at /x/chromium-1234/chrome")),
     ).toBe(true);
     expect(isMissingBrowserError(new Error('The profile is already in use'))).toBe(false);
+  });
+});
+
+describe('isBrowserLaunchTimeoutError', () => {
+  it('matches the Playwright launch timeout and nothing else', () => {
+    expect(
+      isBrowserLaunchTimeoutError(
+        new Error('browserType.launchPersistentContext: Timeout 30000ms exceeded.'),
+      ),
+    ).toBe(true);
+    expect(
+      isBrowserLaunchTimeoutError(
+        new Error("Chromium distribution 'chrome' is not found at C:\\Chrome\\chrome.exe"),
+      ),
+    ).toBe(false);
+    expect(isBrowserLaunchTimeoutError(new Error('The profile is already in use'))).toBe(false);
   });
 });
 
