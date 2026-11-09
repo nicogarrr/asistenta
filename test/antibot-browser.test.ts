@@ -166,8 +166,13 @@ describeBrowser('BrowserService: challenge detection and installed-browser fallb
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 
+  // Cada caso usa su propio perfil: no retener todos los procesos de navegador
+  // hasta afterAll. Esto reduce la carga de los casos posteriores en el runner.
+  afterEach(async () => {
+    await Promise.all(services.splice(0).map((s) => s.closeAll()));
+  });
+
   afterAll(async () => {
-    await Promise.all(services.map((s) => s.closeAll()));
     await new Promise((r) => server.close(r));
     rmSync(root, { recursive: true, force: true });
   });
