@@ -42,6 +42,7 @@ export function scriptCapturaVentana(salida: string): string {
   const ruta = salida.replace(/'/g, "''");
   return `
 $ErrorActionPreference='Stop'
+if ($PSVersionTable.PSVersion.Major -lt 6) { $env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine') }
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
