@@ -923,6 +923,7 @@ Uso:
   pa apuntar pc|tele [--puerto N]  el iPhone como mando de apuntado (Safari, sin app ni Mac)
   pa autostart install|status|uninstall [--start] [--what-if] [--no-local-llm]  arrancar sola al encender el PC
   pa autoupdate status|now|off|on   se actualiza sola desde main (PA_AUTOUPDATE=0 la apaga)
+  pa pausa [status]                 si el PC está en pausa (⏸️/▶️ desde Telegram, /pausa_pc)
   pa status [--json]      estado puntual del PID y latido, sin cambiar el daemon
   pa watchdog --status [--json]  consulta puntual; no instala ni activa vigilancia
   pa diagnose [--json]    diagnóstico local del daemon, sin arrancarlo ni reiniciarlo

@@ -260,6 +260,10 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'paro todo lo del PC (menos este chat) hasta que pulses Levantar',
       },
       {
+        command: 'levantar',
+        description: 'vuelvo a arrancar todo lo del PC tras /pausa_pc',
+      },
+      {
         command: 'google',
         args: '[conectar]',
         description: 'tu Google: calendario, contactos y Drive',

@@ -13,7 +13,7 @@ import {
   startDaemonTask,
   windowsExe,
 } from './autoupdate-cli.js';
-import { TelegramChannel } from './channels/telegram.js';
+import type { TelegramChannel } from './channels/telegram.js';
 import { commandButton } from './channels/telegram-shared.js';
 import type { Inbound } from './channels/types.js';
 import type { ControlStartup } from './controlled-daemon.js';
@@ -194,8 +194,13 @@ export async function servePausa(opts: ServePausaOptions): Promise<number> {
   const { stateDir } = opts;
   assertNotRunning(stateDir, 'agent');
   opts.control?.beginResources();
+  // grammY solo al arrancar el canal (rend4): `pa ayuda` y `pa pausa status` no lo cargan.
   const telegram =
-    opts.channel ?? new TelegramChannel({ token: opts.token, allowedUserIds: opts.allowed });
+    opts.channel ??
+    new (await import('./channels/telegram.js')).TelegramChannel({
+      token: opts.token,
+      allowedUserIds: opts.allowed,
+    });
   const launch = opts.launch ?? launchPausaHelper;
   let levantando = false;
   const say = (inbound: Inbound, text: string, conBoton: boolean) =>

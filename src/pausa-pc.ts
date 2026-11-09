@@ -68,7 +68,7 @@ export const EXTERNOS: readonly Externo[] = [
     id: 'uxplay',
     nombre: 'UxPlay (pantalla del iPhone)',
     proceso: 'uxplay',
-    // Los mismos que deploy/iphone/windows/preparar-windows.ps1 -Arrancar.
+    // Los mismos con los que lo abre deploy/iphone/windows/preparar-windows.ps1 (con -Arrancar).
     relanzarArgs: ['-n', 'Asistenta', '-nh'],
   },
   { id: 'hid', nombre: 'ayudante Bluetooth del iPhone', proceso: 'AsistentaHid' },
@@ -453,7 +453,8 @@ export async function runPausaLevantar(stateDir: string, deps: PausaHelperDeps):
       resultado.push({
         nombre: ext.nombre,
         ok: false,
-        detalle: 'no sé desde dónde se abrió; ábrelo con preparar-windows.ps1 -Arrancar',
+        detalle:
+          'no sé desde dónde se abrió; ábrelo con: powershell -ExecutionPolicy Bypass -File deploy\\iphone\\windows\\preparar-windows.ps1 -Arrancar',
       });
       continue;
     }

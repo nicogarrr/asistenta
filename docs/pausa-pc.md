@@ -33,4 +33,4 @@ La pausa **sobrevive a un reinicio**: si el PC se reinicia, Asistenta arranca ot
 - El ciclo completo cierre → arranque en pausa → levantar con la tarea de inicio de verdad.
 - Que `taskkill` cierre UxPlay si se abrió como administrador: si no puede, sale en «No se pudo parar».
 - Lo de hidagent en WSL: usa `wsl -d Ubuntu -- pkill -f "python -m hidagent"`. Si tu distro no se llama Ubuntu, no lo encuentra y no sale en el informe.
-- Que UxPlay vuelva a abrirse con los mismos argumentos que `preparar-windows.ps1 -Arrancar` (`-n Asistenta -nh`).
+- Que UxPlay vuelva a abrirse con los mismos argumentos con los que lo abre el script de preparación del iPhone (`-n Asistenta -nh`).
