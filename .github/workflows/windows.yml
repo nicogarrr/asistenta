@@ -24,6 +24,9 @@ on:
       - 'src/status.ts'
       - 'src/tools/computer.ts'
       - 'src/tools/iphone.ts'
+      - 'src/iphone/ble.ts'
+      - 'src/iphone/hid-informes.ts'
+      - 'deploy/iphone/windows/**'
       - 'src/tools/tv.ts'
       - 'src/vault*.ts'
       - 'src/windows-*.ts'
@@ -118,6 +121,12 @@ jobs:
       - name: OCR real de documentos (imagen sintetica)
         if: always()
         run: npx vitest run test/ocrdoc-windows.test.ts
+        env:
+          CI: '1'
+
+      - name: Ayudante Bluetooth del iPhone (compila con el csc de Windows y arranca)
+        if: always()
+        run: npx vitest run test/windows-iphone-ble.test.ts
         env:
           CI: '1'
 
