@@ -159,16 +159,6 @@ export function isMissingBrowserError(err: unknown): boolean {
   return /distribution '[^']+' is not found|executable doesn't exist/i.test(msg);
 }
 
-/**
- * True when the requested installed browser never came up before the launch budget
- * ran out. A hang like that is transient (first start after an update, a busy
- * machine), so the caller treats it like a missing browser and falls back.
- */
-export function isBrowserLaunchTimeoutError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /launchPersistentContext: Timeout \d+ ?ms exceeded/i.test(msg);
-}
-
 export type BrowserBackend = 'playwright' | 'opencode';
 
 export interface BrowserServiceOptions {
@@ -1205,10 +1195,9 @@ export class BrowserService {
    * written by Playwright's bundled Chromium can be newer than the installed browser,
    * and Chrome refuses or resets a profile from a newer version. The cost is that a
    * session logged in under the old bundled profile does not carry over once.
-   * If the requested browser is not installed, or does not come up before the launch
-   * timeout, the bundled one starts instead, with the original profile, and the
-   * fallback is logged. Any other launch error is real and propagates (for example a
-   * profile lock held by another process).
+   * If the requested browser is not installed the bundled one starts instead, with the
+   * original profile, and the fallback is logged. Any other launch error is real and
+   * propagates (for example a profile lock held by another process).
    */
   async #launch(
     scope: string,
@@ -1297,9 +1286,8 @@ export class BrowserService {
         });
         return { context, channel: wanted, notice };
       } catch (err) {
-        if (!isMissingBrowserError(err) && !isBrowserLaunchTimeoutError(err)) throw err;
-        // Pedido pero ausente o colgado al arrancar: se sigue con el empaquetado (#1879).
-        log.warn('browser channel unavailable, using bundled chromium', { scope, wanted });
+        if (!isMissingBrowserError(err)) throw err;
+        log.warn('browser channel not installed, using bundled chromium', { scope, wanted });
       }
     }
     return {

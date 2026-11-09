@@ -7,7 +7,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   BrowserService,
   classifyChallenge,
-  isBrowserLaunchTimeoutError,
   isMissingBrowserError,
 } from '../src/browser/service.js';
 import { loadConfig, resetConfigForTests } from '../src/config.js';
@@ -128,22 +127,6 @@ describe('isMissingBrowserError', () => {
   });
 });
 
-describe('isBrowserLaunchTimeoutError', () => {
-  it('matches the Playwright launch timeout and nothing else', () => {
-    expect(
-      isBrowserLaunchTimeoutError(
-        new Error('browserType.launchPersistentContext: Timeout 30000ms exceeded.'),
-      ),
-    ).toBe(true);
-    expect(
-      isBrowserLaunchTimeoutError(
-        new Error("Chromium distribution 'chrome' is not found at C:\\Chrome\\chrome.exe"),
-      ),
-    ).toBe(false);
-    expect(isBrowserLaunchTimeoutError(new Error('The profile is already in use'))).toBe(false);
-  });
-});
-
 describeBrowser('BrowserService: challenge detection and installed-browser fallback (live)', () => {
   let server: Server;
   let base = '';
@@ -183,8 +166,13 @@ describeBrowser('BrowserService: challenge detection and installed-browser fallb
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 
+  // Cada caso usa su propio perfil: no retener todos los procesos de navegador
+  // hasta afterAll. Esto reduce la carga de los casos posteriores en el runner.
+  afterEach(async () => {
+    await Promise.all(services.splice(0).map((s) => s.closeAll()));
+  });
+
   afterAll(async () => {
-    await Promise.all(services.map((s) => s.closeAll()));
     await new Promise((r) => server.close(r));
     rmSync(root, { recursive: true, force: true });
   });
