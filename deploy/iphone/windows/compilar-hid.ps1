@@ -7,6 +7,9 @@
 #>
 param([switch]$Forzar)
 $ErrorActionPreference = 'Stop'
+# Desde PowerShell 7 (p. ej. Windows Terminal), `powershell -File` hereda su PSModulePath y
+# Windows PowerShell 5.1 no carga sus propios módulos (Get-FileHash, Write-Host...). Se repone.
+if ($PSVersionTable.PSVersion.Major -lt 6) { $env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine') }
 
 $fuente = Join-Path $PSScriptRoot 'AsistentaHid.cs'
 $destino = Join-Path $env:LOCALAPPDATA 'Asistenta\iphone'
@@ -22,7 +25,7 @@ foreach ($m in 'Windows.Devices.winmd', 'Windows.Foundation.winmd', 'Windows.Sto
 }
 
 New-Item -ItemType Directory -Force -Path $destino | Out-Null
-$sha = (Get-FileHash -Algorithm SHA256 $fuente).Hash
+$sha = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($fuente))).Replace('-', '')
 if (-not $Forzar -and (Test-Path $exe) -and (Test-Path $huella) -and ((Get-Content $huella -Raw).Trim() -eq $sha)) {
   Write-Output "Ya compilado y al día: $exe"
   exit 0
