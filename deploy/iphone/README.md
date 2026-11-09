@@ -50,6 +50,13 @@ telefono paso a paso, leyendo la pantalla con `texto`:
 - Las recetas vienen de phoneuse, que las probo por Bluetooth en un iPhone 17 Pro con iOS 26. **Con la ESP32 por
   USB no se han probado.**
 
+### Sin ESP32: el Bluetooth del PC con Windows (opcional, `PA_IPHONE_BLE=1`)
+
+El portátil hace de teclado y puntero absoluto del iPhone por Bluetooth LE (HID sobre GATT, con un ayudante
+propio que se compila con lo que trae Windows) y ve la pantalla por AirPlay en una ventana de UxPlay. Mismos
+pasos sueltos y mismas guardas; sin `run`. Guía, pasos en el iPhone y lista de lo no comprobado:
+[`windows/GUIA.md`](windows/GUIA.md).
+
 ## Alta guiada
 
 Pidele a Asistenta "conecta el iPhone" (tool `iphone`, `action=setup`, solo lectura): consulta al servidor y lista los

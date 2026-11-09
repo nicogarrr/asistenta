@@ -54,6 +54,16 @@ export interface IphoneToolDeps {
   manos?: ManosIphone & { back(): Promise<void> };
   /** Pausa entre sondeos; los tests la sustituyen. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * De dónde salen las manos: el puente ESP32 (hidagent, por defecto) o el Bluetooth del
+   * propio PC con Windows (PA_IPHONE_BLE=1, src/iphone/ble.ts). Cambia los textos y qué
+   * cuenta como «listo»; las guardas de cada paso son las mismas.
+   */
+  modo?: 'esp32' | 'ble';
+  /** Qué falta para actuar (vacío = listo). Por defecto, el de hidagent (`readiness`). */
+  faltan?: (s: IphoneStatus) => string[];
+  /** Alta guiada propia del modo (por defecto, la de hidagent). */
+  guia?: typeof setupGuide;
 }
 
 const Params = lazySchema(() =>
@@ -161,6 +171,9 @@ const text = (t: string) => ({ type: 'text' as const, text: t });
 
 export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typeof Params>> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const ble = deps.modo === 'ble';
+  const faltan = deps.faltan ?? readiness;
+  const guia = deps.guia ?? setupGuide;
 
   /** La pantalla en texto (con la barra de estado, para reconocer el bloqueo), o null sin OCR. */
   let firmaPrevia: string | null = null;
@@ -184,7 +197,7 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
       );
     }
     const s = await deps.status();
-    const missing = readiness(s);
+    const missing = faltan(s);
     if (missing.length) throw new Error(`El iPhone no esta listo: ${missing.join('; ')}.`);
     if (s.agent.running) {
       throw new Error(
@@ -342,7 +355,9 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
     name: 'iphone',
     label: 'iPhone',
     description: [
-      'Maneja el iPhone real de Nico a traves de una ESP32 (raton USB) y su pantalla por AirPlay.',
+      ble
+        ? 'Maneja el iPhone real de Nico desde este PC: toca y escribe por Bluetooth (el PC hace de teclado y puntero) y ve su pantalla por AirPlay (UxPlay). No hay agente del telefono: action=run no existe en este modo, usa los pasos sueltos.'
+        : 'Maneja el iPhone real de Nico a traves de una ESP32 (raton USB) y su pantalla por AirPlay.',
       'action=status dice si el puente esta listo (ESP32 conectada, pantalla en directo, puntero calibrado)',
       'y si hay una tarea en marcha. Mira SIEMPRE el status antes de lanzar nada.',
       'action=setup es el alta guiada: lista los pasos para dejar el telefono listo, marca los hechos y dice el siguiente.',
@@ -372,11 +387,13 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
       switch (args.action) {
         case 'status': {
           const s = await deps.status();
-          const missing = readiness(s);
+          const missing = faltan(s);
           const lines = [
             missing.length
               ? `NO listo: ${missing.join('; ')}.`
-              : 'Listo: ESP32 conectada, pantalla en directo y puntero calibrado.',
+              : ble
+                ? 'Listo: iPhone conectado por Bluetooth a este PC (puntero absoluto, sin calibrar) y pantalla de UxPlay en directo.'
+                : 'Listo: ESP32 conectada, pantalla en directo y puntero calibrado.',
             s.agent.running
               ? `Tarea en marcha: "${s.agent.task ?? ''}" (${s.agent.steps} pasos).`
               : 'Sin tarea en marcha.',
@@ -397,7 +414,7 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
           } catch (err) {
             problem = err instanceof Error ? err.message : String(err);
           }
-          const guide = setupGuide(status, problem);
+          const guide = guia(status, problem);
           const lines = guide.steps.map(
             (s, i) => `${i + 1}. [${s.done ? 'hecho' : 'falta'}] ${s.text}`,
           );
@@ -452,7 +469,7 @@ export function createIphoneTool(deps: IphoneToolDeps): AgentTool<ReturnType<typ
           const waitS = Math.min(Math.max(args.waitSeconds ?? DEFAULT_WAIT_S, 0), MAX_WAIT_S);
           return enqueue(async () => {
             const before = await deps.status();
-            const missing = readiness(before);
+            const missing = faltan(before);
             if (missing.length) {
               throw new Error(`El iPhone no esta listo: ${missing.join('; ')}.`);
             }

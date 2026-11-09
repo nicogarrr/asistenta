@@ -13,6 +13,12 @@ se adapta código de ellos.
 - También: tocar «por texto» sin adivinar (exacto, empieza por, o una letra mal leída), no tocar la
   isla dinámica, y las recetas de abrir app (Cmd+H, Cmd+Espacio, nombre, Intro), bajar y escribir.
   Reescritas en `src/iphone/texto.ts` y `src/iphone/gestos.ts`.
+- También: esperar a que la pantalla se quede quieta tras cada paso en vez de una pausa fija
+  (su «settle» de frames.py; aquí sobre la firma del OCR) en `src/iphone/quieta.ts`; y, para el
+  iPhone por Bluetooth desde Windows, el puntero absoluto (toque exacto sin calibrar: ir, esperar
+  ~0,1 s, pulsar), el arrastre pausado (pulsar en absoluto, un informe relativo cada 8 ms, soltar
+  en absoluto, con su medida de 6,9 pt por informe de 2 unidades) y la pantalla por AirPlay con
+  UxPlay, reescritos en `src/iphone/hid-informes.ts`, `src/iphone/ble.ts` y `src/iphone/ventana.ts`.
 - Licencia:
 
 ```
@@ -49,6 +55,41 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2026 Bart
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## windows-ble-hid (BleHid)
+
+- Origen: https://github.com/abhishek-raj/windows-ble-hid (leído el 9 nov 2026, commit b33a004).
+- Qué se tomó: la idea de que Windows puede hacer de teclado/ratón Bluetooth LE (HID sobre GATT)
+  con el `GattServiceProvider` de WinRT que trae el sistema, comprobar antes el rol periférico del
+  adaptador, cifrado obligatorio en las características, y lo que su README midió (iOS necesita
+  AssistiveTouch para el puntero; el PC se anuncia con su propio nombre). No se instala su app ni
+  se ha copiado su código: el ayudante `deploy/iphone/windows/AsistentaHid.cs` es propio, y el mapa
+  de informes (con puntero absoluto, que BleHid no tiene) está escrito desde la especificación HID.
+- Licencia:
+
+```
+MIT License
+
+Copyright (c) 2026 Abhishek Raj
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
