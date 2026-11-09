@@ -13,6 +13,9 @@
 #>
 param([string]$UxPlay = '', [switch]$Arrancar)
 $ErrorActionPreference = 'Stop'
+# Desde PowerShell 7 (p. ej. Windows Terminal), `powershell -File` hereda su PSModulePath y
+# Windows PowerShell 5.1 no carga sus propios módulos (Get-FileHash, Write-Host...). Se repone.
+if ($PSVersionTable.PSVersion.Major -lt 6) { $env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine') }
 $fallos = 0
 function Bien($t) { Write-Host "[ok]    $t" -ForegroundColor Green }
 function Mal($t) { Write-Host "[falta] $t" -ForegroundColor Yellow; $script:fallos++ }
