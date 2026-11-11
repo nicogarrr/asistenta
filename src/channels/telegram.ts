@@ -160,6 +160,9 @@ export function approvalNudgeText(minutesLeft: number): string {
   return `⏳ Sigo esperando tu respuesta a esto: pulsa ✅ o ❌ arriba. Si no, en ${minutesLeft} min caduca y no hago nada.`;
 }
 
+/** Lo que queda del recordatorio si Telegram no deja borrarlo tras cerrarse la pregunta. */
+export const APPROVAL_NUDGE_CLOSED_TEXT = '⏳ Ya no hace falta: esa pregunta está cerrada.';
+
 /** Single gate key: the limiter is process-wide, not per chat. */
 const GLOBAL_KEY = 'global';
 
@@ -1631,11 +1634,18 @@ export class TelegramChannel implements ChannelAdapter {
         settle({ approved: false, scope: 'once' });
         if (messageId) void this.#markApprovalExpired(chatId, messageId);
       };
+      // El recordatorio «⏳ Sigo esperando…» solo vale mientras la pregunta está abierta:
+      // al contestarla, caducar o cancelarla se borra (antes se quedaba en el chat pidiendo
+      // «pulsa ✅ o ❌» de algo ya cerrado).
+      let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+      let nudgeId: string | null = null;
       const settle = (choice: ApprovalChoice): void => {
         if (settled) return;
         settled = true;
         this.#approvals.delete(id);
         signal?.removeEventListener('abort', onAbort);
+        if (nudgeTimer) clearTimeout(nudgeTimer);
+        if (nudgeId) void this.#retireApprovalNudge(chatId, nudgeId);
         resolve(choice);
       };
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -1658,7 +1668,8 @@ export class TelegramChannel implements ChannelAdapter {
       // silencio y el trabajo se quedaba sin hacer). Sin botones: los de arriba siguen valiendo.
       const nudgeMs = this.#options.approvalNudgeMs;
       if (nudgeMs > 0 && nudgeMs < this.#options.approvalTtlMs) {
-        setTimeout(() => {
+        nudgeTimer = setTimeout(() => {
+          nudgeTimer = null;
           if (settled || !messageId) return;
           const left = Math.max(1, Math.round((this.#options.approvalTtlMs - nudgeMs) / 60_000));
           void this.send({
@@ -1668,8 +1679,16 @@ export class TelegramChannel implements ChannelAdapter {
             threadId: opts?.threadId,
             text: approvalNudgeText(left),
             replyToMessageId: messageId,
-          }).catch(() => {});
-        }, nudgeMs).unref();
+          })
+            .then((sentId) => {
+              if (!sentId) return;
+              // Si se contestó mientras el recordatorio salía, se retira en cuanto existe.
+              if (settled) void this.#retireApprovalNudge(chatId, sentId);
+              else nudgeId = sentId;
+            })
+            .catch(() => {});
+        }, nudgeMs);
+        nudgeTimer.unref();
       }
 
       // The question embeds the gate's `reason`, which may quote a credential the
@@ -2169,6 +2188,35 @@ export class TelegramChannel implements ChannelAdapter {
    * botones. Un fallo aquí es cosmético (la aprobación ya se resolvió como denegada),
    * así que se registra y no se propaga.
    */
+  /**
+   * Quita el «⏳ Sigo esperando…» de una aprobación ya cerrada. Si Telegram no deja
+   * borrarlo, se reescribe para que no pida pulsar botones que ya no valen.
+   */
+  async #retireApprovalNudge(chatId: string, messageId: string): Promise<void> {
+    const ref = parseMessageRef(chatId, messageId);
+    if (!ref) return;
+    const deleted = await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.deleteMessage(ref.chatId, ref.messageId),
+        20_000,
+        'deleteMessage timed out',
+      ),
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (deleted) return;
+    await this.#throttled(() =>
+      withTimeout(
+        this.#bot.api.editMessageText(ref.chatId, ref.messageId, APPROVAL_NUDGE_CLOSED_TEXT),
+        20_000,
+        'editMessageText timed out',
+      ),
+    ).catch((err: unknown) => {
+      log.warn('approval nudge cleanup failed', { error: describeError(err) });
+    });
+  }
+
   async #markApprovalExpired(chatId: string, messageId: string): Promise<void> {
     const ref = parseMessageRef(chatId, messageId);
     if (!ref) return;
