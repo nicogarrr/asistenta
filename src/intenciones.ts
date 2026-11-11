@@ -199,9 +199,61 @@ export function textoCreada(i: Intencion | 'lleno'): string {
   return `💡 Hecho: cuando hables de ${lista(i.claves)} te recuerdo «${i.texto}». Como mucho una vez al día y ${INTENCION_MAX_VECES} veces; caduca en ${INTENCION_DIAS} días. /intenciones para verlas.`;
 }
 
-export function textoAviso(i: Intencion): string {
+export function textoAviso(
+  i: Intencion,
+  donde?: { guardado: string } | { correo: { de: string; asunto: string } },
+): string {
   const quedan = INTENCION_MAX_VECES - i.veces;
-  return `💡 Has nombrado ${lista(i.claves)}. Me pediste que te recordara: ${i.texto}${quedan > 0 ? '' : ' (era la última vez; ya no te lo recuerdo más)'}.`;
+  const que = !donde
+    ? `Has nombrado ${lista(i.claves)}`
+    : 'guardado' in donde
+      ? `Lo que acabas de guardar («${sliceSafe(donde.guardado, 80)}») habla de ${lista(i.claves)}`
+      : `Te ha llegado un correo de ${sliceSafe(donde.correo.de, 60)} («${sliceSafe(donde.correo.asunto || 'sin asunto', 80)}») que habla de ${lista(i.claves)}`;
+  return `💡 ${que}. Me pediste que te recordara: ${i.texto}${quedan > 0 ? '' : ' (era la última vez; ya no te lo recuerdo más)'}.`;
+}
+
+/**
+ * El texto de un correo nuevo en el que se buscan los temas: quién lo manda (así «cuando hable
+ * con Marta» salta con un correo de Marta), el asunto y el principio del cuerpo, sin lo citado
+ * («> …», que es lo que escribió Nico antes).
+ */
+export function textoDeCorreo(m: { from: string; subject: string; text: string }): string {
+  const cuerpo = m.text
+    .split('\n')
+    .filter((l) => !/^\s*>/.test(l))
+    .join('\n')
+    .slice(0, 3000);
+  return [m.from, m.subject, cuerpo].filter((x) => x.trim() !== '').join('\n');
+}
+
+/** Solo el nombre de «Marta López <marta@x.es>» (o la dirección si no hay nombre). */
+export function remitenteCorto(from: string): string {
+  const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>/.exec(from);
+  return (m?.[1]?.trim() || m?.[2]?.trim() || from.trim()).slice(0, 60);
+}
+/**
+ * El texto de una cosa de la bandeja en el que se buscan los temas: lo que Nico guarda (el
+ * artículo de Indra, el vídeo de la hipoteca) también es «hablar de» ese tema. Título, nota,
+ * por qué importa, ideas, autor y temas; sin la URL (un dominio no es un tema).
+ */
+export function textoDeGuardado(item: {
+  title: string | null;
+  note: string | null;
+  reason: string | null;
+  ideas: readonly string[];
+  extra: { author?: string; tags?: readonly string[] };
+}): string {
+  return [
+    item.title,
+    item.note,
+    item.reason,
+    ...item.ideas,
+    item.extra.author,
+    ...(item.extra.tags ?? []),
+  ]
+    .filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+    .join('\n')
+    .slice(0, 8000);
 }
 
 export function intencionesVista(l: readonly Intencion[], now: number): string {
