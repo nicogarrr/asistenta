@@ -65,6 +65,9 @@ export interface ProcesarDeps {
   now?: () => Date;
 }
 
+/** Veces que una cosa puede cortarse a medias (reinicio) antes de dejarla en ⚠️. */
+export const MAX_RESUME_CUTS = 3;
+
 /** Lo que entra al modelo: no más (un vídeo de 3 h son ~150 000 caracteres). */
 export const MAX_CONTENT_CHARS = 60_000;
 /** Palabras por minuto de lectura en pantalla. */
@@ -957,11 +960,35 @@ export class BandejaQueue {
     return done;
   }
 
-  /** Lo que quedó sin procesar al cerrar el daemon. */
+  /**
+   * Lo que quedó sin procesar al cerrar el daemon. Una cosa que estaba «procesando» se
+   * cortó a medias (PC apagado, Asistenta reiniciada… o la propia cosa la tumbó: un audio
+   * de 4 h que deja sin memoria al whisper). Se retoma, pero a la tercera vez que se corta
+   * se deja en ⚠️ con su motivo: antes se repetía en cada arranque, para siempre.
+   */
   resume(): number {
     const items = this.#store.unprocessed();
-    for (const it of items) void this.enqueue(it.id);
-    return items.length;
+    let n = 0;
+    for (const it of items) {
+      if (it.status === 'procesando') {
+        const key = `cortes:${it.id}`;
+        const cuts = Number(this.#store.getMeta(key) ?? '0') + 1;
+        if (cuts >= MAX_RESUME_CUTS) {
+          this.#store.setMeta(key, null);
+          this.#store.setStatus(
+            it.id,
+            'error',
+            `se cortó ${cuts} veces a medio procesar (¿el PC se apagó o se quedó sin memoria?); «⚡ Míralo ya» lo repite`,
+          );
+          this.#warn('bandeja: cosa cortada varias veces, la dejo en error', { id: it.id, cuts });
+          continue;
+        }
+        this.#store.setMeta(key, String(cuts));
+      }
+      void this.enqueue(it.id);
+      n++;
+    }
+    return n;
   }
 
   /** Se cumple cuando la cola se queda vacía (tests, y antes de cerrar). */
@@ -1065,6 +1092,8 @@ export class BandejaQueue {
       this.#store.setStatus(id, 'error', reason);
     } finally {
       clearTimeout(timer);
+      // Terminó (bien o mal): ya no es una cosa «cortada a medias».
+      this.#store.setMeta(`cortes:${id}`, null);
     }
   }
 }
