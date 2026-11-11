@@ -102,7 +102,11 @@ function dayLabel(day: string): string {
 export interface Digest {
   text: string;
   buttons: Button[];
-  /** Ids que salieron en el resumen (se marcan como resumidos). */
+  /**
+   * Ids que salieron de verdad en el texto (se marcan como resumidos). Lo que quedó en
+   * «…y N más» o se estaba procesando no: antes un 🟡 que no cabía (más de 15) se daba por
+   * resumido sin haberlo visto y no volvía a salir ninguna noche.
+   */
   ids: number[];
   empty: boolean;
 }
@@ -129,6 +133,8 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
   const chaffMin = chaff.reduce((s, i) => s + (i.costMin ?? 0), 0);
   if (chaffMin >= 5) lines.push(`🧹 Te ahorro ~${minutesLabel(chaffMin)} de paja.`);
   const withButtons: BandejaItem[] = [];
+  /** Lo que de verdad sale en el texto (lo demás no cuenta como resumido). */
+  const shownIds: number[] = [];
   let shown = 0;
   const section = (title: string, list: readonly BandejaItem[], ideas: number) => {
     if (!list.length) return;
@@ -136,6 +142,7 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
     for (const it of list) {
       if (shown >= MAX_DIGEST_ITEMS) return;
       shown++;
+      shownIds.push(it.id);
       const tail = [scoreLabel(it), it.costLabel?.replace(/^\S+\s/, '') ?? '']
         .filter(Boolean)
         .join(' · ');
@@ -163,10 +170,12 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
   if (chaff.length) {
     // La paja, recogida: una línea por cosa, con su enlace por si acaso.
     lines.push('', `⚪ Paja (${chaff.length}), la quito con 🧹:`);
-    for (const it of chaff.slice(0, 8))
+    for (const it of chaff.slice(0, 8)) {
+      shownIds.push(it.id);
       lines.push(
         `#${it.id} ${shortTitle(it, 40)} ${linkLines(it)[0]?.replace(/^🔗 /, '🔗') ?? ''}`.trim(),
       );
+    }
     if (chaff.length > 8) lines.push(`…y ${chaff.length - 8} más`);
   }
   if (waiting.length)
@@ -176,11 +185,13 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
     );
   if (failed.length) {
     lines.push('', `⚠️ No pude juzgar (${failed.length}):`);
-    for (const it of failed.slice(0, 5))
+    for (const it of failed.slice(0, 5)) {
+      shownIds.push(it.id);
       lines.push(
         `#${it.id} ${shortTitle(it, 50)} — ${it.error ?? 'error'}`,
         ...linkLines(it, '   '),
       );
+    }
   }
   const rest = red.length + yellow.length - shown;
   if (rest > 0) lines.push('', `…y ${rest} más: /bandeja`);
@@ -195,7 +206,7 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
     const b = chaffButton(day);
     if (b) buttons.push(b);
   }
-  return { text: lines.join('\n'), buttons, ids: items.map((i) => i.id), empty: false };
+  return { text: lines.join('\n'), buttons, ids: shownIds, empty: false };
 }
 
 /** «🧹 Quitar la paja»: descarta todo lo ⚪ pendiente hasta ese día. */
@@ -212,10 +223,17 @@ export function afterDigest(
   items: readonly BandejaItem[],
   day: string,
   now: Date,
+  /** Los que salieron en el texto (Digest.ids); sin esto, todos los de `items`. */
+  shown?: readonly number[],
 ): void {
   // Lo que aún se procesaba no cuenta como resumido: saldrá en el siguiente con su veredicto.
+  // Lo que no cupo en el texto, tampoco.
+  const inText = shown ? new Set(shown) : null;
   store.markDigested(
-    items.filter((i) => i.status === 'listo' || i.status === 'error').map((i) => i.id),
+    items
+      .filter((i) => i.status === 'listo' || i.status === 'error')
+      .filter((i) => !inText || inText.has(i.id))
+      .map((i) => i.id),
     now,
   );
   const next = nextDay(day);
@@ -279,6 +297,25 @@ export type DigestStatus = 'not-due' | 'no-owner' | 'empty' | 'sent' | 'send-fai
 
 let inFlight = false;
 
+/** Entre un intento fallido del resumen y el siguiente. */
+export const DIGEST_RETRY_MS = 10 * 60_000;
+/** Intentos por noche antes de dejarlo para el resumen de mañana. */
+export const DIGEST_MAX_TRIES = 3;
+
+function digestFail(store: BandejaStore, day: string): { n: number; at: number } | null {
+  try {
+    const v = JSON.parse(store.getMeta('digest_fail') ?? 'null') as {
+      day?: unknown;
+      n?: unknown;
+      at?: unknown;
+    } | null;
+    if (!v || v.day !== day || typeof v.n !== 'number' || typeof v.at !== 'number') return null;
+    return { n: v.n, at: v.at };
+  } catch {
+    return null;
+  }
+}
+
 function minutesOfDay(hora: string): number {
   const [h, m] = hora.split(':').map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
@@ -292,12 +329,27 @@ export async function runDigestIfDue(deps: DigestDeps): Promise<DigestStatus> {
   if (deps.store.getMeta('last_digest_day') === day) return 'not-due';
   if (clock.hour * 60 + clock.minute < minutesOfDay(digestHora(deps.store, deps.env)))
     return 'not-due';
+  // Tras un fallo, no cada minuto: un resumen largo sale en 2–3 mensajes y, si el último
+  // falla, repetir cada minuto mandaba los primeros otra vez (decenas de copias a la noche).
+  const fail = digestFail(deps.store, day);
+  if (fail && now.getTime() - fail.at < DIGEST_RETRY_MS) return 'not-due';
   if (inFlight) return 'busy';
   inFlight = true;
   try {
     const chatId = deps.owner();
     if (!chatId) return 'no-owner';
     const status = await sendDigest(deps, chatId, day, now);
+    if (status === 'send-failed') {
+      const n = (fail?.n ?? 0) + 1;
+      if (n >= DIGEST_MAX_TRIES) {
+        // Se deja para mañana: lo que no salió sigue sin resumir y entra en el siguiente.
+        deps.store.setMeta('last_digest_day', day);
+        deps.store.setMeta('digest_fail', null);
+        deps.warn?.('bandeja: resumen sin enviar tras varios intentos; va en el de mañana', {
+          tries: n,
+        });
+      } else deps.store.setMeta('digest_fail', JSON.stringify({ day, n, at: now.getTime() }));
+    } else deps.store.setMeta('digest_fail', null);
     // Domingo: detrás, lo mejor de la semana (una vez por semana).
     if (
       status !== 'send-failed' &&
@@ -339,7 +391,7 @@ export async function sendDigest(
   });
   if (!ok) return 'send-failed';
   deps.store.setMeta('last_digest_day', day);
-  afterDigest(deps.store, items, day, now);
+  afterDigest(deps.store, items, day, now, digest.ids);
   // «Si dices léelo entero, dame el PDF» (Nico, 10:58): el original del autor, si lo hay.
   if (deps.sendPdf) {
     for (const it of pdfsToAttach(items)) {
