@@ -4,6 +4,14 @@ import type { RoutineRunContext } from '../routines.js';
 import { sliceSafe } from '../text.js';
 import { type ThreadTickDeps, type TickThread, threadLabel } from './goal-tick.js';
 import { RoutineOutageError } from './routine-fire.js';
+import { RoutineStoppedError, type RoutineStops } from './rutina-parar.js';
+
+export interface RoutineTaskStopOpts<T extends TickThread> {
+  /** Registro de ejecuciones en curso para «/cron parar <rutina>». */
+  stops: RoutineStops;
+  /** Corta el turno en marcha de ese hilo (agent.abort + sus delegados). */
+  abortThread: (thread: T) => void;
+}
 
 /**
  * Ejecuta la tarea de una rutina programada en el hilo que la creó
@@ -18,6 +26,7 @@ import { RoutineOutageError } from './routine-fire.js';
  */
 export function createRoutineTask<T extends TickThread>(
   deps: ThreadTickDeps<T>,
+  stopOpts?: RoutineTaskStopOpts<T>,
 ): (prompt: string, ctx: RoutineRunContext) => Promise<string> {
   const { threadFor, sessions, contextNoteFor, safeRemember } = deps;
   return async (prompt, ctx) => {
@@ -26,8 +35,12 @@ export function createRoutineTask<T extends TickThread>(
     const threadName = threadRaw || 'main';
     const thread = await threadFor(chatPart, threadName, threadLabel(threadName));
     const generation = thread.generation;
+    // Desde que se encola: «/cron parar» la corta aunque aún espere turno en el hilo.
+    const stop = stopOpts?.stops.begin(ctx.scope, ctx.routine.name);
     const task = async (): Promise<string> => {
       if (thread.generation !== generation) return '';
+      if (stop?.stopped) throw new RoutineStoppedError(ctx.routine.name);
+      stop?.started(() => stopOpts?.abortThread(thread));
       thread.active = true;
       let sessionId = '';
       let text = '';
@@ -42,6 +55,8 @@ export function createRoutineTask<T extends TickThread>(
         thread.agent.attachContext(contextNoteFor(thread, prompt));
         const result = await thread.agent.run(prompt);
         text = result.text ?? '';
+        // Parada a medias: lo escrito hasta ahí no se manda como si fuera el informe.
+        if (stop?.stopped) throw new RoutineStoppedError(ctx.routine.name);
         if (result.error)
           log.warn('routine run error', { routine: ctx.routine.name, error: result.error });
         safeRemember(() => sessions.addTurn(sessionId, 'assistant', sliceSafe(text, 500)));
@@ -56,7 +71,7 @@ export function createRoutineTask<T extends TickThread>(
       }
       return text;
     };
-    const next = thread.tail.then(task);
+    const next = thread.tail.then(task).finally(() => stop?.end());
     thread.tail = next.catch(() => {});
     return next;
   };

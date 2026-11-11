@@ -116,6 +116,7 @@ const ENTREGA_PANEL: Record<string, string> = {
   'sin-cambios': 'sin cambios, no enviada',
   ninguno: 'no enviada',
   reintento: 'sin conexión, se reintenta',
+  parada: 'parada por ti',
 };
 
 const MAX_RUTINAS = 50;

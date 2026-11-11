@@ -24,6 +24,7 @@ import {
 } from '../tools/reminder.js';
 import { AUTO_RETRY_DELAYS_MS, retryDelayText } from './auto-retry.js';
 import { type PendingResend, RESEND_MAX_AGE_MS } from './routine-resend-queue.js';
+import { RoutineStoppedError } from './rutina-parar.js';
 
 /**
  * La tarea de una rutina no pudo hablar con el modelo (sin red o servicio caído).
@@ -285,6 +286,12 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
         try {
           body = await deps.runTask(task, ctx);
         } catch (err) {
+          // «/cron parar»: el dueño ya tiene su confirmación; no se manda nada más.
+          if (err instanceof RoutineStoppedError) {
+            log.info('routine stopped by the owner', { routine: ctx.routine.name });
+            record('parada', 'Parada por ti con /cron parar.');
+            return;
+          }
           failed = true;
           log.warn('routine execution failed', { routine: ctx.routine.name, err });
           // Sin red o con el modelo caído: se reintenta más tarde y llega con retraso,
