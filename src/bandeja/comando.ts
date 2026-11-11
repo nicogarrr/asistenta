@@ -12,6 +12,7 @@
  *   /bandeja captura on|off  guardar solo lo que llega a secas (on) o solo con /bandeja (off)
  *   /bandeja compra N        «🛒 A la compra»: los ingredientes de esa receta a /compra
  *   /bandeja calendario N    «📅 Al calendario»: el evento de esa página a tu Google Calendar
+ *   /bandeja ics N           «📲 .ics»: el mismo evento en un fichero para el iPhone (sin Google)
  *   /bandeja releer N        vuelve a abrir la página y lee su receta o su evento (lo guardado antes)
  *   /bandeja releer todo [N días]   lo mismo con todo lo de los últimos 30 días, de una en una
  *   /bandeja kindle N [pdf]  «📖 Al Kindle»: el texto entero en EPUB (+AZW3 con Calibre, +PDF)
@@ -24,7 +25,7 @@ import { isKindleAddress } from '../books/kindle.js';
 import { commandButton } from '../channels/telegram-shared.js';
 import { localDay } from '../datecontext.js';
 import type { EventoArgs } from '../google/workspace.js';
-import { ICS_SOURCE } from '../ics.js';
+import { ICS_SOURCE, icsDeEvento, icsNombre } from '../ics.js';
 import { type CaptureCandidate, explicitCapture } from './captura.js';
 import { cuandoTexto, eventoArgs, localWallTime, yaPaso } from './evento.js';
 import {
@@ -89,6 +90,8 @@ export interface BandejaReply {
   pdf?: { url: string; name: string };
   /** La cosa de la que es este mensaje (contestarle «kindle» la manda al Kindle). */
   itemId?: number;
+  /** Un fichero hecho aquí que mandar detrás («📲 .ics» de un evento). */
+  file?: { bytes: Buffer; name: string; caption: string };
 }
 
 export interface BandejaCommandDeps {
@@ -291,12 +294,28 @@ async function calendarioSub(
   const args = eventoArgs(ev, tz, item.url);
   const cuando = cuandoTexto(args);
   const mark = `cal_added_${item.id}`;
-  if (deps.store.getMeta(mark))
+  if (sub !== 'ics' && deps.store.getMeta(mark))
     return { text: `📅 #${item.id} ya está en tu calendario: «${ev.nombre}», ${cuando}.` };
   if (yaPaso(args, localWallTime(deps.now().toISOString(), tz)))
     return { text: `📅 «${ev.nombre}» ya pasó (${cuando}): no lo apunto.` };
+  if (sub === 'ics') {
+    // «📲 .ics»: el evento en un fichero que el iPhone (o el Mac) abre con «Añadir al
+    // calendario». Sin Google y sin red: va solo a este chat.
+    const ics = icsDeEvento(args, tz, { uid: `bandeja-${item.id}@asistenta`, now: deps.now() });
+    if (!ics) return { text: `📅 No entiendo la fecha de «${ev.nombre}»: no puedo hacer el .ics.` };
+    return {
+      text: `📲 Te mando «${ev.nombre}» (${cuando}) como .ics: ábrelo en el iPhone y toca «Añadir».`,
+      file: {
+        bytes: Buffer.from(ics, 'utf8'),
+        name: icsNombre(ev.nombre),
+        caption: `📅 ${ev.nombre} · ${cuando}`,
+      },
+      itemId: item.id,
+    };
+  }
   if (sub === 'calendario') {
     const yes = commandButton('✅ Sí, apúntalo', 'bandeja', String(item.id), 'apuntar');
+    const ics = commandButton('📲 .ics (iPhone)', 'bandeja', String(item.id), 'ics');
     return {
       text: `📅 ¿Lo apunto en tu Google Calendar?
 «${ev.nombre}»
@@ -306,7 +325,7 @@ async function calendarioSub(
 📍 ${ev.lugar}`
           : ''
       }`,
-      ...(yes ? { buttons: [yes] } : {}),
+      buttons: [yes, ics].filter((b): b is Button => b !== undefined),
       itemId: item.id,
     };
   }
@@ -319,6 +338,15 @@ async function calendarioSub(
   calendarioEnCurso.add(busy);
   try {
     const text = await deps.calendario(args);
+    // Sin Google (o con el permiso caducado): el .ics lo añade en el iPhone igual.
+    if (!text.startsWith('📅 Apuntado')) {
+      const ics = commandButton('📲 .ics (iPhone)', 'bandeja', String(item.id), 'ics');
+      if (ics)
+        return {
+          text: `${text}\n\nO toca «📲 .ics» y lo añades en el iPhone sin Google.`,
+          buttons: [ics],
+        };
+    }
     // Solo si de verdad se apuntó: sin Google conectado, el siguiente toque lo intenta otra vez.
     if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, new Date().toISOString());
     return { text };
@@ -357,6 +385,7 @@ const HELP = [
   '/bandeja — lo de hoy · /bandeja ver N — ficha · /bandeja resumen — el resumen ya',
   '/bandeja semana · /bandeja pendientes · /bandeja hora 22:00 · /bandeja captura off',
   '📖 /kindle N o /kindle <enlace> — el texto entero para el Kindle · /bandeja kindle — ajustes',
+  '📲 /bandeja ics N — el evento como .ics para añadirlo en el iPhone (sin Google)',
   '🔄 /bandeja releer N — vuelve a mirar la página (receta 🛒 o evento 📅 de algo guardado antes)',
   '🔄 /bandeja releer todo — lo mismo con lo de los últimos 30 días (de una en una)',
 ].join('\n');
@@ -563,6 +592,7 @@ ${cardText(r.item, now)}`,
     }
     case 'calendario':
     case 'apuntar':
+    case 'ics':
       return calendarioSub(sub, restParts[0], deps);
     default: {
       const cands = explicitCapture(trimmed);
