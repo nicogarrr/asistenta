@@ -115,6 +115,39 @@ function hasta(rango: PrevistoRango, now: Date): number {
 }
 
 /**
+ * El resumen de la bandeja en /previsto. Solo sale si hay algo (runDigestIfDue: «empty» no
+ * manda nada), así que se dice: el de esta noche con cuántas cosas lleva, o «solo si le
+ * mandas algo»; los siguientes, «si hay algo». Si hoy ya salió (/bandeja resumen a mano
+ * también cuenta), esta noche no vuelve a salir y no se enseña.
+ */
+export function extrasBandeja(
+  cada: string,
+  now: Date,
+  o: { pendientes: number; yaSalioHoy: boolean },
+): PrevistoExtra[] {
+  const runs = scheduleRunsAfter(cada, now, 2);
+  const today = localDay(now);
+  const first = runs[0];
+  if (!first) return [];
+  const out: PrevistoExtra[] = [];
+  let later = first;
+  if (localDay(first) === today) {
+    if (!o.yaSalioHoy)
+      out.push({
+        at: first,
+        text: o.pendientes
+          ? `📥 resumen de la bandeja (${o.pendientes === 1 ? '1 cosa' : `${o.pendientes} cosas`})`
+          : '📥 resumen de la bandeja (solo si le mandas algo)',
+      });
+    const next = runs[1];
+    if (!next) return out;
+    later = next;
+  }
+  out.push({ at: later, text: '📥 resumen de la bandeja (si hay algo)', cada });
+  return out;
+}
+
+/**
  * Lo previsto, ordenado. `nextOf` es la próxima vez según el planificador; `masTarde`, las
  * siguientes dentro del rango (por defecto, `siguientesEjecuciones`).
  */
