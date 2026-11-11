@@ -44,6 +44,22 @@ import {
 } from './resumen.js';
 import type { BandejaItem, BandejaStore } from './store.js';
 
+/**
+ * ¿Puede tardar minutos esta orden? «/bandeja ahora N» (procesar ya: transcribir un
+ * podcast) y «/bandeja kindle N|<enlace>» (bajar, armar el EPUB, Calibre, correo). El
+ * daemon las corre aparte: Telegram atiende las actualizaciones de una en una y, mientras
+ * una orden espera, no llega nada más (ni otro mensaje, ni /stop, ni el botón de una
+ * aprobación). Ajustes como «kindle auto on» o «kindle correo …» son al momento.
+ */
+export function bandejaSlowSub(args: string): boolean {
+  const [subRaw = '', next = ''] = args.trim().split(/\s+/);
+  const sub = subRaw.toLowerCase();
+  if (sub === 'ahora' || sub === 'ya') return true;
+  if (sub !== 'kindle') return false;
+  const opt = next.toLowerCase();
+  return opt !== '' && !['auto', 'correo', 'email', 'mail'].includes(opt);
+}
+
 export interface BandejaReply {
   text: string;
   buttons?: Button[];
@@ -208,7 +224,7 @@ export async function bandejaCommand(
         await deps
           .progress?.(`⏳ Mirando #${item.id} ${kindEmoji(item.kind)} ${shortTitle(item, 60)}…`)
           .catch(() => undefined);
-        await deps.queue.enqueue(item.id);
+        await deps.queue.enqueue(item.id, { first: true });
       }
       const fresh = deps.store.get(item.id) ?? item;
       const pdf = pdfsToAttach([fresh])[0];

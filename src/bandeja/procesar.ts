@@ -945,14 +945,24 @@ export class BandejaQueue {
     this.#warn = warn;
   }
 
-  /** Mete una cosa en la cola; la promesa se cumple cuando termina (bien o mal). */
-  enqueue(id: number): Promise<void> {
+  /**
+   * Mete una cosa en la cola; la promesa se cumple cuando termina (bien o mal).
+   * `first`: «⚡ Míralo ya» se pone delante de lo que espera (antes esperaba detrás de
+   * cinco podcasts de 3 h); la que está en marcha no se corta.
+   */
+  enqueue(id: number, opts: { first?: boolean } = {}): Promise<void> {
     const done = new Promise<void>((resolve) => {
       const list = this.#waiters.get(id) ?? [];
       list.push(resolve);
       this.#waiters.set(id, list);
     });
-    if (this.#current !== id && !this.#queue.includes(id)) this.#queue.push(id);
+    if (this.#current !== id) {
+      const at = this.#queue.indexOf(id);
+      if (opts.first) {
+        if (at >= 0) this.#queue.splice(at, 1);
+        this.#queue.unshift(id);
+      } else if (at < 0) this.#queue.push(id);
+    }
     void this.#pump();
     return done;
   }
