@@ -166,6 +166,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'google',
   'biblioteca',
   'intenciones',
+  'invitacion',
   'tailscale',
   'panel',
   'voz',

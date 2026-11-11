@@ -29,6 +29,11 @@ export interface MailMessage {
   at: number;
   seen: boolean;
   folder: string;
+  /**
+   * Las invitaciones de calendario del correo (.ics en crudo), solo en el aviso de correo nuevo
+   * (IDLE): de ahí sale «📅 ¿La apunto?» (mail/invitacion-aviso.ts). No se guarda.
+   */
+  calendarios?: string[];
 }
 
 export interface MailSearchQuery {

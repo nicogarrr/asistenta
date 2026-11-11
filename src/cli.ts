@@ -262,6 +262,7 @@ import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
 import { borrarEvento, crearEvento } from './google/workspace.js';
+import { icsDeEvento, icsNombre } from './ics.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { endpointKind, llmHealthCommand, providerKeyFor, providerKeySource } from './llm-health.js';
@@ -277,6 +278,7 @@ import { loadSendMailAccount, replyOnOwnerRequest } from './mail/reply.js';
 import { mailStatus } from './mail/status.js';
 import { mailAttentionText } from './mail/triage.js';
 import { createMailTriggerFeed, kvSeenIds } from './mail/trigger.js';
+import type { MailMessage } from './mail/types.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import {
@@ -4281,6 +4283,34 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     active: hasMailTrigger,
     onError: (err) => log.warn('trigger correo falló', { err: String(err) }),
   });
+  /**
+   * Las invitaciones de calendario de verdad (METHOD:REQUEST, futuras) que llegan al correo:
+   * una tarjeta al privado del dueño con «✅ Sí, apúntala» y «📲 .ics (iPhone)». Sin modelo.
+   */
+  const avisarInvitacionesCorreo = async (messages: MailMessage[]): Promise<void> => {
+    const owner = briefingOwner();
+    const conIcs = messages.filter((m) => m.calendarios?.length);
+    if (!owner || !conIcs.length) return;
+    const iv = await import('./mail/invitacion-aviso.js');
+    const store = new iv.InvitacionesCorreo(join(paths.state, 'invitaciones-correo.json'));
+    const tz = localTimeZone();
+    const now = new Date();
+    for (const m of conIcs) {
+      for (const inv of store.nuevas(iv.invitacionesDe(m.calendarios ?? [], m, tz, now), tz, now)) {
+        const buttons = [
+          commandButton('✅ Sí, apúntala', 'invitacion', inv.clave, 'apuntar'),
+          commandButton('📲 .ics (iPhone)', 'invitacion', inv.clave, 'ics'),
+        ].filter((b): b is { label: string; action: string } => b !== undefined);
+        await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: owner,
+          text: iv.textoInvitacion(inv),
+          ...(buttons.length ? { buttons } : {}),
+        });
+      }
+    }
+  };
   // IDLE requires existing mail credentials and a verified owner DM. No new account or scope.
   // Without the free attention model it only runs when a «correo» trigger exists.
   const mailIdle = new MailIdleTransport({
@@ -4295,6 +4325,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     save: (scope, cursor) => store.kvSet(`attention:imap:${scope}`, JSON.stringify(cursor)),
     deliver: async (messages, scope) => {
+      // «📅 Te ha llegado una invitación por correo… ¿La apunto?» (una vez por evento).
+      await avisarInvitacionesCorreo(messages).catch((err: unknown) =>
+        log.warn('invitación por correo: aviso no enviado', { err: String(err) }),
+      );
       await mailTriggers(messages, scope);
       if (!attentionFreeConfig(config) || !getOjoEnabled(memoryDb)) {
         // Solo disparadores: el correo ya se ofreció; el ojo no lo quiere.
@@ -7828,6 +7862,90 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     return false;
   };
+  /** «✅ Sí, apúntala» que aún están creando su evento (doble toque: uno solo). */
+  const invitacionEnCurso = new Set<string>();
+  /** /invitacion: los botones de la tarjeta de una invitación por correo, y «off»/«on». */
+  const cmdInvitacion = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const iv = await import('./mail/invitacion-aviso.js');
+    const store = new iv.InvitacionesCorreo(join(paths.state, 'invitaciones-correo.json'));
+    const orden = iv.invitacionOrden(args);
+    if (!orden) {
+      await say(
+        inbound,
+        'Las invitaciones de calendario que te llegan al correo traen «✅ Sí, apúntala» y «📲 .ics». «/invitacion off» para no recibir esos avisos; «/invitacion on» para volver.',
+        { quote: true },
+      );
+      return;
+    }
+    if (orden.kind === 'off' || orden.kind === 'on') {
+      store.setApagadas(orden.kind === 'off');
+      await say(
+        inbound,
+        orden.kind === 'off'
+          ? '🔕 Vale, ya no te aviso de las invitaciones del correo. «/invitacion on» para volver.'
+          : '🔔 Te vuelvo a avisar de las invitaciones que te lleguen al correo.',
+        { quote: true },
+      );
+      return;
+    }
+    const inv = store.get(orden.clave);
+    if (!inv) {
+      await say(inbound, 'Ya no tengo esa invitación. Búscala en tu correo.', { quote: true });
+      return;
+    }
+    const tz = localTimeZone();
+    const icsBtn = commandButton('📲 .ics (iPhone)', 'invitacion', inv.clave, 'ics');
+    if (orden.kind === 'ics') {
+      const ics = icsDeEvento(iv.argsDe(inv), tz, { uid: `${inv.clave}@asistenta.correo` });
+      const ok =
+        ics && inbound.channel === 'telegram'
+          ? await telegram
+              .sendDocumentBytes(
+                Number(inbound.chatId),
+                Buffer.from(ics, 'utf8'),
+                icsNombre(inv.titulo),
+                `📲 «${inv.titulo}»: ábrelo en el iPhone y toca «Añadir».`,
+                inbound.threadId,
+              )
+              .then(() => true)
+              .catch(() => false)
+          : false;
+      if (!ok) await say(inbound, 'No he podido mandarte el .ics.', { quote: true });
+      return;
+    }
+    if (inv.apuntada) {
+      await say(inbound, `📅 «${inv.titulo}» ya está apuntada en tu Google Calendar.`, {
+        quote: true,
+      });
+      return;
+    }
+    if (invitacionEnCurso.has(inv.clave)) return;
+    invitacionEnCurso.add(inv.clave);
+    try {
+      const text = await crearEvento(
+        { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
+        iv.argsDe(inv),
+      );
+      const ok = text.startsWith('📅 Apuntado');
+      if (ok) store.marcarApuntada(inv.clave);
+      await say(
+        inbound,
+        ok ? text : `${text}\n\nSi quieres, te la mando en un .ics para el iPhone.`,
+        {
+          quote: true,
+          ...(!ok && icsBtn ? { buttons: [icsBtn] } : {}),
+        },
+      );
+    } finally {
+      invitacionEnCurso.delete(inv.clave);
+    }
+  };
   /** /intenciones: los recordatorios por tema («cuando hable de X, recuérdame Y»). */
   const cmdIntenciones = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -11066,6 +11184,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['routines'], run: (inbound) => cmdRoutines(inbound) },
     { names: ['previsto', 'planes'], run: (inbound, args) => cmdPrevisto(inbound, args) },
     { names: ['intenciones', 'temas'], run: (inbound, args) => cmdIntenciones(inbound, args) },
+    { names: ['invitacion', 'invitaciones'], run: (inbound, args) => cmdInvitacion(inbound, args) },
     {
       names: ['routine'],
       run: async (inbound, args) => cmdRoutine(await resolveThread(inbound), inbound, args),
