@@ -54,6 +54,12 @@ export const MIN_ARTICLE_WORDS = 150;
 const PART_CHARS = 120_000;
 /** Telegram no deja mandar más de 50 MB por bot. */
 const MAX_SEND_BYTES = 50_000_000;
+/**
+ * Lo que cabe en un correo al Kindle. Amazon acepta hasta 50 MB, pero el adjunto viaja en
+ * base64 (un tercio más) y Gmail/Outlook cortan en 20–25 MB por mensaje: un PDF de 19 MB
+ * llegaba a «El correo al Kindle falló (552 …)» tras subirlo entero.
+ */
+export const KINDLE_MAIL_MAX_BYTES = 18_000_000;
 
 // ─── Texto → bloques ────────────────────────────────────────────────────────────
 
@@ -963,7 +969,11 @@ export async function deliverToKindle(
       `⚠️ ${tooBig.map((f) => f.name).join(', ')} pasa de 50 MB y Telegram no me deja mandarlo.`,
     );
   // Correo a SU Kindle, solo si lo activó (PA_KINDLE_EMAIL o /bandeja kindle correo).
-  if (settings.email && mailFile && deps.mail) {
+  if (settings.email && mailFile && deps.mail && mailFile.bytes.length > KINDLE_MAIL_MAX_BYTES)
+    lines.push(
+      `📧 «${mailFile.name}» pesa ${Math.round(mailFile.bytes.length / 1_000_000)} MB: no cabe en un correo (unos 18 MB como mucho), así que no lo mando a tu Kindle. Pásalo por USB o con la app «Enviar a Kindle».`,
+    );
+  else if (settings.email && mailFile && deps.mail) {
     const account = await deps.mail.account().catch(() => null);
     if (!account)
       lines.push(
