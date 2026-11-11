@@ -31,6 +31,28 @@ export function isDuplicateUpdate(
   return false;
 }
 
+/**
+ * Bot de Telegram: su nombre de usuario siempre acaba en «bot» (regla de Telegram), así que
+ * una mención a un bot se distingue de la de una persona sin saber el nuestro.
+ */
+const BOT_MENTION = '@[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]';
+const LEADING_BOT_MENTION = new RegExp(`^${BOT_MENTION}(?![A-Za-z0-9_])[\\s,:;.!]*`, 'u');
+const TRAILING_BOT_MENTION = new RegExp(`[\\s,]+${BOT_MENTION}(?=[.!?…]*$)`, 'u');
+
+/**
+ * En un grupo el bot solo atiende si lo mencionan, y la mención llega en el texto
+ * («@asistenta_bot deja de vigilar», «más @asistenta_bot»). Los atajos sin modelo (deja de
+ * vigilar, modo altavoz, «más», «no te entiendo», los disparadores de mensaje…) comparan el
+ * texto entero, así que en un grupo no saltaba ninguno, y «deja de vigilar @asistenta_bot»
+ * buscaba una vigilancia llamada «@asistenta_bot» (bugs-36). Quita la mención de un bot al
+ * principio o al final; la de una persona («@pepe») y la del medio se quedan. Si no queda
+ * nada (una foto con solo la mención), devuelve el texto tal cual.
+ */
+export function sinMencionDelBot(text: string): string {
+  const out = text.trim().replace(LEADING_BOT_MENTION, '').replace(TRAILING_BOT_MENTION, '').trim();
+  return out ? out : text;
+}
+
 /** Lo mínimo de un hilo para encolar turnos: su cola y su generación (/stop la sube). */
 export interface QueueableThread {
   tail: Promise<unknown>;

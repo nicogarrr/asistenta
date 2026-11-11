@@ -199,6 +199,7 @@ import {
   queueThreadTurn,
   resolveInboundThread,
   routeInboundControl,
+  sinMencionDelBot,
   threadForSentIds,
 } from './daemon/inbound.js';
 import { LatencyStats, latencyLine } from './daemon/latency.js';
@@ -11081,6 +11082,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }),
     onMessage: async (inbound) => {
       if (!inbound.authorised) return;
+      // En un grupo la mención llega en el texto («@asistenta_bot deja de vigilar»): fuera,
+      // o ningún atajo sin modelo la reconocía (bugs-36). Ver sinMencionDelBot.
+      if (inbound.isGroup) inbound.text = sinMencionDelBot(inbound.text);
       // «/experto derecho ¿qué es la usucapión?»: pregunta normal al modelo con sus apuntes
       // («según mis apuntes de derecho: …»); «/expertos» a secas es el comando de la lista.
       if (inbound.text.startsWith('/expert') && isOwnerDm(inbound, vigilanteOwnerId)) {
