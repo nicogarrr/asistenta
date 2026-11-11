@@ -14,7 +14,7 @@
  */
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { nombreSeguro } from '../creados.js';
 
 export const ADJUNTOS_MAX = 5;
@@ -114,6 +114,49 @@ function deCreados(cfg: AdjuntosConfig, ref: string): Adjunto | null {
     : null;
 }
 
+/** Las carpetas de siempre del usuario (no la del programa): donde se busca un nombre a secas. */
+const CARPETA_USUARIO = /^(documents|documentos|desktop|escritorio|downloads|descargas)$/i;
+
+/**
+ * «Descargas/factura.pdf» o «factura.pdf» sin la ruta entera: el modelo no sabe la carpeta
+ * del usuario en Windows (C:\Users\<nombre>\…) y antes eso era «dime la ruta». Se busca en
+ * Documentos/Escritorio/Descargas (también las de OneDrive). Devuelve la ruta, o por qué no.
+ */
+function enCarpetas(cfg: AdjuntosConfig, ref: string): { path: string } | { why: string } {
+  const segs = ref.split(/[\\/]+/).filter(Boolean);
+  const userRoots = cfg.roots.filter((root) => CARPETA_USUARIO.test(basename(root)));
+  const hits = new Map<string, string>();
+  const probar = (root: string, rest: string[]) => {
+    if (!rest.length) return;
+    const p = resolve(root, ...rest);
+    // «Documentos/../…» no sale de su carpeta.
+    if (!dentro(root, p)) return;
+    try {
+      if (statSync(p).isFile()) hits.set(lower(real(p)), p);
+    } catch {}
+  };
+  const first = segs[0] ?? '';
+  if (segs.length > 1 && CARPETA_USUARIO.test(first)) {
+    const alias = (n: string) =>
+      ({ documents: 'doc', documentos: 'doc', desktop: 'esc', escritorio: 'esc' })[
+        n.toLowerCase()
+      ] ?? 'des';
+    for (const root of userRoots)
+      if (alias(basename(root)) === alias(first)) probar(root, segs.slice(1));
+  } else if (segs.length === 1) {
+    for (const root of userRoots) probar(root, segs);
+  }
+  const found = [...hits.values()];
+  if (found.length === 1 && found[0]) return { path: found[0] };
+  if (found.length > 1)
+    return {
+      why: `hay ${found.length} con ese nombre (${found.map((p) => basename(dirname(p))).join(', ')}); dime la carpeta`,
+    };
+  return {
+    why: 'no lo encuentro entre lo que te he hecho ni en Documentos/Escritorio/Descargas; dime la ruta',
+  };
+}
+
 /** Mira un adjunto (sin leerlo): dónde está, si se puede mandar y cuánto pesa. */
 export function mirarAdjunto(ref: string): Adjunto {
   const cfg = config;
@@ -122,9 +165,12 @@ export function mirarAdjunto(ref: string): Adjunto {
   if (!r || /[\0\r\n]/.test(r)) return { ok: false, ref: r, why: 'nombre no válido' };
   const creado = deCreados(cfg, r);
   if (creado) return creado;
-  const expanded = r.replace(/^~(?=$|[\\/])/, homedir());
-  if (!isAbsolute(expanded))
-    return { ok: false, ref: r, why: 'no lo encuentro entre lo que te he hecho; dime la ruta' };
+  let expanded = r.replace(/^~(?=$|[\\/])/, homedir());
+  if (!isAbsolute(expanded)) {
+    const hit = enCarpetas(cfg, expanded);
+    if ('why' in hit) return { ok: false, ref: r, why: hit.why };
+    expanded = hit.path;
+  }
   const p = real(resolve(expanded));
   const parts = p.split(/[\\/]+/).filter(Boolean);
   if (parts.some((s) => s.startsWith('.')))
