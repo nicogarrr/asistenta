@@ -951,14 +951,18 @@ async function icsResult(item: BandejaItem, deps: ProcesarDeps): Promise<Process
   const ev = eventos[0];
   if (!ev) throw new BandejaError('el .ics no trae ningún evento con fecha');
   const otros = eventos.length > 1 ? ` (trae ${eventos.length} eventos; te enseño el primero)` : '';
-  const { cancelado, repite, uid, ...evento } = ev;
-  const conUid = uid ? { icsUid: uid } : {};
+  const { cancelado, repite, uid, ocurrencia, ...evento } = ev;
+  // Un solo día de una serie (Outlook: «se cancela la del jueves»): con el UID de la serie, así
+  // que una invitación de ese día no se toma por la serie entera (bugs-37).
+  const conUid = uid && (cancelado || !ocurrencia) ? { icsUid: uid } : {};
   if (cancelado)
     return {
       title: `Cancelado: ${ev.nombre}`,
       verdict: 'paja',
       score: null,
-      reason: `Es la cancelación de «${ev.nombre}». Si lo tenías apuntado, quítalo de tu calendario.${otros}`,
+      reason: ocurrencia
+        ? `Es la cancelación de un solo día de «${ev.nombre}» (la serie sigue). Si lo tenías apuntado ese día, quítalo de tu calendario.${otros}`
+        : `Es la cancelación de «${ev.nombre}». Si lo tenías apuntado, quítalo de tu calendario.${otros}`,
       ideas: [],
       costMin: 0,
       costLabel: '📅 cancelación',
@@ -966,14 +970,18 @@ async function icsResult(item: BandejaItem, deps: ProcesarDeps): Promise<Process
         source: ICS_SOURCE,
         basis: 'texto',
         ...conUid,
-        icsCancelado: { nombre: ev.nombre, inicio: ev.inicio },
+        icsCancelado: {
+          nombre: ev.nombre,
+          inicio: ev.inicio,
+          ...(ocurrencia ? { soloUno: true } : {}),
+        },
       },
     };
   return {
     title: ev.nombre,
     verdict: 'ideas',
     score: null,
-    reason: `Invitación de calendario${ev.lugar ? ` en ${ev.lugar}` : ''}.${repite ? ' Se repite: apunto solo la primera vez.' : ''}${otros}`,
+    reason: `${ocurrencia ? 'Cambio en un solo día de una cita que se repite' : 'Invitación de calendario'}${ev.lugar ? ` en ${ev.lugar}` : ''}.${repite ? ' Se repite: apunto solo la primera vez.' : ''}${otros}`,
     ideas: [],
     costMin: 0,
     costLabel: '📅 invitación',
