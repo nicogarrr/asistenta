@@ -13,6 +13,7 @@
  *   /bandeja compra N        «🛒 A la compra»: los ingredientes de esa receta a /compra
  *   /bandeja calendario N    «📅 Al calendario»: el evento de esa página a tu Google Calendar
  *   /bandeja releer N        vuelve a abrir la página y lee su receta o su evento (lo guardado antes)
+ *   /bandeja releer todo [N días]   lo mismo con todo lo de los últimos 30 días, de una en una
  *   /bandeja kindle N [pdf]  «📖 Al Kindle»: el texto entero en EPUB (+AZW3 con Calibre, +PDF)
  *   /bandeja kindle <enlace> lo mismo con un enlace (también «/kindle <enlace>»)
  *   /bandeja kindle auto on|off      lo 🔴 para leer entero va solo al Kindle
@@ -32,13 +33,20 @@ import {
   byVerdict,
   cardButtons,
   cardText,
+  eventLine,
   kindEmoji,
   listText,
   shortTitle,
 } from './formato.js';
 import { type KindleTarget, kindleStatusText } from './kindle.js';
 import type { BandejaQueue } from './procesar.js';
-import { releerCosa } from './releer.js';
+import {
+  RELEER_TODO_DIAS,
+  RELEER_TODO_MAX,
+  RELEER_TODO_MAX_DIAS,
+  releerCosa,
+  releerTodo,
+} from './releer.js';
 import {
   composeDigest,
   composeWeekly,
@@ -107,6 +115,8 @@ export interface BandejaCommandDeps {
   timeZone?: () => string;
   /** «🔄 Releer»: el HTML de una página (la misma descarga que usa la bandeja). */
   fetchPagina?: (url: string) => Promise<string>;
+  /** La pausa entre páginas de «/bandeja releer todo» (en pruebas, sin esperar). */
+  sleep?: (ms: number) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -142,6 +152,56 @@ export function captureAndAck(
     buttons: ackButtons(saved),
     ...(saved.length === 1 && saved[0] ? { itemId: saved[0].item.id } : {}),
   };
+}
+
+/** «/bandeja releer todo [N días]»: las páginas de esos días, de una en una (releer.ts). */
+async function releerTodoSub(
+  restParts: readonly string[],
+  deps: BandejaCommandDeps,
+): Promise<BandejaReply> {
+  if (!deps.fetchPagina) return { text: 'Releer páginas no está disponible desde aquí.' };
+  const n = Number(restParts[1]);
+  const dias =
+    Number.isSafeInteger(n) && n > 0 ? Math.min(RELEER_TODO_MAX_DIAS, n) : RELEER_TODO_DIAS;
+  const r = await releerTodo(deps.store, deps.chatId, deps.fetchPagina, {
+    now: deps.now(),
+    dias,
+    ...(deps.progress ? { progress: deps.progress } : {}),
+    ...(deps.sleep ? { sleep: deps.sleep } : {}),
+  });
+  if (r === 'ocupado')
+    return { text: '🔄 Ya estoy releyendo tu bandeja. Te digo qué traen en cuanto acabe.' };
+  if (!r.total)
+    return {
+      text: `🔄 Nada que releer de los últimos ${dias} días: lo que tenía página ya está releído (o ya trae 🛒/📅).`,
+    };
+  const lines: string[] = [];
+  const hechas = r.nuevas.length + r.igual;
+  lines.push(
+    `🔄 Releídas ${hechas === 1 ? '1 página' : `${hechas} páginas`}: ${r.nuevas.length ? `${r.nuevas.length} con algo nuevo` : 'ninguna trae receta ni evento nuevos'}.`,
+  );
+  const buttons: Button[] = [];
+  for (const { item, nuevo } of r.nuevas) {
+    lines.push(`#${item.id} ${shortTitle(item, 60)} — ${nuevo.join(' · ')}`);
+    const cuando = eventLine(item, deps.now(), deps.timeZone?.());
+    if (cuando && !cuando.endsWith('(ya pasó)')) {
+      const b = commandButton(`📅 ${item.id} calendario`, 'bandeja', String(item.id), 'calendario');
+      if (b) buttons.push(b);
+    }
+    if (item.extra.receta && item.extra.receta >= 2) {
+      const b = commandButton(`🛒 ${item.id} compra`, 'bandeja', String(item.id), 'compra');
+      if (b) buttons.push(b);
+    }
+  }
+  if (r.fallidas)
+    lines.push(
+      `⚠️ ${r.fallidas === 1 ? '1 no abrió' : `${r.fallidas} no abrieron`}: lo intento otra vez en el siguiente «/bandeja releer todo».`,
+    );
+  if (r.quedan)
+    lines.push(
+      `Quedan ${r.quedan}: dime «/bandeja releer todo» otra vez y sigo (voy de ${RELEER_TODO_MAX} en ${RELEER_TODO_MAX} para no saturar las webs).`,
+    );
+  return { text: lines.join('\n'), ...(buttons.length ? { buttons, perRow: 2 } : {}) };
 }
 
 function ownItem(deps: BandejaCommandDeps, raw: string | undefined): BandejaItem | string {
@@ -278,6 +338,7 @@ const HELP = [
   '/bandeja semana · /bandeja pendientes · /bandeja hora 22:00 · /bandeja captura off',
   '📖 /kindle N o /kindle <enlace> — el texto entero para el Kindle · /bandeja kindle — ajustes',
   '🔄 /bandeja releer N — vuelve a mirar la página (receta 🛒 o evento 📅 de algo guardado antes)',
+  '🔄 /bandeja releer todo — lo mismo con lo de los últimos 30 días (de una en una)',
 ].join('\n');
 
 export async function bandejaCommand(
@@ -461,10 +522,12 @@ export async function bandejaCommand(
     }
     case 'releer':
     case 'reprocesar': {
+      if (/^(todo|todos|todas|all)$/i.test(restParts[0] ?? ''))
+        return releerTodoSub(restParts, deps);
       const item = ownItem(deps, restParts[0]);
       if (typeof item === 'string') return { text: item };
       if (!deps.fetchPagina) return { text: 'Releer páginas no está disponible desde aquí.' };
-      const r = await releerCosa(deps.store, item, deps.fetchPagina);
+      const r = await releerCosa(deps.store, item, deps.fetchPagina, now);
       if (typeof r === 'string') return { text: r };
       const head = r.nuevo.length
         ? `🔄 Releída: ${r.nuevo.join(' · ')}.`

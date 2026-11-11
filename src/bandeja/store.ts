@@ -62,6 +62,8 @@ export interface BandejaExtra {
    * lleva entonces «📅 Al calendario» (bandeja/evento.ts).
    */
   evento?: BandejaEvento;
+  /** Cuándo se releyó su página (🔄): «/bandeja releer todo» no la vuelve a abrir. */
+  releidaAt?: string;
 }
 
 export interface BandejaItem {
@@ -337,6 +339,21 @@ export class BandejaStore {
           "SELECT * FROM items WHERE status IN ('nuevo', 'procesando') AND state = 'pendiente' ORDER BY id",
         )
         .all() as Row[]
+    ).map(mapRow);
+  }
+
+  /**
+   * Los enlaces (páginas web) guardados desde `fromIso`, sin descartar y ya juzgados, de
+   * más nuevo a más viejo («/bandeja releer todo»).
+   */
+  pagesSince(chatId: string, fromIso: string): BandejaItem[] {
+    return (
+      this.#db
+        .prepare(
+          `SELECT * FROM items WHERE chat_id = ? AND created_at >= ? AND kind = 'enlace'
+             AND state != 'descartado' AND status = 'listo' AND url IS NOT NULL ORDER BY id DESC`,
+        )
+        .all(chatId, fromIso) as Row[]
     ).map(mapRow);
   }
 
