@@ -4290,6 +4290,36 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    * Las invitaciones de calendario de verdad (METHOD:REQUEST, futuras) que llegan al correo:
    * una tarjeta al privado del dueño con «✅ Sí, apúntala» y «📲 .ics (iPhone)». Sin modelo.
    */
+  /**
+   * Recordatorios por tema con el correo nuevo: quién lo manda, el asunto y el principio del
+   * cuerpo. Un aviso por recordatorio (los mismos topes que al escribir: 3 veces, 24 h), con su
+   * «🔕», al privado del dueño. Los ya leídos no cuentan.
+   */
+  const intencionesCorreo = async (messages: MailMessage[]): Promise<void> => {
+    const owner = briefingOwner();
+    const nuevos = messages.filter((m) => !m.seen);
+    if (!owner || !nuevos.length) return;
+    const it = await import('./intenciones.js');
+    const store = new it.IntencionesStore(join(paths.state, 'intenciones.json'));
+    const chat = chatKey({ channel: 'telegram', account: telegram.account, chatId: owner });
+    for (const m of nuevos) {
+      for (const i of store.disparar(chat, it.textoDeCorreo(m), Date.now())) {
+        const b =
+          i.veces < it.INTENCION_MAX_VECES
+            ? commandButton(it.OLVIDAR_LABEL, 'intenciones', String(i.id), 'olvidar')
+            : undefined;
+        await telegram.send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId: owner,
+          text: it.textoAviso(i, {
+            correo: { de: it.remitenteCorto(m.from), asunto: m.subject },
+          }),
+          ...(b ? { buttons: [b] } : {}),
+        });
+      }
+    }
+  };
   const avisarInvitacionesCorreo = async (messages: MailMessage[]): Promise<void> => {
     const owner = briefingOwner();
     const conIcs = messages.filter((m) => m.calendarios?.length);
@@ -4331,6 +4361,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // «📅 Te ha llegado una invitación por correo… ¿La apunto?» (una vez por evento).
       await avisarInvitacionesCorreo(messages).catch((err: unknown) =>
         log.warn('invitación por correo: aviso no enviado', { err: String(err) }),
+      );
+      // «cuando hable con Marta, recuérdame…»: un correo de Marta (o que habla de Indra) también.
+      await intencionesCorreo(messages).catch((err: unknown) =>
+        log.warn('correo: recordatorio por tema no enviado', { err: String(err) }),
       );
       await mailTriggers(messages, scope);
       if (!attentionFreeConfig(config) || !getOjoEnabled(memoryDb)) {
