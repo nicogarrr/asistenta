@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { recetaItems, recetaNote, recetaUrl, splitRaciones } from './compra-receta.js';
+import { ingredientKey, sumarLinea } from './compra-sumar.js';
 import { lazySchema, Type } from './core/lazy-schema.js';
 import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
@@ -141,6 +142,79 @@ export class CompraStore {
     }
     if (added.length) this.#write(data);
     return { added, already };
+  }
+
+  /**
+   * Como `add`, pero para lo que pide una receta: si el ingrediente ya está por comprar con
+   * una cantidad que se puede sumar, se suma en su línea («200 g de harina» + «100 g de
+   * harina» → «300 g de harina») en vez de quedar dos líneas o darse por «ya estaba». Si ya
+   * estaba sin cantidad («harina»), se da por apuntado.
+   */
+  addSumando(texts: string[]): {
+    added: string[];
+    already: string[];
+    merged: Array<{ from: string; to: string }>;
+  } {
+    const data = this.#read();
+    const added: string[] = [];
+    const already: string[] = [];
+    const merged: Array<{ from: string; to: string }> = [];
+    let changed = false;
+    for (const text of texts) {
+      const t = text.trim().slice(0, MAX_ITEM_CHARS);
+      if (!t) continue;
+      const key = ingredientKey(t);
+      const pending = key ? data.items.filter((i) => !i.done && ingredientKey(i.text) === key) : [];
+      let done = false;
+      // El mismo texto exacto («6 huevos» y «6 huevos») se da por «ya estaba», como siempre:
+      // así mandar dos veces la misma receta (o que el modelo la repita) no duplica nada.
+      const same = pending.find((i) => fold(i.text) === fold(t));
+      if (same) {
+        already.push(same.text);
+        continue;
+      }
+      for (const hit of pending) {
+        const sum = sumarLinea(hit.text, t);
+        if (sum && sum.length <= MAX_ITEM_CHARS) {
+          merged.push({ from: hit.text, to: sum });
+          hit.text = sum;
+          changed = done = true;
+          break;
+        }
+      }
+      if (done) continue;
+      // Ya en la lista sin cantidad («harina»): con eso basta, como antes con el texto igual.
+      const bare = pending.find((i) => !/^\s*[\d½¼¾⅓⅔]/.test(i.text));
+      if (bare) {
+        already.push(bare.text);
+        continue;
+      }
+      const r = this.#addOne(data, t);
+      if (r === 'full') break;
+      if (r === 'already') already.push(t);
+      else {
+        added.push(r);
+        changed = true;
+      }
+    }
+    if (changed) this.#write(data);
+    return { added, already, merged };
+  }
+
+  /** Apunta uno sobre `data` (sin guardar): el texto apuntado, 'already' o 'full'. */
+  #addOne(data: CompraFile, t: string): string | 'already' | 'full' {
+    const hit = data.items.find((i) => fold(i.text) === fold(t));
+    if (hit) {
+      if (hit.done) {
+        hit.done = false;
+        hit.text = t;
+        return t;
+      }
+      return 'already';
+    }
+    if (data.items.length >= MAX_ITEMS) return 'full';
+    data.items.push({ id: data.nextId++, text: t, done: false, addedAt: this.#now() });
+    return t;
   }
 
   toggle(id: number): CompraItem | null {
@@ -445,8 +519,12 @@ export async function recetaACompra(
   if (!r.items.length) {
     return { text: recetaNote(r, [], [], servings), buttons: [] };
   }
-  const added = store.add(r.items);
-  return compraView(store.list(), recetaNote(r, added.added, added.already, servings));
+  const added = store.addSumando(r.items);
+  const note = recetaNote(r, added.added, added.already, servings);
+  const sumado = added.merged.length
+    ? ` Sumado a lo que ya tenías: ${added.merged.map((m) => `${m.from} → ${m.to}`).join(', ')}.`
+    : '';
+  return compraView(store.list(), `${note}${sumado}`);
 }
 
 /** Herramienta del modelo: «añade leche», «ya he comprado el pan», «¿qué me falta?». */
