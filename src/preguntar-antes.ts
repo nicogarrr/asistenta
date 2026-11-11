@@ -112,6 +112,11 @@ export interface AskFirstRule {
 export interface AskFirstWhere {
   chat: string;
   group: boolean;
+  /**
+   * El nombre de un grupo por su chatKey (chat-titulos.ts): la lista dice «(solo en el grupo
+   * «Familia»)» en vez de «(solo en un grupo)». Sin él, como antes.
+   */
+  nombreDe?: (chat: string) => string | undefined;
 }
 
 /** «… aquí», «… en este grupo», «… en todos los chats»: lo que dice dónde vale. */
@@ -289,7 +294,10 @@ const AREA_HINT =
 function scopeNote(r: AskFirstRule, where: AskFirstWhere | undefined): string {
   if (r.chat === undefined) return '';
   if (where && r.chat === where.chat) return where.group ? ' (solo en este grupo)' : ' (solo aquí)';
-  return /:-\d+/.test(r.chat) ? ' (solo en un grupo)' : ' (solo en otro chat)';
+  const grupo = /:-\d+/.test(r.chat);
+  const nombre = where?.nombreDe?.(r.chat);
+  if (nombre) return grupo ? ` (solo en el grupo «${nombre}»)` : ` (solo en «${nombre}»)`;
+  return grupo ? ' (solo en un grupo)' : ' (solo en otro chat)';
 }
 
 /** Desde un grupo se ven las reglas de todos los hilos y las de ese grupo; desde el privado, todas. */

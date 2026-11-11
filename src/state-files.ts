@@ -165,6 +165,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'chat-titulos.json',
+    what: 'nombres de los grupos de Telegram (para decir a qué grupo va una regla)',
+    backup: 'file',
+  },
+  {
     name: 'lista-compra.json',
     what: 'lista de la compra por chat (/compra, botones para tachar)',
     backup: 'file',

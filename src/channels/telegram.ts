@@ -620,6 +620,7 @@ export class TelegramChannel implements ChannelAdapter {
       text,
       authorised: true,
       isGroup,
+      ...(isGroup ? withChatTitle(ctx.chat) : {}),
       messageId: String(msg.message_id),
       receivedAt: new Date().toISOString(),
       sentAt: msg.date
@@ -1167,6 +1168,7 @@ export class TelegramChannel implements ChannelAdapter {
       text,
       authorised: true,
       isGroup: message.chat.type !== 'private',
+      ...withChatTitle(message.chat),
       // El id de la respuesta que llevaba los botones: un segundo toque es el mismo
       // mensaje y el filtro de duplicados lo para.
       messageId,
@@ -1452,6 +1454,7 @@ export class TelegramChannel implements ChannelAdapter {
       text,
       authorised: true,
       isGroup: message.chat.type !== 'private',
+      ...withChatTitle(message.chat),
       messageId: String(message.message_id),
       receivedAt: new Date().toISOString(),
     });
@@ -2596,6 +2599,14 @@ export function hasOpenQuickReply(buttons: Array<{ action: string }> | undefined
   return (buttons ?? []).some(
     (b) => b.action.startsWith(QUICK_REPLY_PREFIX) && b.action !== QUICK_REPLY_DONE,
   );
+}
+
+/** `chatTitle` de un grupo o canal (Telegram lo trae en `chat.title`); nada en privado. */
+export function withChatTitle(chat: unknown): { chatTitle?: string } {
+  if (!chat || typeof chat !== 'object') return {};
+  const c = chat as { type?: unknown; title?: unknown };
+  if (c.type === 'private' || typeof c.title !== 'string' || !c.title.trim()) return {};
+  return { chatTitle: c.title };
 }
 
 export function buildKeyboard(
