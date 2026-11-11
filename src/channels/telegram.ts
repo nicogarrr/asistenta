@@ -86,6 +86,12 @@ export interface TelegramOptions {
   /** How long an approval stays answerable. */
   approvalTtlMs?: number;
   /**
+   * A los cuántos ms sin respuesta se recuerda una aprobación (respondiendo al mensaje de
+   * los botones, que vuelve a sonar en el móvil). Por defecto 3 min si la aprobación dura
+   * 4 min o más; 0 = nunca.
+   */
+  approvalNudgeMs?: number;
+  /**
    * Fichero donde se guardan las respuestas recientes del bot, para que una reacción
    * (👎, 🤔) a una de ellas funcione también tras reiniciar. Sin él, solo en memoria.
    */
@@ -145,6 +151,14 @@ const DRAFT_MIN_INTERVAL_MS = 1_200;
  */
 export const APPROVAL_EXPIRED_TEXT =
   '⌛ Solicitud caducada: no se ha hecho nada. Si aún lo quieres, pídemelo otra vez.';
+
+/** Cuándo se recuerda una aprobación sin respuesta (si dura 4 min o más). */
+export const APPROVAL_NUDGE_DEFAULT_MS = 180_000;
+
+/** El recordatorio de una aprobación que sigue esperando (va como respuesta a la pregunta). */
+export function approvalNudgeText(minutesLeft: number): string {
+  return `⏳ Sigo esperando tu respuesta a esto: pulsa ✅ o ❌ arriba. Si no, en ${minutesLeft} min caduca y no hago nada.`;
+}
 
 /** Single gate key: the limiter is process-wide, not per chat. */
 const GLOBAL_KEY = 'global';
@@ -328,6 +342,9 @@ export class TelegramChannel implements ChannelAdapter {
       token: options.token,
       allowedUserIds: options.allowedUserIds,
       approvalTtlMs: options.approvalTtlMs ?? 300_000,
+      approvalNudgeMs:
+        options.approvalNudgeMs ??
+        ((options.approvalTtlMs ?? 300_000) >= 240_000 ? APPROVAL_NUDGE_DEFAULT_MS : 0),
     };
     this.#bot = new Bot(this.#options.token);
     this.#sentTexts = new SentTexts(300, options.sentTextsFile);
@@ -1636,6 +1653,24 @@ export class TelegramChannel implements ChannelAdapter {
         settle({ approved: false, scope: 'once' });
         if (messageId) void this.#markApprovalExpired(chatId, messageId);
       }, this.#options.approvalTtlMs).unref();
+      // Grok Bot avisa otra vez al móvil si el Bot sigue esperándote: si a los 3 min no ha
+      // contestado, una respuesta al mensaje de los botones lo recuerda (antes caducaba en
+      // silencio y el trabajo se quedaba sin hacer). Sin botones: los de arriba siguen valiendo.
+      const nudgeMs = this.#options.approvalNudgeMs;
+      if (nudgeMs > 0 && nudgeMs < this.#options.approvalTtlMs) {
+        setTimeout(() => {
+          if (settled || !messageId) return;
+          const left = Math.max(1, Math.round((this.#options.approvalTtlMs - nudgeMs) / 60_000));
+          void this.send({
+            channel: this.name,
+            account: this.account,
+            chatId,
+            threadId: opts?.threadId,
+            text: approvalNudgeText(left),
+            replyToMessageId: messageId,
+          }).catch(() => {});
+        }, nudgeMs).unref();
+      }
 
       // The question embeds the gate's `reason`, which may quote a credential the
       // tool was about to touch. Redaction is the codebase's scrub for exactly
