@@ -91,6 +91,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'recordatorios por tema: «cuando hable de X, recuérdame Y»',
       },
       {
+        command: 'invitacion',
+        args: '[off|on]',
+        description: 'avisos de invitaciones de calendario que te llegan al correo',
+      },
+      {
         command: 'previsto',
         args: '[hoy|semana]',
         description: 'lo que haré por ti, por hora: recordatorios, rutinas y la bandeja',

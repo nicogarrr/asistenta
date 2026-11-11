@@ -46,6 +46,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // «📲 .ics (iPhone)» de /calendario add: ESE evento del calendario local en un fichero
   // (arg = los 20 hex de su UID). Solo lee; no apunta ni borra nada.
   ['calendario', new Set(['ics'])],
+  // Tarjeta de una invitación que llegó al correo: «✅ Sí, apúntala» la crea UNA vez en su
+  // Google Calendar (el daemon exige dueño en privado); «📲 .ics» solo manda el fichero.
+  ['invitacion', new Set(['apuntar', 'ics'])],
   // Ficha de un candidato de la auto-mejora: «📄 Ver parche» solo lee; «✅ Aplicar» es la
   // aprobación del dueño (un commit local que se deshace con git revert); «🗑 Descartar»
   // no toca la copia. El daemon exige dueño en privado para aplicar y descartar.

@@ -170,6 +170,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'invitaciones-correo.json',
+    what: 'invitaciones de calendario del correo ya avisadas («📅 ¿La apunto?», /invitacion off)',
+    backup: 'file',
+  },
+  {
     name: 'enlaces-fijados.json',
     what: 'enlaces fijados con 📌 en «/biblioteca enlaces», por chat',
     backup: 'file',
