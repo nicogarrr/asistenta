@@ -56,7 +56,7 @@ const Params = lazySchema(() =>
       Type.Array(Type.String({ maxLength: 400 }), {
         maxItems: ADJUNTOS_MAX,
         description:
-          'Files to attach when sending: a file you made for Nico (its name, e.g. «grafica.png», or id) or a full path in his Documents/Desktop/Downloads. Max 5, 18 MB total. Only files he asked to send.',
+          'Files to attach when sending: a file you made for Nico (its name, e.g. «grafica.png», or id), or a file in his Documents/Desktop/Downloads (full path, «Descargas/factura.pdf» or just «factura.pdf»). Max 5, 18 MB total. Only files he asked to send.',
       }),
     ),
   }),
