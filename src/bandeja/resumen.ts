@@ -22,6 +22,7 @@ import {
   itemButtons,
   kindEmoji,
   linkLines,
+  scoreLabel,
   shortTitle,
 } from './formato.js';
 import { goodreadsLine } from './goodreads.js';
@@ -34,6 +35,16 @@ export const DEFAULT_BANDEJA_HORA = '21:30';
 export const MAX_DIGEST_BUTTON_ITEMS = 10;
 /** Cosas listadas en un resumen; el resto, «y N más» con /bandeja. */
 export const MAX_DIGEST_ITEMS = 15;
+
+/**
+ * Minutos de audio que transcribe la bandeja por cosa (PA_BANDEJA_MAX_MIN, 180 por
+ * defecto): va en segundo plano, así que llega a un podcast entero, no solo al
+ * principio (con 6 min, el e2e juzgó un panel de 1 h por sus agradecimientos).
+ */
+export function bandejaMaxMinutes(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.PA_BANDEJA_MAX_MIN);
+  return Number.isFinite(n) && n >= 5 ? Math.min(600, Math.round(n)) : 180;
+}
 
 /** «21:30», «9:05», «22» → «HH:MM»; null si no es una hora. */
 export function parseHora(raw: string | undefined | null): string | null {
@@ -124,7 +135,7 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
     for (const it of list) {
       if (shown >= MAX_DIGEST_ITEMS) return;
       shown++;
-      const tail = [it.score ? `${it.score}/10` : '', it.costLabel?.replace(/^\S+\s/, '') ?? '']
+      const tail = [scoreLabel(it), it.costLabel?.replace(/^\S+\s/, '') ?? '']
         .filter(Boolean)
         .join(' · ');
       const pend = it.day < day || it.carried > 0 ? ' ⏰' : '';

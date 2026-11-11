@@ -114,8 +114,11 @@ export async function goodreadsLookup(
         : 'no pude abrir Goodreads';
     return { ok: false, reason };
   }
-  if (/captcha|are you a robot|unusual traffic/i.test(html) && !html.includes('bookTitle'))
-    return { ok: false, reason: 'Goodreads pidió un captcha' };
+  if (
+    /captcha|are you a robot|unusual traffic|awswaf|challenge\.js/i.test(html) &&
+    !html.includes('bookTitle')
+  )
+    return { ok: false, reason: 'Goodreads bloqueó la consulta (verificación anti-bots)' };
   const hit = bookUrl ? parseGoodreadsBook(html, bookUrl) : parseGoodreadsSearch(html);
   if (!hit)
     return {
@@ -134,6 +137,9 @@ export async function goodreadsLookup(
 
 export interface OpenLibraryBook {
   title: string;
+  /** Nota pública de Open Library (lectores de openlibrary.org), si tiene. */
+  rating?: number;
+  ratings?: number;
   author?: string;
   year?: number;
   pages?: number;
@@ -148,7 +154,7 @@ export async function openLibraryLookup(
 ): Promise<OpenLibraryBook | null> {
   try {
     const raw = await fetchRaw(
-      `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=1&fields=key,title,author_name,first_publish_year,number_of_pages_median`,
+      `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=1&fields=key,title,author_name,first_publish_year,number_of_pages_median,ratings_average,ratings_count`,
     );
     const d = JSON.parse(raw) as {
       docs?: Array<{
@@ -157,6 +163,8 @@ export async function openLibraryLookup(
         author_name?: string[];
         first_publish_year?: number;
         number_of_pages_median?: number;
+        ratings_average?: number;
+        ratings_count?: number;
       }>;
     };
     const doc = d.docs?.[0];
@@ -167,6 +175,9 @@ export async function openLibraryLookup(
       ...(doc.first_publish_year ? { year: doc.first_publish_year } : {}),
       ...(doc.number_of_pages_median ? { pages: doc.number_of_pages_median } : {}),
       ...(doc.key ? { url: `https://openlibrary.org${doc.key}` } : {}),
+      ...(doc.ratings_average && doc.ratings_count
+        ? { rating: doc.ratings_average, ratings: doc.ratings_count }
+        : {}),
     };
     if (doc.key && /^\/works\/OL\w+$/.test(doc.key)) {
       try {

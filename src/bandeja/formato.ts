@@ -99,13 +99,33 @@ export function linkLines(item: BandejaItem, indent = ''): string[] {
   return out;
 }
 
+/** ¿La nota salió sin ver el contenido entero (solo descripción o ficha)? Entonces es provisional. */
+export function provisional(item: BandejaItem): boolean {
+  return (
+    item.extra.basis === 'descripcion' || (item.extra.basis === 'ficha' && item.kind !== 'libro')
+  );
+}
+
+/** «8/10», o «~8/10» si es provisional (sin transcripción). */
+export function scoreLabel(item: BandejaItem): string {
+  if (item.score === null) return '';
+  return `${provisional(item) ? '~' : ''}${item.score}/10`;
+}
+
 /** «⚠️ Sin transcripción: juzgado por la descripción (motivo)». */
 export function basisLine(item: BandejaItem): string | null {
   const b = item.extra.basis;
   const why = item.extra.basisReason ? ` (${item.extra.basisReason})` : '';
-  if (b === 'descripcion') return `⚠️ Sin transcripción: juzgado por la descripción${why}`;
+  const media =
+    item.kind === 'youtube' || item.kind === 'x' || /podcast/i.test(item.extra.source ?? '');
+  if (b === 'descripcion')
+    return media
+      ? `⚠️ Sin transcripción: juzgado por la descripción${why}`
+      : `⚠️ Con poco texto: juzgado por la descripción${why}`;
   if (b === 'ficha' && item.kind !== 'libro')
-    return `⚠️ Sin transcripción: juzgado solo por la ficha${why}`;
+    return media
+      ? `⚠️ Sin transcripción: juzgado solo por la ficha${why}`
+      : `⚠️ Sin abrir: juzgado solo por el título${why}`;
   return null;
 }
 
@@ -128,7 +148,7 @@ export function cardText(item: BandejaItem): string {
   if (item.status !== 'listo' || !item.verdict)
     return `${head}\n⏳ Aún lo estoy procesando. Te lo digo en cuanto lo tenga.`;
   const lines = [
-    `${verdictLabel(item.verdict, item.kind, item.extra.source)} · ${item.score ?? '?'}/10`,
+    `${verdictLabel(item.verdict, item.kind, item.extra.source)} · ${scoreLabel(item) || '?/10'}${provisional(item) ? ' (provisional)' : ''}`,
     head,
   ];
   const meta = metaLine(item);
@@ -177,7 +197,7 @@ export function listText(
     ].join('\n');
   const lines = [`📥 Bandeja de hoy: ${today.length} cosa${today.length === 1 ? '' : 's'}`];
   for (const it of [...today].sort(byVerdict)) {
-    const score = it.score ? ` ${it.score}/10` : '';
+    const score = it.score ? ` ${scoreLabel(it)}` : '';
     lines.push(
       `${statusMark(it)} #${it.id} ${kindEmoji(it.kind)} ${shortTitle(it, 60)}${score}${it.costLabel ? ` · ${it.costLabel.replace(/^\S+\s/, '')}` : ''}`,
     );

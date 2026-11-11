@@ -131,10 +131,18 @@ export function parseVerdict(reply: string, temas: readonly string[] = []): Pars
   // Solo veredicto: una nota coherente con él.
   const finalScore =
     score ?? (finalVerdict === 'imprescindible' ? 8 : finalVerdict === 'ideas' ? 6 : 3);
+  // Veredicto y nota tienen que cuadrar: un «🔴 imprescindible · 6/10» o un «⚪ paja · 7/10»
+  // confunden. Manda la nota, que es lo más fino.
+  const reconciled: Veredicto =
+    finalVerdict === 'imprescindible' && finalScore < 7
+      ? 'ideas'
+      : finalVerdict === 'paja' && finalScore >= 6
+        ? 'ideas'
+        : finalVerdict;
   const tags = tagsRaw && !/^ningun/i.test(norm(tagsRaw)) ? matchTags(tagsRaw, temas) : [];
   return {
     title: title ? title.slice(0, 160) : null,
-    verdict: finalVerdict,
+    verdict: reconciled,
     score: finalScore,
     reason: reason.slice(0, 400),
     ideas: ideas.slice(0, 5).map((i) => i.slice(0, 300)),
