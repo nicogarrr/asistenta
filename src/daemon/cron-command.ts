@@ -35,6 +35,7 @@ import { type RoutineRunner, validateSchedule } from '../routines.js';
 import { foldAccents, sliceSafe } from '../text.js';
 import { isReminder } from '../tools/reminder.js';
 import { type PreguntaOpts, SI_RESPUESTA } from './pregunta-pendiente.js';
+import type { RoutineStops } from './rutina-parar.js';
 
 const DAY_MS = 86_400_000;
 
@@ -180,7 +181,13 @@ export interface CronCommandDeps {
   ask?: (opts: PreguntaOpts) => void;
   /** Historial de ejecuciones por rutina; absent = `/cron historial` unavailable. */
   history?: Pick<RoutineHistory, 'list'>;
+  /** Ejecuciones en curso para `/cron parar`; absent = no se puede parar una sola. */
+  stops?: Pick<RoutineStops, 'stop' | 'isActive'>;
 }
+
+/** «parar», «para», «corta», «detener», «stop»: cortar la ejecución en marcha. */
+export const PARAR_SUB =
+  /^(?:parar|para|corta|cortar|detener|deten|det[eé]n|stop|cancelar-ejecucion)$/;
 
 /** «sí», «sí, hazlo», «vale, gracias»… (la misma lectura que el resto de preguntas). */
 const SI = SI_RESPUESTA;
@@ -294,6 +301,64 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       return `No tengo ninguna rutina programada llamada "${name}". Tienes: ${nameList(names)}.`;
     }
     return formatHistory(routine.name, deps.history.list(routine.scope, routine.name));
+  }
+
+  // «/cron parar resumen»: corta la ejecución en marcha de esa rutina, sin tocar su horario.
+  if (PARAR_SUB.test(foldAccents(sub))) {
+    if (!deps.stops)
+      return 'Ahora mismo no puedo parar una rutina suelta. /stop para todo lo de este chat.';
+    const stops = deps.stops;
+    const all = deps.store
+      .listRoutines()
+      .filter(
+        (r) =>
+          (r.scope === deps.threadKey || r.scope === `${deps.chatKey}#main`) &&
+          r.kind === 'schedule' &&
+          !isGoalRoutine(r),
+      );
+    const busy = all.filter(
+      (r) => stops.isActive(r.scope, r.name) || deps.routineRunner.isRunning(r.scope, r.name),
+    );
+    const said = rest.trim();
+    let routine: Routine | undefined;
+    if (said) {
+      const name = pickName(
+        all.map((r) => r.name),
+        said,
+      );
+      routine = all.find((r) => r.name === (name ?? said));
+      if (!routine) {
+        const names = all.map((r) => r.name);
+        return names.length
+          ? `No tengo ninguna rutina llamada "${said}". Tienes: ${nameList(names)}.`
+          : 'No tienes rutinas programadas.';
+      }
+    } else if (busy.length === 1) {
+      routine = busy[0];
+    } else if (busy.length > 1) {
+      return askRoutine(
+        deps,
+        'paro',
+        'parar',
+        busy.map((r) => r.name),
+      );
+    } else {
+      return 'Ahora mismo no hay ninguna rutina en marcha.';
+    }
+    if (!routine) return 'Ahora mismo no hay ninguna rutina en marcha.';
+    if (isCommandRoutine(routine)) {
+      return `"${routine.name}" es una rutina de comando: termina sola en segundos y no se puede cortar a medias.`;
+    }
+    const outcome = stops.stop(routine.scope, routine.name);
+    if (outcome === 'no-en-curso') {
+      return `La rutina "${routine.name}" no está en marcha ahora mismo. Su horario sigue igual; para que no vuelva a sonar: /cron pausa ${routine.name}.`;
+    }
+    return [
+      outcome === 'parada'
+        ? `⏹ Rutina "${routine.name}" parada: corto lo que estaba haciendo y no te mando lo que llevara a medias.`
+        : `⏹ Rutina "${routine.name}" cancelada antes de empezar: estaba esperando turno.`,
+      `Sigue programada: la próxima vez sonará normal. Para que no vuelva a sonar: /cron pausa ${routine.name}.`,
+    ].join('\n');
   }
 
   if (sub === 'entrega') {
@@ -441,7 +506,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     // in-flight set, it does not interrupt it), so the confirmation only
     // promises what it delivers (auditor #135 ronda 2).
     deps.routineRunner.sync();
-    return `Rutina "${name}" borrada: no habrá nuevas ejecuciones. Si hay una en marcha ahora mismo, puede terminar y llegar su mensaje.`;
+    return `Rutina "${name}" borrada: no habrá nuevas ejecuciones. Si hay una en marcha ahora mismo, puede terminar y llegar su mensaje (para cortarla ya: /cron parar ${name}).`;
   }
 
   if (
@@ -484,7 +549,7 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
     deps.store.setRoutineEnabled(routine.scope, routine.name, resuming);
     deps.routineRunner.sync();
     if (!resuming) {
-      return `Rutina "${name}" en pausa: no se ejecutará hasta que la reanudes desde la lista de rutinas. Si hay una en marcha ahora mismo, puede terminar.`;
+      return `Rutina "${name}" en pausa: no se ejecutará hasta que la reanudes desde la lista de rutinas. Si hay una en marcha ahora mismo, puede terminar (para cortarla ya: /cron parar ${name}).`;
     }
     const live = deps.routineRunner
       .status()
@@ -672,5 +737,10 @@ export function scheduledAgendaText(deps: {
       held?.next ?? null,
     )}${running}`;
   });
-  return [`Rutinas programadas: ${scheduled.length}`, ...lines].join('\n');
+  const anyRunning = scheduled.some((r) => live.get(`${r.scope}\u0000${r.name}`)?.running);
+  return [
+    `Rutinas programadas: ${scheduled.length}`,
+    ...lines,
+    ...(anyRunning ? ['Para cortar una que está en curso: /cron parar <nombre>'] : []),
+  ].join('\n');
 }

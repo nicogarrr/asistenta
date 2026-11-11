@@ -22,7 +22,9 @@ export type RoutineDelivery =
   /** Entrega a ningún sitio (F6). */
   | 'ninguno'
   /** Sin conexión con el modelo: se reintenta más tarde. */
-  | 'reintento';
+  | 'reintento'
+  /** El dueño la cortó con «/cron parar»: no se mandó nada. */
+  | 'parada';
 
 export interface RoutineRun {
   /** Inicio (ms epoch). */
@@ -179,6 +181,7 @@ const ENTREGA_ES: Record<RoutineDelivery, string> = {
   'sin-cambios': 'no enviada: sin cambios',
   ninguno: 'no enviada (entrega: ninguno)',
   reintento: 'sin conexión con el modelo, se reintenta',
+  parada: 'parada por ti (/cron parar)',
 };
 
 function duracionEs(ms: number): string {
@@ -189,7 +192,7 @@ function duracionEs(ms: number): string {
 
 /** Una línea por ejecución: «✅ jue 05/11 08:00 · 12 s · enviada — 3 correos nuevos…». */
 export function formatRun(run: RoutineRun): string {
-  const icono = run.ok ? '✅' : '❌';
+  const icono = run.entrega === 'parada' ? '⏹' : run.ok ? '✅' : '❌';
   const salida = run.salida
     ? ` — ${run.salida.length > 120 ? `${Array.from(run.salida).slice(0, 119).join('')}…` : run.salida}`
     : '';
