@@ -681,6 +681,7 @@ import {
   canonicalMacroName,
   detectMacroParams,
   isMacroName,
+  nextScheduleRun,
   parseMacroArgs,
   procedurePrompt,
   RoutineRunner,
@@ -5354,6 +5355,37 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       ].join('\n'),
       { quote: true },
     );
+  };
+
+  /** /previsto: lo que haré por ti, por hora (recordatorios, rutinas, resumen de la bandeja). */
+  const cmdPrevisto = async (inbound: Inbound, args: string): Promise<void> => {
+    const { previstoFilas, previstoRango, previstoTexto } = await import('./previsto.js');
+    const rango = previstoRango(args);
+    if (!rango) {
+      await say(inbound, 'Uso: /previsto (24 h), /previsto hoy o /previsto semana.', {
+        quote: true,
+      });
+      return;
+    }
+    const chatKey_ = chatKey(inbound);
+    const routines = store.listRoutines().filter((r) => inChatScope(r.scope, chatKey_));
+    const extras: Array<{ at: Date; text: string }> = [];
+    if (isOwnerDm(inbound, vigilanteOwnerId)) {
+      // El resumen de la noche de la bandeja (src/bandeja/resumen.ts), a su hora.
+      const { digestHora } = await import('./bandeja/resumen.js');
+      const [h, m] = digestHora(bandejaStore).split(':');
+      const at = nextScheduleRun(`${Number(m)} ${Number(h)} * * *`);
+      if (at) extras.push({ at, text: '📥 resumen de la bandeja' });
+    }
+    const now = new Date();
+    const out = previstoFilas(
+      routines,
+      liveNextOf(() => routineRunner.status()),
+      rango,
+      now,
+      extras,
+    );
+    await say(inbound, previstoTexto(out, rango, now), { quote: true });
   };
 
   /**
@@ -10550,6 +10582,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['topic'], run: (inbound, args) => cmdTopic(inbound, args) },
     { names: ['topics'], run: (inbound) => cmdTopics(inbound) },
     { names: ['routines'], run: (inbound) => cmdRoutines(inbound) },
+    { names: ['previsto', 'planes'], run: (inbound, args) => cmdPrevisto(inbound, args) },
     {
       names: ['routine'],
       run: async (inbound, args) => cmdRoutine(await resolveThread(inbound), inbound, args),
