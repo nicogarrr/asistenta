@@ -57,6 +57,32 @@ export function tiempoRestante(caduca: number | null, ahora: number): string {
   return resto === 0 ? `Caduca en ${minutos} min` : `Caduca en ${minutos} min ${resto} s`;
 }
 
+/**
+ * El recordatorio de una aprobación del panel que sigue sin respuesta (Grok Bot vuelve a
+ * avisar si te sigue esperando; en Telegram, gaps-12 #2324). Igual que allí: a los 3 min,
+ * solo si la aprobación dura 4 min o más y aún no ha caducado. '' = nada que recordar.
+ */
+export function recordatorioAprobacion(item: unknown, ahora: number): string {
+  const registro =
+    item && typeof item === 'object'
+      ? (item as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+  const ms = (valor: unknown): number | null => {
+    if (typeof valor === 'number' && Number.isFinite(valor)) return valor;
+    if (typeof valor === 'string' && valor.trim() !== '') {
+      const t = Date.parse(valor);
+      return Number.isFinite(t) ? t : null;
+    }
+    return null;
+  };
+  const creada = ms(registro.createdAt);
+  const caduca = ms(registro.expiresAt);
+  if (creada === null || caduca === null || typeof ahora !== 'number') return '';
+  if (caduca - creada < 240000 || ahora - creada < 180000 || ahora >= caduca) return '';
+  const minutos = Math.max(1, Math.ceil((caduca - ahora) / 60000));
+  return `⏳ Sigue esperando tu respuesta: si no decides, en ${minutos} min caduca y no hago nada.`;
+}
+
 /** Nombre legible en español para una clave de los datos del panel. */
 export function etiquetaCampo(clave: string): string {
   const mapa: Record<string, string> = {
