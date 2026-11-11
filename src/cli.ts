@@ -5708,11 +5708,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const w = pageWatches.add(inbound.chatId, rawUrl, parsed.label, parsed.keyword, {
         targetCents: parsed.targetCents ?? undefined,
         dropPct: parsed.dropPct ?? undefined,
+        notifySoldOut: parsed.notifySoldOut ?? undefined,
       });
       const extra = [
         w.keyword ? `buscando "${w.keyword}"` : '',
         w.targetCents !== null ? `objetivo ${eur(w.targetCents)}` : '',
         w.dropPct !== null ? `aviso si baja un ${w.dropPct} %` : '',
+        w.notifySoldOut ? 'aviso si se agota' : '',
       ]
         .filter(Boolean)
         .join(', ');
@@ -11923,6 +11925,7 @@ const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set([
   'target',
   'drop',
   'restock',
+  'soldout',
 ]);
 
 /**

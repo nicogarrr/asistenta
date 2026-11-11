@@ -40,6 +40,12 @@ const Params = lazySchema(() =>
         description: 'add: alert when this word appears or disappears (e.g. "agotado").',
       }),
     ),
+    notify_sold_out: Type.Optional(
+      Type.Boolean({
+        description:
+          'add: also alert when the product goes from in stock to sold out («avísame si se agota»). Off unless asked.',
+      }),
+    ),
     label: Type.Optional(Type.String({ description: 'add: short name to show in alerts.' })),
     id: Type.Optional(Type.String({ description: 'remove: the watch id (or its first letters).' })),
   }),
@@ -78,6 +84,7 @@ function describe(w: PageWatch): string {
     w.keyword ? `palabra "${w.keyword}"` : '',
     w.targetCents !== null ? `objetivo ${eur(w.targetCents)}` : '',
     w.dropPct !== null ? `bajada ${w.dropPct} %` : '',
+    w.notifySoldOut ? 'aviso si se agota' : '',
   ]
     .filter(Boolean)
     .join(', ');
@@ -145,6 +152,7 @@ export function createPriceWatchTool(
         const w = deps.watches.add(scope, url, label, String(args.keyword ?? ''), {
           targetCents,
           dropPct,
+          ...(args.notify_sold_out !== undefined ? { notifySoldOut: args.notify_sold_out } : {}),
         });
         return reply(
           `Vigilancia creada: ${describe(w)}. Miro cada 2 horas y aviso en este chat. ${PRICE_WATCH_REMOVE_HINT}`,
