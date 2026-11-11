@@ -261,7 +261,7 @@ import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
-import { borrarEvento, crearEvento } from './google/workspace.js';
+import { borrarEvento, crearEvento, moverEvento } from './google/workspace.js';
 import { icsDeEvento, icsNombre } from './ics.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
@@ -6871,6 +6871,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         borrarEvento(
           { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
           { id },
+        ),
+      // «✅ Sí, cámbialo» de una invitación .ics actualizada: mueve el que se apuntó (bugs-37).
+      moverCalendario: (id, a) =>
+        moverEvento(
+          { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
+          { ...a, id },
         ),
       timeZone: () => localTimeZone(),
       // «🔄 Releer la página» (lo guardado antes de 🛒/📅): la misma descarga de la bandeja.
