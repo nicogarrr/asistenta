@@ -23,7 +23,10 @@ vi.mock('node:child_process', async (orig) => {
     },
     spawn: (cmd: string, _args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
       calls.push({ cmd, env: opts?.env });
-      return fakeChild();
+      const child = fakeChild();
+      // El conversor de libros espera a que el hijo termine (bugs-33: ya no usa execFile).
+      if (/ebook-convert/.test(cmd)) setImmediate(() => child.emit('close', 0));
+      return child;
     },
   };
 });
