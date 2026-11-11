@@ -238,11 +238,24 @@ async function calendarioSub(
     };
   }
   if (!deps.calendario) return { text: 'El calendario no está disponible desde aquí.' };
-  const text = await deps.calendario(args);
-  // Solo si de verdad se apuntó: sin Google conectado, el siguiente toque lo intenta otra vez.
-  if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, new Date().toISOString());
-  return { text };
+  // «apuntar» va aparte (bandejaSlowSub), así que un doble toque corría a la vez y los dos
+  // veían «no apuntado»: dos eventos en su calendario (bugs-35). Uno a la vez por cosa.
+  const busy = `${deps.chatId}:${item.id}`;
+  if (calendarioEnCurso.has(busy))
+    return { text: `📅 Ya lo estoy apuntando: «${ev.nombre}», ${cuando}.` };
+  calendarioEnCurso.add(busy);
+  try {
+    const text = await deps.calendario(args);
+    // Solo si de verdad se apuntó: sin Google conectado, el siguiente toque lo intenta otra vez.
+    if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, new Date().toISOString());
+    return { text };
+  } finally {
+    calendarioEnCurso.delete(busy);
+  }
 }
+
+/** Los «✅ Sí, apúntalo» que aún están creando su evento (chat:número). */
+const calendarioEnCurso = new Set<string>();
 
 const HELP = [
   '📥 La bandeja: mándame a secas (sin escribir nada más) enlaces de YouTube, X o artículos, PDFs, capturas o «libro: título», y los guardo.',
