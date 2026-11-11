@@ -12,6 +12,7 @@
  * - `/biblioteca N` — te manda el N de la lista.
  * Solo lectura: no borra ni cambia nada; la carpeta se poda sola (40 archivos, 50 MB).
  */
+import { createHash } from 'node:crypto';
 import type { Creado } from './creados.js';
 import { localDay, localTimeZone } from './datecontext.js';
 
@@ -87,6 +88,23 @@ export function claveDe(id: string): string {
   return /^\d{8}-\d{6}(?:-\d{1,2}(?=-))?/.exec(id)?.[0] ?? '';
 }
 
+/** Huella corta del id, para distinguir dos archivos hechos en el mismo segundo. */
+function huella(id: string): string {
+  return `h${createHash('sha1').update(id).digest('hex').slice(0, 6)}`;
+}
+
+/**
+ * La clave del botón «📤 N»: la fecha al segundo y, si otro archivo de la lista comparte
+ * ese segundo (la gráfica y su Excel salen a la vez), también su huella. Antes los dos
+ * tenían la misma clave y «📤 2» mandaba el archivo 1.
+ */
+export function claveBoton(c: Creado, lista: readonly Creado[]): string {
+  const k = claveDe(c.id);
+  if (!k) return '';
+  const twins = lista.filter((o) => o.id !== c.id && claveDe(o.id) === k).length;
+  return twins ? `${k}-${huella(c.id)}` : k;
+}
+
 export interface BibliotecaView {
   text: string;
   /** «📤 N»: subcomando `enviar` con la clave del archivo. */
@@ -120,7 +138,7 @@ export function bibliotecaVista(
       `📚 Lo que te he hecho${filtro ? ` (${filtro})` : ''}: ${all.length}\n${lines.join('\n')}${more}\n\n` +
       'Toca 📤 para que te lo mande otra vez, o «/biblioteca N». También te lo adjunto a un correo si me dices su nombre.',
     sends: shown
-      .map((c, i) => ({ label: `📤 ${i + 1}`, clave: claveDe(c.id) }))
+      .map((c, i) => ({ label: `📤 ${i + 1}`, clave: claveBoton(c, lista) }))
       .filter((s) => s.clave),
   };
 }
@@ -135,7 +153,7 @@ export type BibliotecaOrden =
 export function bibliotecaOrden(args: string): BibliotecaOrden {
   const a = args.trim();
   if (!a) return { kind: 'lista', filtro: null };
-  const send = /^enviar\s+(\d{8}-\d{6}(?:-\d{1,2})?)$/i.exec(a);
+  const send = /^enviar\s+(\d{8}-\d{6}(?:-\d{1,2})?(?:-h[0-9a-f]{6})?)$/i.exec(a);
   if (send?.[1]) return { kind: 'clave', clave: send[1] };
   const parts = a.split(/\s+/);
   const last = parts[parts.length - 1] ?? '';
@@ -150,7 +168,14 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
 
 /** El archivo que pide una orden; null si no existe (ya podado o número fuera de lista). */
 export function bibliotecaElegir(lista: readonly Creado[], orden: BibliotecaOrden): Creado | null {
-  if (orden.kind === 'clave') return lista.find((c) => claveDe(c.id) === orden.clave) ?? null;
+  if (orden.kind === 'clave') {
+    const m = /^(.*)-(h[0-9a-f]{6})$/i.exec(orden.clave);
+    if (m)
+      return (
+        lista.find((c) => claveDe(c.id) === m[1] && huella(c.id) === m[2]?.toLowerCase()) ?? null
+      );
+    return lista.find((c) => claveDe(c.id) === orden.clave) ?? null;
+  }
   if (orden.kind !== 'enviar') return null;
   const all = orden.filtro ? lista.filter((c) => tipoDe(c.nombre) === orden.filtro) : lista;
   return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (all[orden.n - 1] ?? null) : null;
