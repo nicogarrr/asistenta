@@ -47,9 +47,10 @@ describe('gaps-13: /biblioteca fijar N (Grok Bot «Pin» en la Library)', () => 
     expect(store.fijar(viejo)).toBe('ya');
     const fijados = store.fijados();
     const v = bibliotecaVista(lista, null, t, fijados);
-    expect(v.text.split('\n')[1]).toBe(
-      `1. 📌 📄 informe-q3.pdf · 1 KB · ${v.text.split('\n')[1]?.split(' · ')[2]}`,
-    );
+    // Con lo fijado y lo de hoy hay dos grupos: «📌 Fijados:» va encima (gaps-15).
+    const fila = v.text.split('\n').find((l) => l.startsWith('1. '));
+    expect(v.text.split('\n')[1]).toBe('📌 Fijados:');
+    expect(fila).toBe(`1. 📌 📄 informe-q3.pdf · 1 KB · ${fila?.split(' · ')[2]}`);
     expect(bibliotecaElegir(lista, bibliotecaOrden('1'), fijados)?.id).toBe(viejo);
     expect(bibliotecaElegir(lista, bibliotecaOrden('pdf 1'), fijados)?.id).toBe(viejo);
     expect(v.text).toContain('«/biblioteca fijar N»');
