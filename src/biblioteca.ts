@@ -97,10 +97,11 @@ function cuando(ms: number, now: number): string {
 }
 const tz = () => localTimeZone();
 
-type Grupo = 'fijado' | 'hoy' | 'semana' | 'antes';
+type Grupo = 'fijado' | 'hoy' | 'ayer' | 'semana' | 'antes';
 const GRUPO: Record<Grupo, string> = {
   fijado: '📌 Fijados',
   hoy: 'Hoy',
+  ayer: 'Ayer',
   semana: 'Esta semana',
   antes: 'Antes',
 };
@@ -115,7 +116,12 @@ function grupoDe(c: Creado, fijados: ReadonlySet<string>, now: number): Grupo {
   if (fijados.has(c.id)) return 'fijado';
   const dias = diasEntre(c.creado, now);
   if (dias <= 0) return 'hoy';
-  if (dias < 7) return 'semana';
+  if (dias === 1) return 'ayer';
+  // «Esta semana» es la de calendario (desde el lunes), no los últimos 7 días: un lunes, lo
+  // del miércoles pasado salía en «Esta semana» (bugs-38). Lo de ayer va en «Ayer».
+  const hoy = new Date(`${localDay(new Date(now))}T12:00:00Z`);
+  const desdeLunes = (hoy.getUTCDay() + 6) % 7;
+  if (dias <= desdeLunes) return 'semana';
   return 'antes';
 }
 
@@ -247,7 +253,7 @@ export function bibliotecaVista(
     (c, i) =>
       `${i + 1}. ${fijados.has(c.id) ? '📌 ' : ''}${ICON[tipoDe(c.nombre)]} ${c.nombre} · ${size(c.bytes)} · ${cuando(c.creado, now)}`,
   );
-  // «Hoy / Esta semana / Antes» (y lo fijado aparte), como la Library de Grok Bot
+  // «Hoy / Ayer / Esta semana / Antes» (y lo fijado aparte), como la Library de Grok Bot
   // (https://docs.x.ai/grok-bot/files-and-results). Solo si hay más de un grupo: una lista
   // toda de hoy no necesita título. La numeración sigue igual (📤 N, fijar N).
   const grupos = shown.map((c) => grupoDe(c, fijados, now));

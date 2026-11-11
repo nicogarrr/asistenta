@@ -16,22 +16,24 @@ describe('gaps-15: /biblioteca agrupa en «Hoy / Esta semana / Antes» (Grok Bot
   it('con varios grupos, un título por grupo y la numeración de siempre', () => {
     const lista = [
       c('20261111-160000-a-hoy.png', 'hoy.png', NOW - 2 * H),
-      // Ayer a las 23:30 en Madrid: es «Esta semana», no «Hoy», aunque sean menos de 24 h.
+      // Ayer a las 23:30 en Madrid: es «Ayer», no «Hoy», aunque sean menos de 24 h.
       c('20261110-223000-b-ayer.xlsx', 'ayer.xlsx', Date.UTC(2026, 10, 10, 22, 30)),
-      c('20261105-090000-c-semana.pdf', 'semana.pdf', Date.UTC(2026, 10, 5, 9)),
+      // El lunes de esta semana (el 11 es miércoles; bugs-38: semana de calendario).
+      c('20261109-090000-c-semana.pdf', 'semana.pdf', Date.UTC(2026, 10, 9, 9)),
       c('20261020-090000-d-viejo.pdf', 'viejo.pdf', Date.UTC(2026, 9, 20, 9)),
       c('20261001-090000-e-fijo.pdf', 'fijo.pdf', Date.UTC(2026, 9, 1, 9)),
     ];
     const v = bibliotecaVista(lista, null, NOW, new Set(['20261001-090000-e-fijo.pdf']));
     const lines = v.text.split('\n');
     const desde = lines.indexOf('📌 Fijados:');
-    expect(lines.slice(desde, desde + 9).map((l) => l.replace(/ · .*$/, ''))).toEqual([
+    expect(lines.slice(desde, desde + 10).map((l) => l.replace(/ · .*$/, ''))).toEqual([
       '📌 Fijados:',
       '1. 📌 📄 fijo.pdf',
       'Hoy:',
       '2. 🖼️ hoy.png',
-      'Esta semana:',
+      'Ayer:',
       '3. 📊 ayer.xlsx',
+      'Esta semana:',
       '4. 📄 semana.pdf',
       'Antes:',
       '5. 📄 viejo.pdf',
@@ -48,6 +50,6 @@ describe('gaps-15: /biblioteca agrupa en «Hoy / Esta semana / Antes» (Grok Bot
       null,
       NOW,
     );
-    expect(v.text).not.toMatch(/^(Hoy|Esta semana|Antes):$/m);
+    expect(v.text).not.toMatch(/^(Hoy|Ayer|Esta semana|Antes):$/m);
   });
 });
