@@ -20,6 +20,7 @@
  *    that is a secret without looking like one is indistinguishable from
  *    ordinary prose, and no formatter can tell them apart.
  */
+import { lineasAdjuntos } from './mail/adjuntos.js';
 import { batchQuestion } from './mail/cleanup.js';
 import { unsubQuestion } from './mail/unsubscribe.js';
 import type { ToolCall } from './permissions.js';
@@ -419,7 +420,7 @@ function formatMailDraft(call: ToolCall, kind: string, reason: string): Approval
   const text = (k: string) => (typeof call.args[k] === 'string' ? (call.args[k] as string) : '');
   const to = list(call.args.para);
   const cc = list(call.args.cc);
-  const oneLiners = [...to, ...cc, text('asunto'), text('ref')];
+  const oneLiners = [...to, ...cc, ...list(call.args.adjuntos), text('asunto'), text('ref')];
   if (
     [...oneLiners, text('cuerpo')].some(hasInvisible) ||
     oneLiners.some((l) => /[\r\n\u2028\u2029]/u.test(l))
@@ -433,6 +434,7 @@ function formatMailDraft(call: ToolCall, kind: string, reason: string): Approval
     `Asunto: ${text('asunto') || '(vacío)'}`,
     `---\n${text('cuerpo') || '(vacío)'}\n---`,
     call.args.action === 'reenviar' ? 'Debajo va el correo original del hilo, sin cambios.' : '',
+    lineasAdjuntos(list(call.args.adjuntos).filter(Boolean)),
     `Motivo: ${redactSecrets(reason)}`,
   ]
     .filter(Boolean)
