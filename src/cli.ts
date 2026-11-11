@@ -406,7 +406,7 @@ import {
 import { openGymCliError, openGymPaired } from './opengym/cli-text.js';
 import { OpenGymError } from './opengym/client.js';
 import { makeOpenGymClient, NOT_CONFIGURED, pairOpenGym } from './opengym/setup.js';
-import { ensureDirs, paths } from './paths.js';
+import { ensureDirs, paths, REPO_DIR } from './paths.js';
 import { launchPausaHelper, pausaPcButtons } from './pausa-cli.js';
 import {
   type Comprobacion,
@@ -2061,6 +2061,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     creadosDir: join(paths.state, 'creados'),
     stateDir: paths.state,
     roots: raicesPorDefecto(),
+    // La carpeta del programa no sale aunque esté en Documentos (config/, scripts).
+    excluir: [REPO_DIR, process.cwd()],
   });
   // Config de avisos de GitHub del .env; la vigilancia arranca más abajo (o al pedirla en el chat).
   const githubAvisosConf = githubAvisosConfig();

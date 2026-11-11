@@ -32,6 +32,11 @@ export interface AdjuntosConfig {
   stateDir: string;
   /** Carpetas desde las que se puede adjuntar un fichero por su ruta. */
   roots: string[];
+  /**
+   * Carpetas que nunca salen aunque estén dentro de una raíz: la del programa (el repo de
+   * Asistenta, con su config/ y sus scripts, puede vivir en Documentos).
+   */
+  excluir?: string[];
 }
 
 export interface AdjuntoVisto {
@@ -50,10 +55,14 @@ const vistos = new Map<string, { size: number; mtimeMs: number; at: number }>();
 /** Una aprobación sin envío (dijiste que no) no deja la foto vieja para siempre. */
 const VISTO_TTL_MS = 30 * 60_000;
 
-/** Raíces por defecto: carpeta de trabajo y Documentos/Escritorio/Descargas del usuario. */
-export function raicesPorDefecto(home: string = homedir(), cwd: string = process.cwd()): string[] {
+/**
+ * Raíces por defecto: Documentos/Escritorio/Descargas del usuario (y las de OneDrive). La
+ * carpeta del programa ya no: antes `process.cwd()` era raíz y cualquier fichero del repo
+ * (config/, deploy/, scripts) se podía mandar por correo con su ruta entera.
+ */
+export function raicesPorDefecto(home: string = homedir()): string[] {
   const names = ['Documents', 'Documentos', 'Desktop', 'Escritorio', 'Downloads', 'Descargas'];
-  const out = [cwd, ...names.map((n) => join(home, n))];
+  const out = names.map((n) => join(home, n));
   // OneDrive mueve Documentos y Escritorio en Windows.
   for (const n of ['Documents', 'Documentos', 'Desktop', 'Escritorio'])
     out.push(join(home, 'OneDrive', n));
@@ -179,6 +188,15 @@ export function mirarAdjunto(ref: string): Adjunto {
     return { ok: false, ref: r, why: 'parece una clave o datos privados' };
   if (dentro(cfg.stateDir, p) && !dentro(cfg.creadosDir, p))
     return { ok: false, ref: r, why: 'es un fichero interno de Asistenta' };
+  // Una carpeta excluida que contenga una raíz (el programa arrancado desde la carpeta del
+  // usuario) no cuenta: si no, no se podría adjuntar nada.
+  const excluidas = (cfg.excluir ?? [])
+    .map(real)
+    .filter(
+      (d) => !cfg.roots.some((root) => dentro(d, real(root)) || lower(d) === lower(real(root))),
+    );
+  if (excluidas.some((d) => dentro(d, p)))
+    return { ok: false, ref: r, why: 'es un fichero del programa Asistenta' };
   if (!dentro(cfg.creadosDir, p) && !cfg.roots.some((root) => dentro(real(root), p)))
     return {
       ok: false,
