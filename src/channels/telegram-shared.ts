@@ -96,6 +96,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // o lo devuelve a la poda; no borra nada.
   // «📌 N» / «Soltar N» de /biblioteca enlaces: la clave corta del enlace (10 hex).
   ['biblioteca', new Set(['enviar', 'fijar', 'soltar', 'fijarenlace', 'soltarenlace'])],
+  // «🔕 No me lo recuerdes más» del aviso de un recordatorio por tema: quita ESA intención
+  // (arg = su id). Solo borra un recordatorio suyo; el daemon exige dueño en privado.
+  ['intenciones', new Set(['olvidar'])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 

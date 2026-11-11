@@ -105,17 +105,18 @@ describe('gaps-15: recordatorios por tema (OpenClaw «standing intents»)', () =
 
   it('cli: va antes de llegada.ts, solo en el privado del dueño, y el aviso no corta la respuesta', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
-    const i = src.indexOf('const nueva = it.intencionIntent(inbound.text);');
+    // gaps-16: el bloque llama al ayudante común (texto y voz); solo corta si ERA una nueva.
+    const i = src.indexOf('if (await atenderIntencionesDe(inbound, inbound.text, say)) return;');
     expect(i).toBeGreaterThan(0);
     expect(i).toBeLessThan(
       src.indexOf('const llegada = owner ? llegadaIntent(inbound.text) : null;'),
     );
-    const bloque = src.slice(
-      src.lastIndexOf('if (inbound.text && isOwnerDm(inbound, vigilanteOwnerId))', i),
-      i + 900,
+    expect(src.slice(i - 200, i)).toContain(
+      'if (inbound.text && isOwnerDm(inbound, vigilanteOwnerId))',
     );
-    expect(bloque).toMatch(
-      /for \(const i of intenciones\.disparar[^\n]*\n\s*await say\(inbound, it\.textoAviso\(i\), \{ quote: true \}\);\n\s*\}/,
+    const ayudante = src.slice(src.indexOf('const atenderIntencionesDe = async ('));
+    expect(ayudante.slice(0, 1500)).toMatch(
+      /for \(const i of r\.avisos\) \{[\s\S]*?await send\(inbound, it\.textoAviso\(i\)[^\n]*\n\s*\}\n\s*return false;/,
     );
     expect(src).toContain("names: ['intenciones', 'temas']");
   });
