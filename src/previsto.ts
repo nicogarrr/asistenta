@@ -172,7 +172,9 @@ export function previstoTexto(
   now: Date,
 ): string {
   const pausa = out.pausadas
-    ? `\n⏸️ ${out.pausadas} rutina(s) en pausa no salen (/cron para verlas).`
+    ? out.pausadas === 1
+      ? '\n⏸️ 1 rutina en pausa no sale (/cron para verla).'
+      : `\n⏸️ ${out.pausadas} rutinas en pausa no salen (/cron para verlas).`
     : '';
   if (!out.filas.length)
     return `🗓️ Nada previsto para ${TITULO[rango]}.${rango === 'semana' ? '' : ' /previsto semana para ver más lejos.'}${pausa}`;

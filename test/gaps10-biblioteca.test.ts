@@ -59,7 +59,7 @@ describe('/biblioteca (Grok Bot: Library de lo que el bot creó, por tipo)', () 
     const v = bibliotecaVista(lista, 'pdf', now);
     expect(v.text).toContain('(pdf): 2');
     expect(v.text).not.toContain('grafica');
-    expect(bibliotecaVista(lista, 'word', now).text).toContain('No tengo ningún word');
+    expect(bibliotecaVista(lista, 'word', now).text).toContain('No tengo ningún Word');
   });
 
   it('/biblioteca N y /biblioteca pdf N eligen de la lista que se ve', () => {
