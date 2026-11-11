@@ -679,7 +679,6 @@ import {
   canonicalMacroName,
   detectMacroParams,
   isMacroName,
-  nextScheduleRun,
   parseMacroArgs,
   procedurePrompt,
   RoutineRunner,
@@ -5375,7 +5374,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
 
   /** /previsto: lo que haré por ti, por hora (recordatorios, rutinas, resumen de la bandeja). */
   const cmdPrevisto = async (inbound: Inbound, args: string): Promise<void> => {
-    const { previstoFilas, previstoRango, previstoTexto } = await import('./previsto.js');
+    const { extrasBandeja, previstoFilas, previstoRango, previstoTexto } = await import(
+      './previsto.js'
+    );
     const rango = previstoRango(args);
     if (!rango) {
       await say(inbound, 'Uso: /previsto (24 h), /previsto hoy o /previsto semana.', {
@@ -5388,11 +5389,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const extras: Array<{ at: Date; text: string; cada?: string }> = [];
     if (isOwnerDm(inbound, vigilanteOwnerId)) {
       // El resumen de la noche de la bandeja (src/bandeja/resumen.ts), a su hora.
-      const { digestHora } = await import('./bandeja/resumen.js');
+      // Solo sale si hay algo: se dice cuántas lleva esta noche (extrasBandeja).
+      const { digestHora, digestItems } = await import('./bandeja/resumen.js');
       const [h, m] = digestHora(bandejaStore).split(':');
-      const cada = `${Number(m)} ${Number(h)} * * *`;
-      const at = nextScheduleRun(cada);
-      if (at) extras.push({ at, text: '📥 resumen de la bandeja', cada });
+      const hoy = localDay();
+      extras.push(
+        ...extrasBandeja(`${Number(m)} ${Number(h)} * * *`, new Date(), {
+          pendientes: digestItems(bandejaStore, inbound.chatId, hoy).length,
+          yaSalioHoy: bandejaStore.getMeta('last_digest_day') === hoy,
+        }),
+      );
     }
     const now = new Date();
     const out = previstoFilas(
