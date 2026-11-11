@@ -17,7 +17,9 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { apuntadaEnBandeja, mismaCitaArgs } from '../bandeja/calendario-marcas.js';
 import { cuandoTexto, eventoArgs, localWallTime, yaPaso } from '../bandeja/evento.js';
+import type { BandejaStore } from '../bandeja/store.js';
 import type { EventoArgs } from '../google/workspace.js';
 import { parseIcs } from '../ics.js';
 import { sliceSafe } from '../text.js';
@@ -79,7 +81,12 @@ export function invitacionesDe(
       if (cancela && !ev.uid) continue;
       const a = eventoArgs(ev, tz, null);
       if (!a.inicio || yaPaso(a, ahora)) continue;
-      const clave = claveInvitacion(ev.nombre, cancela ? `${a.inicio}#cancela` : a.inicio);
+      // Con el sitio: una versión que solo cambia de sala (Outlook la reenvía) es un cambio, no
+      // un reenvío (bugs-38). Sin sitio, la clave de siempre.
+      const clave = claveInvitacion(
+        ev.nombre,
+        cancela ? `${a.inicio}#cancela` : ev.lugar ? `${a.inicio}@${ev.lugar.trim()}` : a.inicio,
+      );
       if (out.some((x) => x.clave === clave)) continue;
       out.push({
         clave,
@@ -159,8 +166,11 @@ export class InvitacionesCorreo {
       uid ? d.lista.find((x) => x.uid === uid && x.apuntada && x.gid && !x.cancela) : undefined;
     const out: InvitacionCorreo[] = [];
     for (const c of cands) {
-      if (ya.has(c.clave)) continue;
       const previa = apuntadaDe(c.uid);
+      // Ya avisada… salvo que la apuntada de su UID sea OTRA versión: una reunión movida y
+      // luego devuelta a su hora tiene la clave de la primera, y se tomaba por un reenvío
+      // (en su calendario se quedaba la hora del medio; bugs-38).
+      if (ya.has(c.clave) && (c.cancela || !previa || previa.clave === c.clave)) continue;
       if (c.cancela) {
         if (previa) out.push({ ...c, gid: previa.gid, cambiaDe: previa.clave });
         continue;
@@ -169,7 +179,8 @@ export class InvitacionesCorreo {
     }
     if (!out.length) return [];
     const ahora = localWallTime(now.toISOString(), tz);
-    const vivas = d.lista.filter((x) => !yaPaso(x, ahora));
+    const nuevasClaves = new Set(out.map((x) => x.clave));
+    const vivas = d.lista.filter((x) => !yaPaso(x, ahora) && !nuevasClaves.has(x.clave));
     this.#guardar({ ...d, lista: [...out, ...vivas].slice(0, MAX) });
     return out;
   }
@@ -195,6 +206,16 @@ export class InvitacionesCorreo {
     i.apuntada = false;
     delete i.gid;
     this.#guardar(d);
+  }
+
+  /**
+   * La apuntada con la tarjeta del correo (con su id de Google) de ese UID, si la hay: el mismo
+   * .ics por Telegram (la bandeja) no crea otro evento (bugs-38).
+   */
+  apuntadaPorUid(uid: string): InvitacionCorreo | null {
+    return (
+      this.#leer().lista.find((x) => x.uid === uid && x.apuntada && x.gid && !x.cancela) ?? null
+    );
   }
 
   /** La apuntada (con su id de Google) a la que se refiere un cambio o una cancelación. */
@@ -245,7 +266,7 @@ export function textoInvitacion(i: InvitacionCorreo, previa?: InvitacionCorreo |
   if (previa)
     return [
       `📅 ${i.de} ha cambiado por correo una reunión que te apunté:`,
-      `${linea} (antes: ${cuandoTexto(argsDe(previa))})`,
+      `${linea} (antes: ${cuandoTexto(argsDe(previa))}${previa.lugar && previa.lugar !== i.lugar ? ` · ${previa.lugar}` : ''})`,
       '',
       '¿La cambio en tu Google Calendar? (Muevo la que ya tienes; no creo otra.)',
     ].join('\n');
@@ -273,4 +294,36 @@ export function invitacionOrden(
   if (!m?.[2] || (kind !== 'apuntar' && kind !== 'cambiar' && kind !== 'quitar' && kind !== 'ics'))
     return null;
   return { kind, clave: m[2] };
+}
+
+/**
+ * «✅ Sí, apúntala» de una invitación del correo que ya se apuntó por la bandeja (el mismo .ics
+ * mandado por Telegram, mismo UID): antes creaba un segundo evento (bugs-38). Si es la misma
+ * cita, «ya está»; si cambió, mueve el que hay. null: no estaba (o lo borró él), se crea.
+ * `gid`: el evento de Google con el que queda apuntada (null si mover falló).
+ */
+export async function apuntarSiEnBandeja(
+  inv: InvitacionCorreo,
+  bandeja: Pick<BandejaStore, 'get' | 'getMeta'>,
+  chatId: string,
+  tz: string,
+  mover: (gid: string, args: EventoArgs) => Promise<string>,
+): Promise<{ text: string; gid: string | null } | null> {
+  const previa = inv.uid ? apuntadaEnBandeja(bandeja, chatId, inv.uid) : null;
+  const ev = previa?.item.extra.evento;
+  if (!previa || !ev) return null;
+  const antes = eventoArgs(ev, tz, previa.item.url);
+  const ahora = argsDe(inv);
+  if (mismaCitaArgs(antes, ahora))
+    return {
+      text: `📅 «${inv.titulo}» ya está en tu Google Calendar (la apunté con la #${previa.item.id} de la bandeja).`,
+      gid: previa.gid,
+    };
+  const text = await mover(previa.gid, ahora);
+  if (/ya no existe|respondido 4(?:04|10)/.test(text)) return null;
+  if (!text.startsWith('📅 Movido')) return { text, gid: null };
+  return {
+    text: `📅 Cambiada en tu Google Calendar: «${inv.titulo}», ahora ${cuandoDe(inv)}${inv.lugar ? ` · ${inv.lugar}` : ''} (era la que apunté con la #${previa.item.id} de la bandeja; no creo otra).`,
+    gid: previa.gid,
+  };
 }

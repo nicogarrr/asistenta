@@ -6920,6 +6920,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
           { ...a, id },
         ),
+      // La misma invitación ya apuntada con la tarjeta del correo: no crea otra (bugs-38).
+      invitacionCorreo: async (uid, chatId) => {
+        if (chatId !== briefingOwner()) return null;
+        const iv = await import('./mail/invitacion-aviso.js');
+        const s = new iv.InvitacionesCorreo(join(paths.state, 'invitaciones-correo.json'));
+        const i = s.apuntadaPorUid(uid);
+        return i?.gid
+          ? { gid: i.gid, args: iv.argsDe(i), olvidar: () => s.olvidarApuntada(i.clave) }
+          : null;
+      },
       timeZone: () => localTimeZone(),
       // «🔄 Releer la página» (lo guardado antes de 🛒/📅): la misma descarga de la bandeja.
       fetchPagina: (url) => bandejaFetchRaw(url),
@@ -8085,6 +8095,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (invitacionEnCurso.has(inv.clave)) return;
     invitacionEnCurso.add(inv.clave);
     try {
+      // La misma invitación ya apuntada por la bandeja (el .ics por Telegram): no crea otra.
+      const hecho = await iv.apuntarSiEnBandeja(inv, bandejaStore, inbound.chatId, tz, (id, a) =>
+        moverEvento(ws, { ...a, id }),
+      );
+      if (hecho) {
+        if (hecho.gid) store.marcarApuntada(inv.clave, hecho.gid);
+        await say(inbound, hecho.text, { quote: true });
+        return;
+      }
       const text = await crearEvento(ws, iv.argsDe(inv));
       const ok = text.startsWith('📅 Apuntado');
       if (ok) store.marcarApuntada(inv.clave, iv.idDeGoogle(text));
