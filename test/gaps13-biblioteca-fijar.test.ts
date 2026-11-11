@@ -88,7 +88,7 @@ describe('gaps-13: /biblioteca fijar N (Grok Bot «Pin» en la Library)', () => 
   it('cli: fijar/soltar no manda el archivo y la lista lleva los fijados', () => {
     const cli = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf8');
     const i = cli.indexOf('const cmdBiblioteca = async');
-    const cuerpo = cli.slice(i, i + 3000);
+    const cuerpo = cli.slice(i, i + 4500);
     expect(cuerpo).toContain("if (orden.kind === 'fijar' || orden.kind === 'soltar')");
     expect(cuerpo.indexOf("orden.kind === 'fijar'")).toBeLessThan(
       cuerpo.indexOf('sendDocumentBytes'),
