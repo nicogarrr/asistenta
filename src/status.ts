@@ -90,6 +90,8 @@ export function conversationStatus(c: {
   project?: ProjectContext | null;
   model: string;
   primaryModel: string;
+  /** Datos del resumen de esta conversación marcados «SIN VERIFICAR:» (solo el número). */
+  sinVerificar?: number;
 }): string[] {
   const project = !c.projectDir
     ? PROJECT_NONE_LINE
@@ -97,7 +99,13 @@ export function conversationStatus(c: {
       ? `Proyecto: carpeta «${projectFolderName(c.project.dir)}» (tengo en cuenta ${c.project.name}).`
       : `Proyecto: carpeta «${projectFolderName(c.projectDir)}», pero ahora no puedo leer nada: ${c.project?.ok === false ? c.project.reason : 'no hay fichero'}.`;
   const model = `Modelo: ${c.model}${c.model === c.primaryModel ? ' (principal)' : ' (el que elegiste)'}.`;
-  return [project, model];
+  const n = c.sinVerificar ?? 0;
+  if (n <= 0) return [project, model];
+  const sv =
+    n === 1
+      ? '⚠️ 1 dato del resumen va marcado SIN VERIFICAR: no lo des por hecho sin comprobarlo.'
+      : `⚠️ ${n} datos del resumen van marcados SIN VERIFICAR: no los des por hechos sin comprobarlos.`;
+  return [project, model, sv];
 }
 
 export function formatStatus(s: StatusInfo): string {
