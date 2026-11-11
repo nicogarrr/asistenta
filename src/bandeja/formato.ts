@@ -4,7 +4,7 @@
  */
 import { commandButton } from '../channels/telegram-shared.js';
 import { sliceSafe } from '../text.js';
-import type { BandejaKind } from './captura.js';
+import { type BandejaKind, displayUrl } from './captura.js';
 import { goodreadsLine } from './goodreads.js';
 import { kindleable } from './kindle.js';
 import type { BandejaItem } from './store.js';
@@ -104,12 +104,16 @@ export function cardButtons(item: BandejaItem): Button[] {
  */
 export function linkLines(item: BandejaItem, indent = ''): string[] {
   const out: string[] = [];
-  const main = item.url ?? item.extra.goodreads?.url ?? item.extra.altUrl;
+  const raw = item.url ?? item.extra.goodreads?.url ?? item.extra.altUrl;
+  // Sin ?si=, ?is=, utm_…: se guarda tal cual, pero se enseña limpio.
+  const main = raw ? displayUrl(raw) : raw;
   if (main) out.push(`${indent}🔗 ${main}`);
-  if (item.extra.altUrl && item.extra.altUrl !== main)
-    out.push(`${indent}${item.kind === 'libro' ? '📖' : '▶️'} También: ${item.extra.altUrl}`);
-  if (item.extra.pdfUrl && item.extra.pdfUrl !== main)
-    out.push(`${indent}📄 PDF original: ${item.extra.pdfUrl}`);
+  if (item.extra.altUrl && displayUrl(item.extra.altUrl) !== main)
+    out.push(
+      `${indent}${item.kind === 'libro' ? '📖' : '▶️'} También: ${displayUrl(item.extra.altUrl)}`,
+    );
+  if (item.extra.pdfUrl && displayUrl(item.extra.pdfUrl) !== main)
+    out.push(`${indent}📄 PDF original: ${displayUrl(item.extra.pdfUrl)}`);
   if (!main && item.fileId)
     out.push(
       `${indent}📎 Es ${item.kind === 'imagen' ? 'la captura' : 'el archivo'} que me mandaste${item.fileName ? ` («${item.fileName}»)` : ''}: búscalo en este chat por la hora.`,
