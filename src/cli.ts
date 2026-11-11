@@ -261,7 +261,7 @@ import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
-import { borrarEvento, crearEvento, moverEvento } from './google/workspace.js';
+import { borrarEvento, crearEvento, eventoDeInvitacion, moverEvento } from './google/workspace.js';
 import { icsDeEvento, icsNombre } from './ics.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
@@ -4332,6 +4332,30 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       for (const inv of store.nuevas(iv.invitacionesDe(m.calendarios ?? [], m, tz, now), tz, now)) {
         // Cambio de hora o cancelación de una que se apuntó (mismo UID): mover o quitar ESA.
         const previa = store.previa(inv);
+        // Gmail suele añadirla solo: si ya está en su Google Calendar, «ya está» y sin «✅».
+        const gg = await import('./mail/invitacion-google.js');
+        const conGoogle = gg.decidirConGoogle(
+          inv,
+          previa,
+          inv.cancela || previa
+            ? null
+            : await eventoDeInvitacion(
+                {
+                  vault: { get: vaultGet, set: vaultSet, delete: vaultDelete },
+                  timeZone: localTimeZone,
+                },
+                { ...(inv.uid ? { uid: inv.uid } : {}), titulo: inv.titulo, inicio: inv.inicio },
+              ),
+        );
+        if (conGoogle.kind !== 'normal') {
+          await telegram.send({
+            channel: 'telegram',
+            account: telegram.account,
+            chatId: owner,
+            text: gg.textoYaEnCalendario(inv, conGoogle),
+          });
+          continue;
+        }
         const buttons = (
           inv.cancela
             ? [commandButton('🗑️ Sí, quítala', 'invitacion', inv.clave, 'quitar')]
