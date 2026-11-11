@@ -254,6 +254,7 @@ import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { endpointKind, llmHealthCommand, providerKeyFor, providerKeySource } from './llm-health.js';
 import { log, logFile, redact } from './log.js';
+import { configurarAdjuntos, raicesPorDefecto } from './mail/adjuntos.js';
 import { loadAccount as loadMailAccount, searchMail, sendMail } from './mail/client.js';
 import { pollGmailCommandMail } from './mail/command-inbox.js';
 import { activeDeliveries } from './mail/deliveries.js';
@@ -2054,6 +2055,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const paginasVivas = new PaginasVivas(memoryDb);
   // Copia de las gráficas/Excel/PDF que genero, para bajarlas otra vez desde «Páginas».
   const creados = new CreadosStore(join(paths.state, 'creados'));
+  // Adjuntos de «correo»: lo de «creados» y Documentos/Escritorio/Descargas (src/mail/adjuntos.ts).
+  configurarAdjuntos({
+    creadosDir: join(paths.state, 'creados'),
+    stateDir: paths.state,
+    roots: raicesPorDefecto(),
+  });
   // Config de avisos de GitHub del .env; la vigilancia arranca más abajo (o al pedirla en el chat).
   const githubAvisosConf = githubAvisosConfig();
   let ensureGithubAvisos: () => void = () => {};

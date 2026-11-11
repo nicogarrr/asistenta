@@ -11,6 +11,14 @@ Asistenta puede **leer** tu Gmail y **enviar** correos desde Telegram con la her
   mismo hilo), `reenviar` (con el original debajo) y `nuevo`.
 - Archivar, marcar como leído y limpiar: lo hace la herramienta `correo_reglas` (otra parte).
 
+## Adjuntos
+
+«Mándale a mi gestor la gráfica que me hiciste» o «envía a Ana el PDF de la tesis que está en Documentos»: el correo sale con el fichero adjunto.
+
+- Qué se puede adjuntar: lo que Asistenta te ha hecho (gráficas, Excel, PDF, Word: la tarjeta «Páginas» del panel) por su nombre, y ficheros de **Documentos, Escritorio o Descargas** (también los de OneDrive) por su ruta. Nada de carpetas ocultas, claves o certificados, ni ficheros internos de Asistenta.
+- El borrador que apruebas enseña cada adjunto con su nombre, tamaño y ruta. Si el fichero cambia después de que lo apruebes, no sale nada y te lo dice.
+- Como mucho 5 ficheros y 18 MB entre todos (Gmail no acepta correos de más de 25 MB).
+
 ## La regla de seguridad
 
 **Ningún correo sale sin tu sí a ese borrador exacto.** Cada envío te enseña Para, CC, Asunto y el
