@@ -554,7 +554,13 @@ import {
 } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { detectCapture, pidioAdjunto, ultimaRespuesta } from './bandeja/captura.js';
-import { bandejaCommand, bandejaSlowSub, captureAndAck, captureOn } from './bandeja/comando.js';
+import {
+  bandejaCommand,
+  bandejaSlowSub,
+  captureAndAck,
+  captureOn,
+  icsAviso,
+} from './bandeja/comando.js';
 import {
   autoKindle,
   deliverToKindle,
@@ -6612,8 +6618,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     pdfText: (bytes) => extractDocText(bytes, 'application/pdf'),
     temas: () => temasDeNico(),
     addChild: (parent, child) => bandejaStore.add(parent.chatId, child, new Date(), parent.day),
-    // «/bandeja kindle auto on»: lo 🔴 para leer entero se manda solo al Kindle.
-    onDone: (item) => bandejaAutoKindle(item),
+    // «/bandeja kindle auto on»: lo 🔴 para leer entero se manda solo al Kindle. Y una
+    // invitación .ics pregunta «📅 ¿Lo apunto?» al momento.
+    onDone: async (item) => {
+      await bandejaIcsAviso(item);
+      await bandejaAutoKindle(item);
+    },
   };
   const bandejaQueue = new BandejaQueue(bandejaStore, bandejaProcDeps, (msg, data) =>
     log.warn(msg, data),
@@ -6644,6 +6654,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           telegram.sendDocumentBytes(Number(chatId), bytes, name, caption),
         mail: { account: () => loadMailAccount(), send: (account, req) => sendMail(account, req) },
       });
+  const bandejaIcsAviso = async (item: BandejaItem): Promise<void> => {
+    const reply = await icsAviso(item, {
+      store: bandejaStore,
+      queue: bandejaQueue,
+      chatId: item.chatId,
+      now: () => new Date(),
+      timeZone: () => localTimeZone(),
+    });
+    if (!reply) return;
+    await telegram.send({
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: item.chatId,
+      text: reply.text,
+      ...(reply.buttons?.length ? { buttons: reply.buttons } : {}),
+    });
+  };
   const bandejaAutoKindle = async (item: BandejaItem): Promise<void> => {
     if (!kindleSettings(bandejaStore).auto || !autoKindle(item)) return;
     const mark = `kindle_auto_sent_${item.id}`;
