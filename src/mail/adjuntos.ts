@@ -135,6 +135,19 @@ function deCreados(cfg: AdjuntosConfig, ref: string): Adjunto | null {
 const CARPETA_USUARIO = /^(documents|documentos|desktop|escritorio|downloads|descargas)$/i;
 
 /**
+ * Dónde está un fichero encontrado, para que Nico distinga dos con el mismo nombre: la
+ * carpeta del usuario (con «OneDrive/» delante si es la de OneDrive) y la subcarpeta.
+ * Antes era solo la carpeta padre: «(Documentos, Documentos)» con la de OneDrive.
+ */
+function dondeEsta({ p, root }: { p: string; root: string }): string {
+  const nube = basename(dirname(root)).toLowerCase() === 'onedrive' ? 'OneDrive/' : '';
+  const sub = relative(root, dirname(p))
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  return [`${nube}${basename(root)}`, ...sub].join('/');
+}
+
+/**
  * «Descargas/factura.pdf» o «factura.pdf» sin la ruta entera: el modelo no sabe la carpeta
  * del usuario en Windows (C:\Users\<nombre>\…) y antes eso era «dime la ruta». Se busca en
  * Documentos/Escritorio/Descargas (también las de OneDrive). Devuelve la ruta, o por qué no.
@@ -142,14 +155,14 @@ const CARPETA_USUARIO = /^(documents|documentos|desktop|escritorio|downloads|des
 function enCarpetas(cfg: AdjuntosConfig, ref: string): { path: string } | { why: string } {
   const segs = ref.split(/[\\/]+/).filter(Boolean);
   const userRoots = cfg.roots.filter((root) => CARPETA_USUARIO.test(basename(root)));
-  const hits = new Map<string, string>();
+  const hits = new Map<string, { p: string; root: string }>();
   const probar = (root: string, rest: string[]) => {
     if (!rest.length) return;
     const p = resolve(root, ...rest);
     // «Documentos/../…» no sale de su carpeta.
     if (!dentro(root, p)) return;
     try {
-      if (statSync(p).isFile()) hits.set(lower(real(p)), p);
+      if (statSync(p).isFile()) hits.set(lower(real(p)), { p, root });
     } catch {}
   };
   const first = segs[0] ?? '';
@@ -164,10 +177,10 @@ function enCarpetas(cfg: AdjuntosConfig, ref: string): { path: string } | { why:
     for (const root of userRoots) probar(root, segs);
   }
   const found = [...hits.values()];
-  if (found.length === 1 && found[0]) return { path: found[0] };
+  if (found.length === 1 && found[0]) return { path: found[0].p };
   if (found.length > 1)
     return {
-      why: `hay ${found.length} con ese nombre (${found.map((p) => basename(dirname(p))).join(', ')}); dime la carpeta`,
+      why: `hay ${found.length} con ese nombre (${found.map(dondeEsta).join(', ')}); dime la carpeta`,
     };
   return {
     why: 'no lo encuentro entre lo que te he hecho ni en Documentos/Escritorio/Descargas; dime la ruta',
