@@ -89,6 +89,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       // «🗑️ Sí, quítalo» (la cancelación .ics de algo que apuntó): borra SOLO el evento que
       // creó su «✅ Sí, apúntalo» (su id de Google guardado), y solo al tocarlo.
       'desapuntar',
+      // «✅ Sí, cámbialo» (la invitación .ics actualizada): mueve SOLO el evento que creó su
+      // «✅ Sí» anterior a la fecha nueva, y solo al tocarlo.
+      'cambiar',
     ]),
   ],
   // 📚 /biblioteca: «📤 N» te vuelve a mandar un archivo que te hice (arg = la fecha de su
