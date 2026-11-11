@@ -281,10 +281,20 @@ export class AskFirstStore {
       if (appliesIn(r, chat) && AREAS[r.area].match(call))
         // Como el «Edit rule» de Grok Bot en su tarjeta: la pregunta dice qué regla la hizo
         // saltar y cómo quitarla, para no tener que buscarla en /permisos preguntar lista.
-        return `Me pediste que te preguntara antes de ${AREAS[r.area].label}${r.chat === undefined ? '' : ' en este chat'} («${r.dicho}»). Si ya no quieres que te lo pregunte: /permisos preguntar quitar ${r.id}.`;
+        return `Me pediste que te preguntara antes de ${AREAS[r.area].label}${r.chat === undefined ? '' : ' en este chat'} («${r.dicho}»). Si ya no quieres que te lo pregunte: /permisos preguntar quitar ${r.id}${enGrupo(chat) ? ' (en mi chat privado: en un grupo /permisos no va)' : ''}.`;
     }
     return null;
   }
+}
+
+/**
+ * ¿Es un grupo de Telegram el chat del hilo? Su clave es «telegram:<cuenta>:<id>[:tema]» y
+ * los grupos tienen id negativo. Allí /permisos no funciona (solo en el privado del dueño):
+ * la pista de #2343 mandaba a un comando que contestaba «solo en el chat privado» (bugs-36).
+ */
+function enGrupo(chat: string | undefined): boolean {
+  const [channel, , id] = (chat ?? '').split(':');
+  return channel === 'telegram' && (id ?? '').startsWith('-');
 }
 
 const AREA_HINT =
