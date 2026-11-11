@@ -90,6 +90,12 @@ function fichero(path: string, name: string, ref: string): Adjunto {
   }
 }
 
+/** Orden de un id de «creados»: «20261111-120000-2-x» → 20261111120000·100 + 2 (sin número = 1). */
+function ordenCreado(id: string): number {
+  const m = /^(\d{8})-(\d{6})(?:-(\d+))?-/.exec(id);
+  return m ? Number(`${m[1]}${m[2]}`) * 100 + Number(m[3] ?? 1) : 0;
+}
+
 /** Un adjunto de «creados» por id exacto o por su nombre («grafica.png» = el más nuevo). */
 function deCreados(cfg: AdjuntosConfig, ref: string): Adjunto | null {
   const id = basename(ref);
@@ -105,9 +111,11 @@ function deCreados(cfg: AdjuntosConfig, ref: string): Adjunto | null {
   // El nombre que se guardó es el «seguro» (sin tildes ni espacios): «Gastos de octubre.xlsx»
   // está en la carpeta como «Gastos-de-octubre.xlsx».
   const want = new Set([ref.trim().toLowerCase(), nombreSeguro(ref.trim()).toLowerCase()]);
+  // El más nuevo: por fecha y, en el mismo segundo, por su número («-2-», «-10-»). Con
+  // .sort() de texto «…-2-grafica.png» iba antes que «…-grafica.png» y salía la vieja.
   const hit = names
     .filter((n) => want.has(n.replace(/^\d{8}-\d{6}(?:-\d+)?-/, '').toLowerCase()))
-    .sort()
+    .sort((a, b) => ordenCreado(a) - ordenCreado(b) || a.localeCompare(b))
     .pop();
   return hit
     ? fichero(join(cfg.creadosDir, hit), hit.replace(/^\d{8}-\d{6}(?:-\d+)?-/, ''), ref)
