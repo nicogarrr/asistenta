@@ -16,6 +16,8 @@ const MAX_ITEM_CHARS = 60;
 
 export interface RecetaParsed {
   title?: string;
+  /** Raciones de la receta («4 personas», recipeYield), si las dice. */
+  servings?: number;
   ingredients: string[];
   /** De dónde salieron: la ficha schema.org o la sección «Ingredientes» del texto. */
   source: 'schema' | 'texto' | 'ninguno';
@@ -76,7 +78,13 @@ export function recipeFromHtml(html: string): RecetaParsed | null {
     if (!list.length) continue;
     const name =
       typeof recipe.name === 'string' ? decodeEntities(stripTags(recipe.name)).trim() : '';
-    return { ...(name ? { title: name } : {}), ingredients: list, source: 'schema' };
+    const servings = servingsOf(recipe.recipeYield);
+    return {
+      ...(name ? { title: name } : {}),
+      ...(servings ? { servings } : {}),
+      ingredients: list,
+      source: 'schema',
+    };
   }
   return null;
 }
@@ -113,7 +121,82 @@ export function recipeFromText(text: string): RecetaParsed {
         out.push(l);
     }
   }
-  return { ingredients: out, source: out.length ? 'texto' : 'ninguno' };
+  const servings = servingsOf(start >= 0 ? (lines[start] ?? '') : text.slice(0, 400));
+  return {
+    ...(servings ? { servings } : {}),
+    ingredients: out,
+    source: out.length ? 'texto' : 'ninguno',
+  };
+}
+
+/** «4 personas», «para 6», «Raciones: 8», recipeYield 4 / "4 servings" / ["4"] → 4. */
+export function servingsOf(v: unknown): number | undefined {
+  const raw = Array.isArray(v) ? v.find((x) => typeof x === 'string' || typeof x === 'number') : v;
+  if (typeof raw === 'number') return raw > 0 && raw <= 100 ? Math.round(raw) : undefined;
+  if (typeof raw !== 'string') return undefined;
+  const m =
+    /(\d{1,3})\s*(?:personas?|raciones?|comensales|porciones?|servings?|people|pax|uds?\.?)\b/i.exec(
+      raw,
+    ) ??
+    /(?:para|raciones?\s*:?|porciones?\s*:?|personas?\s*:?|serves?)\s*(\d{1,3})\b/i.exec(raw) ??
+    (Array.isArray(v) || /^\s*\d{1,3}\s*$/.test(raw) ? /(\d{1,3})/.exec(raw) : null);
+  const n = m ? Number(m[1]) : Number.NaN;
+  return n > 0 && n <= 100 ? n : undefined;
+}
+
+const FRACTIONS: Record<string, number> = {
+  '½': 0.5,
+  '¼': 0.25,
+  '¾': 0.75,
+  '⅓': 1 / 3,
+  '⅔': 2 / 3,
+};
+
+/** Cantidad redondeada para la compra: gramos/ml de 5 en 5, lo demás a medias o enteros. */
+function fmtQty(q: number, unit: string): string {
+  let r: number;
+  if (/^(?:g|gr|gramos?|ml|mililitros?)$/i.test(unit))
+    r = q >= 20 ? Math.round(q / 5) * 5 : Math.round(q);
+  else if (/^(?:kg|kilos?|l|litros?)$/i.test(unit)) r = Math.round(q * 10) / 10;
+  else if (unit) r = Math.round(q * 2) / 2;
+  else r = Math.max(1, Math.ceil(q - 0.05)); // huevos, cebollas: no se compra medio
+  return String(r).replace('.', ',');
+}
+
+/**
+ * «200 g de harina» de una receta para 4, para 6 → «300 g de harina». Solo la cantidad
+ * del principio; lo que no empieza por número («Aceite de oliva») queda igual.
+ */
+export function scaleIngredient(item: string, factor: number): string {
+  if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - 1) < 1e-9) return item;
+  const m =
+    /^(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?|[½¼¾⅓⅔]|\d+\s*[½¼¾⅓⅔])(\s*)([a-zA-Záéíóú]+\.?)?/.exec(item);
+  if (!m?.[1]) return item;
+  const tok = m[1].replace(/\s+/g, '');
+  let q: number;
+  const frac = /^(\d+)\/(\d+)$/.exec(tok);
+  const mixed = /^(\d+)([½¼¾⅓⅔])$/.exec(tok);
+  if (frac) q = Number(frac[1]) / Number(frac[2]);
+  else if (mixed) q = Number(mixed[1]) + (FRACTIONS[mixed[2] ?? ''] ?? 0);
+  else if (FRACTIONS[tok] !== undefined) q = FRACTIONS[tok] ?? 0;
+  else q = Number(tok.replace(',', '.'));
+  if (!Number.isFinite(q) || q <= 0) return item;
+  const unit = (m[3] ?? '').replace(/\.$/, '');
+  const isUnit =
+    /^(?:g|gr|gramos?|kg|kilos?|ml|mililitros?|l|litros?|cl|dl|cucharad\w*|cdas?|cdtas?|tazas?|vasos?|latas?|sobres?|dientes?|pizcas?|ramitas?|hojas?)$/i.test(
+      unit,
+    );
+  return `${fmtQty(q * factor, isUnit ? unit : '')}${item.slice(m[1].length)}`;
+}
+
+/** «… para 6» / «… 6 personas» al final de /compra receta: raciones que quiere Nico. */
+export function splitRaciones(args: string): { rest: string; servings?: number } {
+  const m =
+    /\s+(?:para\s+(\d{1,2})(?:\s*(?:personas?|raciones?|comensales))?|(\d{1,2})\s*(?:personas?|raciones?|comensales))\s*$/i.exec(
+      args,
+    );
+  const n = m ? Number(m[1] ?? m[2]) : Number.NaN;
+  return m && n > 0 ? { rest: args.slice(0, m.index).trim(), servings: n } : { rest: args };
 }
 
 /** Una línea de ingrediente lista para la compra: sin viñetas, sin «al gusto», ≤60 letras. */
@@ -148,6 +231,10 @@ export function ingredientBase(item: string): string {
 
 export interface RecetaItems {
   title?: string;
+  /** Raciones de la receta original, si las dice. */
+  servings?: number;
+  /** Raciones a las que se escaló (si se pidió y se sabía la original). */
+  scaledTo?: number;
   items: string[];
   /** Lo de casa que no se apunta (sal, pimienta, agua). */
   skipped: string[];
@@ -155,7 +242,12 @@ export interface RecetaItems {
 }
 
 /** De la receta (HTML o texto) a la lista: limpia, sin repetidos, sin lo de casa. */
-export function recetaItems(input: { html?: string; text?: string }): RecetaItems {
+export function recetaItems(input: {
+  html?: string;
+  text?: string;
+  /** Raciones que quiere Nico («para 6»): escala si la receta dice las suyas. */
+  servings?: number;
+}): RecetaItems {
   const parsed =
     (input.html ? recipeFromHtml(input.html) : null) ??
     recipeFromText(
@@ -171,8 +263,12 @@ export function recetaItems(input: { html?: string; text?: string }): RecetaItem
   const items: string[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
+  const factor =
+    input.servings && parsed.servings && input.servings !== parsed.servings
+      ? input.servings / parsed.servings
+      : 1;
   for (const raw of parsed.ingredients) {
-    const t = cleanIngredient(raw);
+    const t = scaleIngredient(cleanIngredient(raw), factor);
     if (!t || t.length < 2) continue;
     const key = foldTxt(t);
     if (seen.has(key)) continue;
@@ -183,6 +279,8 @@ export function recetaItems(input: { html?: string; text?: string }): RecetaItem
   }
   return {
     ...(parsed.title ? { title: parsed.title } : {}),
+    ...(parsed.servings ? { servings: parsed.servings } : {}),
+    ...(factor !== 1 && input.servings ? { scaledTo: input.servings } : {}),
     items,
     skipped,
     source: parsed.ingredients.length ? parsed.source : 'ninguno',
@@ -194,13 +292,22 @@ export function recetaNote(
   r: RecetaItems,
   added: readonly string[],
   already: readonly string[],
+  /** Raciones que pidió Nico («para 6»), para decir si no se pudo escalar. */
+  wanted?: number,
 ): string {
   if (!r.items.length && !r.skipped.length)
     return 'No encontré los ingredientes de esa receta. Pégame el texto de la receta (o la lista de ingredientes) con /compra receta y los apunto.';
+  const scaled = r.scaledTo && r.servings ? ` (de ${r.servings} a ${r.scaledTo} raciones)` : '';
   const parts = [
-    `🍳 ${r.title ? `«${r.title}»` : 'Receta'}: ${added.length ? `apunto ${added.length} ${added.length === 1 ? 'ingrediente' : 'ingredientes'}` : 'nada nuevo que apuntar'}.`,
+    `🍳 ${r.title ? `«${r.title}»` : 'Receta'}${scaled}: ${added.length ? `apunto ${added.length} ${added.length === 1 ? 'ingrediente' : 'ingredientes'}` : 'nada nuevo que apuntar'}.`,
   ];
   if (already.length) parts.push(`Ya estaba: ${already.join(', ')}.`);
+  if (wanted && !r.scaledTo)
+    parts.push(
+      r.servings === wanted
+        ? `Ya era para ${wanted}.`
+        : `La receta no dice para cuántos es, así que van las cantidades tal cual.`,
+    );
   if (r.skipped.length)
     parts.push(
       `No apunto ${r.skipped.join(', ')} (se suponen en casa); si hace falta, /compra ${ingredientBase(r.skipped[0] ?? 'sal')}.`,
