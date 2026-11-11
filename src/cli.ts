@@ -10170,15 +10170,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // arrancado), se guarda y sale con el siguiente mensaje (entregarAvisosPendientes).
   alCaerConexion((_servicio, texto) => {
     const owner = briefingOwner();
-    if (owner) {
-      void telegram
+    // Se devuelve el envío: si Telegram falla, el aviso queda pendiente (no se pierde).
+    if (owner)
+      return telegram
         .send({ channel: 'telegram', account: telegram.account, chatId: owner, text: texto })
-        .catch(() => {});
-      return true;
-    }
+        .then(
+          () => true,
+          () => false,
+        );
     if (!lastChat) return false;
-    void notifyLastChat(texto).catch(() => {});
-    return true;
+    return notifyLastChat(texto).then(
+      () => true,
+      () => false,
+    );
   });
   /** «sí» tras un aviso del micrófono: vuelve a encender la escucha. */
   const WAKE_ON_ASK = { command: 'wake', args: 'on' };

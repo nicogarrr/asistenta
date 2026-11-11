@@ -20,7 +20,10 @@ export type ServicioConexion = 'google' | 'spotify';
 
 const AVISO_CADA_MS = 12 * 60 * 60_000;
 
-/** Devuelve false si ahora no hay chat al que mandarlo (el aviso se guarda). */
+/**
+ * Devuelve false si ahora no hay chat al que mandarlo (el aviso se guarda). Puede devolver
+ * la promesa del envío: si falla (o da false), el aviso también queda guardado.
+ */
 type Listener = (servicio: ServicioConexion, texto: string) => unknown;
 let listener: Listener | null = null;
 const ultimo = new Map<ServicioConexion, number>();
@@ -44,7 +47,22 @@ function entregar(fn: Listener, servicio: ServicioConexion, now: number): boolea
   }
   pendientes.delete(servicio);
   ultimo.set(servicio, now);
+  // El envío real va después (Telegram): si falla o no había a quién, no cuenta como
+  // entregado. Antes se daba por dicho y, con el token ya borrado, no volvía a salir nunca.
+  if (ok instanceof Promise) {
+    ok.then(
+      (sent: unknown) => {
+        if (sent === false) noLlego(servicio, now);
+      },
+      () => noLlego(servicio, now),
+    );
+  }
   return true;
+}
+
+function noLlego(servicio: ServicioConexion, at: number): void {
+  if (ultimo.get(servicio) === at) ultimo.delete(servicio);
+  pendientes.add(servicio);
 }
 
 /** Los avisos que no tuvieron a quién llegar; los manda ahora si ya hay chat. */
