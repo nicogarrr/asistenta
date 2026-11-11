@@ -300,7 +300,12 @@ export async function bandejaCommand(
     case 'ficha': {
       const item = ownItem(deps, restParts[0]);
       if (typeof item === 'string') return { text: item };
-      return { text: cardText(item), buttons: cardButtons(item), perRow: 3, itemId: item.id };
+      return {
+        text: cardText(item, deps.now()),
+        buttons: cardButtons(item),
+        perRow: 3,
+        itemId: item.id,
+      };
     }
     case 'ahora':
     case 'ya': {
@@ -316,7 +321,7 @@ export async function bandejaCommand(
       const fresh = deps.store.get(item.id) ?? item;
       const pdf = pdfsToAttach([fresh])[0];
       return {
-        text: cardText(fresh),
+        text: cardText(fresh, deps.now()),
         buttons: cardButtons(fresh),
         perRow: 3,
         itemId: fresh.id,
@@ -359,7 +364,7 @@ export async function bandejaCommand(
     }
     case 'resumen': {
       const items = digestItems(deps.store, deps.chatId, today);
-      const d = composeDigest(items, today);
+      const d = composeDigest(items, today, now);
       return {
         text: d.empty ? `${d.text} Mándame enlaces o PDFs a secas y te los filtro.` : d.text,
         buttons: d.buttons,

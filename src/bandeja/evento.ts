@@ -192,3 +192,14 @@ export function yaPaso(args: EventoArgs, nowLocal: string): boolean {
   if (!ref.includes('T')) return (args.fin ? ref : `${ref}~`) <= nowLocal.slice(0, 10);
   return ref <= nowLocal;
 }
+
+/**
+ * La línea del evento para la ficha y el resumen: «📅 jueves 20 nov, 10:00–18:00 · IFEMA,
+ * Madrid», en su hora. Si ya pasó, lo dice («(ya pasó)») para que no lo busque en vano.
+ * Antes la fecha solo salía al pulsar «📅 Al calendario»: en la ficha no se veía cuándo era.
+ */
+export function eventoLinea(ev: BandejaEvento, tz: string, now: Date): string {
+  const args = eventoArgs(ev, tz, null);
+  const paso = yaPaso(args, localWallTime(now.toISOString(), tz)) ? ' (ya pasó)' : '';
+  return `📅 ${cuandoTexto(args)}${ev.lugar ? ` · ${ev.lugar}` : ''}${paso}`;
+}

@@ -19,6 +19,7 @@ import {
   type Button,
   basisLine,
   byVerdict,
+  eventLine,
   itemButtons,
   kindEmoji,
   kindleButton,
@@ -112,7 +113,11 @@ export interface Digest {
 }
 
 /** El mensaje del resumen del día. */
-export function composeDigest(items: readonly BandejaItem[], day: string): Digest {
+export function composeDigest(
+  items: readonly BandejaItem[],
+  day: string,
+  now: Date = new Date(),
+): Digest {
   if (items.length === 0)
     return { text: '📥 Hoy no guardaste nada en la bandeja.', buttons: [], ids: [], empty: true };
   const red = items.filter((i) => i.status === 'listo' && i.verdict === 'imprescindible');
@@ -154,6 +159,9 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
         lines.push(
           `   ${verdictLabel(it.verdict, it.kind, it.extra.source).replace(/^🔴 Imprescindible: /, '👉 ')}`,
         );
+      // La fecha del evento (congreso, webinar, junta): se ve sin abrir la ficha.
+      const cuando = eventLine(it, now);
+      if (cuando) lines.push(`   ${cuando}`);
       if (it.reason) lines.push(`   ${oneLine(it.reason, 200)}`);
       for (const idea of it.ideas.slice(0, ideas)) lines.push(`   • ${oneLine(idea, 160)}`);
       const gr = goodreadsLine(it.extra.goodreads);
@@ -201,6 +209,13 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
   for (const it of withButtons) {
     const kb = kindleButton(it, true);
     if (kb) buttons.push(kb);
+  }
+  // «📅 N calendario» de lo que es un evento que aún no ha pasado (enseña qué apunta; no apunta).
+  for (const it of withButtons) {
+    const cuando = eventLine(it, now);
+    if (!cuando || cuando.endsWith('(ya pasó)')) continue;
+    const b = commandButton(`📅 ${it.id} calendario`, 'bandeja', String(it.id), 'calendario');
+    if (b) buttons.push(b);
   }
   if (chaff.length) {
     const b = chaffButton(day);
@@ -461,7 +476,7 @@ export async function sendDigest(
     deps.store.setMeta('last_digest_day', day);
     return 'empty';
   }
-  const digest = composeDigest(items, day);
+  const digest = composeDigest(items, day, now);
   const ok = await deps.send(chatId, digest.text, digest.buttons).catch((err: unknown) => {
     deps.warn?.('bandeja: resumen no enviado', { err: String(err) });
     return false;
