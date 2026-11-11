@@ -251,8 +251,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     entries: [
       {
         command: 'permisos',
-        args: '[lista|revocar …]',
-        description: 'los permisos «siempre» que me diste',
+        args: '[lista|revocar …|preguntar …]',
+        description: 'los permisos «siempre» que me diste, y lo que quieres que te pregunte antes',
       },
       { command: 'consumo', args: '[hoy|semana|mes]', description: 'tokens y coste estimado' },
       { command: 'servicios', description: 'herramientas externas adoptadas y su estado' },

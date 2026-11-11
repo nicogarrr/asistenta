@@ -438,6 +438,7 @@ import {
   textoEstado,
   VigilantePrecios,
 } from './precios/vigilante.js';
+import { AskFirstStore, areasOf, askFirstRequest, runAskFirstCommand } from './preguntar-antes.js';
 import { migrateLocalPresetPin } from './preset-migration.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import {
@@ -2289,6 +2290,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const altavoz = new AltavozStore(join(paths.state, 'altavoz.json'));
   // F7: /modelo por conversación, guardado para que sobreviva a un reinicio.
   const modelChoices = new ModelChoiceStore(join(paths.state, 'modelos.json'));
+  /** Reglas «pregúntame antes de …» del dueño (Grok Bot «Ask first»): valen en todos sus hilos. */
+  const askFirst = new AskFirstStore(join(paths.state, 'preguntar-antes.json'));
   // /ordenador off guardado: el PC sigue sin control tras reiniciar (solo más estricto;
   // PA_COMPUTER_USE=0 en el .env manda siempre).
   if (applySavedComputerOff(config, paths.state)) {
@@ -3669,8 +3672,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // current step asks him again, past every memo, scope and window. It reads
     // the store live, so `paso` advances apply at once, and a thread rebuilt
     // after a restart re-installs the guard right here.
-    gate.setForcedAsk(key, (call) =>
-      effectOverrideReason(gestorStore.activeForScope(key), gate.classifyEffect(call)),
+    // Y las reglas «pregúntame antes de …» del dueño (preguntar-antes.ts): solo más estrictas.
+    gate.setForcedAsk(
+      key,
+      (call) =>
+        effectOverrideReason(gestorStore.activeForScope(key), gate.classifyEffect(call)) ??
+        askFirst.reasonFor(call),
     );
     thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
       sessionId: key,
@@ -7146,6 +7153,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, direct, { quote: true });
       return true;
     }
+    // «pregúntame antes de usar el navegador» (Grok Bot, reglas «Ask first»): se apunta al
+    // momento. Si no nombra nada que sepa vigilar, lo lleva el modelo como siempre.
+    const askFirstWhat = askFirstRequest(text);
+    if (askFirstWhat !== null && areasOf(askFirstWhat).length > 0) {
+      await say(inbound, runAskFirstCommand(askFirst, askFirstWhat), { quote: true });
+      return true;
+    }
     // «deja de vigilar»: para lo que se vigila en este chat al momento (latido.ts). Si no hay
     // nada vigilándose o no casa con nada, sigue como siempre.
     if (latidoListRequest(text)) {
@@ -10453,6 +10467,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     const gates = [...threads.values()].map((thread) => thread.gate);
+    // «/permisos preguntar …»: reglas «pregúntame antes de …» (Grok Bot, solo más estrictas).
+    const permisosSub = (args.trim().split(/\s+/)[0] ?? '').toLowerCase();
+    if (permisosSub === 'preguntar') {
+      const rest = args.trim().slice(permisosSub.length).trim();
+      await say(inbound, runAskFirstCommand(askFirst, rest), { quote: true });
+      return;
+    }
     if ((args.trim().split(/\s+/)[0] ?? '').toLowerCase() === 'lista') {
       // Solo lectura: herramienta, dónde vale y desde cuándo; sin botones.
       await say(inbound, permisosListaReply(gates, approvalsDb, chatKey(inbound)), { quote: true });
