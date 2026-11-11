@@ -6507,6 +6507,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         cookiesFromBrowser: config.downloadCookiesBrowser,
         env: { ...process.env, PA_RESUMEN_MAX_MIN: String(bandejaMaxMinutes()) },
         ...(opts?.directAudio ? { directAudio: true } : {}),
+        // El tope de la bandeja corta el whisper (antes seguía en segundo plano).
+        ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
     download: (fileId) => telegram.downloadFile(fileId, 20_000_000),
