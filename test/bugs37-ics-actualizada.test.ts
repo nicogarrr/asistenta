@@ -117,7 +117,8 @@ describe('bugs-37: una invitación .ics actualizada (otra hora) no crea un segun
     const d = deps(log);
     const v1 = await ics(INV('0930', 0));
     await bandejaCommand(`apuntar ${v1.id}`, d);
-    const v2 = await ics(INV('0930', 1).replace('SUMMARY', 'LOCATION:IFEMA\r\nSUMMARY'));
+    // Otro SEQUENCE con lo mismo (otro sitio sí es un cambio: bugs38-ics-cambia-sitio).
+    const v2 = await ics(INV('0930', 1).replace('SUMMARY', 'DESCRIPTION:Orden del día\r\nSUMMARY'));
     expect((await bandejaCommand(`apuntar ${v2.id}`, d)).text).toContain(
       'Ya está en tu calendario',
     );

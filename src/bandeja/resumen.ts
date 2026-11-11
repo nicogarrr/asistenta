@@ -15,6 +15,7 @@
 import { commandButton } from '../channels/telegram-shared.js';
 import { localDay, wallClock, zonedTime } from '../datecontext.js';
 import { sliceSafe } from '../text.js';
+import { calendarioResuelto } from './calendario-marcas.js';
 import {
   type Button,
   basisLine,
@@ -123,6 +124,8 @@ export function composeDigest(
   items: readonly BandejaItem[],
   day: string,
   now: Date = new Date(),
+  /** Con él, sin «📅 N calendario» de lo ya apuntado o cancelado (bugs-38). */
+  store?: Pick<BandejaStore, 'get' | 'getMeta'>,
 ): Digest {
   if (items.length === 0)
     return { text: '📥 Hoy no guardaste nada en la bandeja.', buttons: [], ids: [], empty: true };
@@ -234,6 +237,7 @@ export function composeDigest(
   for (const it of actionable) {
     const cuando = eventLine(it, now);
     if (!cuando || cuando.endsWith('(ya pasó)')) continue;
+    if (store && calendarioResuelto(store, it)) continue;
     const b = commandButton(`📅 ${it.id} calendario`, 'bandeja', String(it.id), 'calendario');
     if (b) buttons.push(b);
   }
@@ -508,7 +512,7 @@ export async function sendDigest(
     deps.store.setMeta('last_digest_day', day);
     return 'empty';
   }
-  const digest = composeDigest(items, day, now);
+  const digest = composeDigest(items, day, now, deps.store);
   const ok = await deps.send(chatId, digest.text, digest.buttons).catch((err: unknown) => {
     deps.warn?.('bandeja: resumen no enviado', { err: String(err) });
     return false;

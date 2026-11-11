@@ -26,6 +26,7 @@ import { commandButton } from '../channels/telegram-shared.js';
 import { localDay } from '../datecontext.js';
 import type { EventoArgs } from '../google/workspace.js';
 import { ICS_SOURCE, icsDeEvento, icsNombre } from '../ics.js';
+import { addedKey, cancelKey, gidKey, mismaCita, mismaHora, uidKey } from './calendario-marcas.js';
 import { type CaptureCandidate, explicitCapture } from './captura.js';
 import { cuandoTexto, eventoArgs, localWallTime, yaPaso } from './evento.js';
 import {
@@ -304,7 +305,7 @@ async function calendarioSub(
   const tz = deps.timeZone?.() ?? 'Europe/Madrid';
   const args = eventoArgs(ev, tz, item.url);
   const cuando = cuandoTexto(args);
-  const mark = `cal_added_${item.id}`;
+  const mark = addedKey(item.id);
   // La marca guarda con qué fecha se apuntó («inicio=…»). Si «🔄 Releer la página» trae otra
   // fecha (el congreso se movió), antes decía «ya está en tu calendario» con la fecha NUEVA,
   // y en su calendario seguía la vieja (bugs-36). Una marca antigua (sin fecha) vale como
@@ -331,15 +332,23 @@ async function calendarioSub(
     };
   if (previa) {
     const viejo = previa.item.extra.evento;
-    if (viejo?.inicio === ev.inicio && (viejo?.fin ?? '') === (ev.fin ?? ''))
+    if (mismaCita(viejo, ev))
       return {
         text: `📅 Ya está en tu calendario (lo apunté con la #${previa.item.id}): «${ev.nombre}», ${cuando}.`,
       };
     if (sub === 'cambiar') return cambiarSub(item, previa, args, cuando, deps);
     const antes = viejo ? cuandoTexto(eventoArgs(viejo, tz, previa.item.url)) : 'otra fecha';
     const b = commandButton('✅ Sí, cámbialo', 'bandeja', String(item.id), 'cambiar');
+    // Otro sitio (Outlook reenvía la invitación si cambia la sala): antes, a la misma hora,
+    // decía «Ya está en tu calendario» y el sitio viejo seguía (bugs-38).
+    const otroSitio =
+      ev.lugar && viejo?.lugar !== ev.lugar
+        ? `ahora en ${ev.lugar} (antes, ${viejo?.lugar ?? 'sin sitio'})`
+        : '';
     return {
-      text: `📅 «${ev.nombre}» cambia: ahora es ${cuando}. Lo apunté con la #${previa.item.id} para ${antes}. ¿Lo cambio en tu Google Calendar?`,
+      text: mismaHora(viejo, ev)
+        ? `📅 «${ev.nombre}» cambia de sitio: ${otroSitio}. Lo apunté con la #${previa.item.id} (${cuando}). ¿Lo cambio en tu Google Calendar?`
+        : `📅 «${ev.nombre}» cambia: ahora es ${cuando}${otroSitio ? `, ${otroSitio}` : ''}. Lo apunté con la #${previa.item.id} para ${antes}. ¿Lo cambio en tu Google Calendar?`,
       ...(b ? { buttons: [b] } : {}),
       itemId: item.id,
     };
@@ -445,7 +454,7 @@ async function cambiarSub(
   try {
     const text = await deps.moverCalendario(previa.gid, args);
     const olvidaPrevia = () => {
-      deps.store.setMeta(`cal_added_${previa.item.id}`, null);
+      deps.store.setMeta(addedKey(previa.item.id), null);
       deps.store.setMeta(gidKey(previa.item.id), null);
     };
     if (/ya no existe|respondido 410/.test(text)) {
@@ -459,11 +468,13 @@ async function cambiarSub(
     }
     if (!text.startsWith('📅 Movido')) return { text };
     olvidaPrevia();
-    deps.store.setMeta(`cal_added_${item.id}`, `inicio=${item.extra.evento?.inicio ?? ''}`);
+    deps.store.setMeta(addedKey(item.id), `inicio=${item.extra.evento?.inicio ?? ''}`);
     deps.store.setMeta(gidKey(item.id), previa.gid);
     if (item.extra.icsUid)
       deps.store.setMeta(uidKey(item.chatId, item.extra.icsUid), String(item.id));
-    return { text: `📅 Cambiado en tu Google Calendar: «${nombre}», ahora ${cuando}.` };
+    return {
+      text: `📅 Cambiado en tu Google Calendar: «${nombre}», ahora ${cuando}${args.lugar ? ` · ${args.lugar}` : ''}.`,
+    };
   } finally {
     calendarioEnCurso.delete(busy);
   }
@@ -474,11 +485,6 @@ function idDeGoogle(text: string): string | null {
   const id = /\(id ([^\s)]+)\)\s*$/.exec(text)?.[1];
   return id && id !== '?' ? id : null;
 }
-const gidKey = (itemId: number) => `cal_gid_${itemId}`;
-/** UID de una invitación .ics → la cosa con la que se apuntó. */
-const uidKey = (chatId: string, uid: string) => `cal_uid_${chatId}_${uid}`;
-/** UID de una invitación .ics → la cosa con su cancelación. */
-const cancelKey = (chatId: string, uid: string) => `cal_cancel_${chatId}_${uid}`;
 
 /**
  * «🗑️ Sí, quítalo»: borra de su Google Calendar el evento que se apuntó con «✅ Sí,
@@ -506,7 +512,7 @@ async function desapuntarSub(
     // Ya borrado a mano: Google contesta 404 («ya no existe») o 410 («respondido 410»).
     const yaNo = /ya no existe|respondido 410/.test(text);
     if (!text.startsWith('🗑️') && !yaNo) return { text };
-    deps.store.setMeta(`cal_added_${item.id}`, null);
+    deps.store.setMeta(addedKey(item.id), null);
     deps.store.setMeta(gidKey(item.id), null);
     if (item.extra.icsUid) deps.store.setMeta(uidKey(item.chatId, item.extra.icsUid), null);
     const tz = deps.timeZone?.() ?? 'Europe/Madrid';
@@ -681,7 +687,7 @@ export async function bandejaCommand(
     }
     case 'resumen': {
       const items = digestItems(deps.store, deps.chatId, today);
-      const d = composeDigest(items, today, now);
+      const d = composeDigest(items, today, now, deps.store);
       return {
         text: d.empty ? `${d.text} Mándame enlaces o PDFs a secas y te los filtro.` : d.text,
         buttons: d.buttons,
