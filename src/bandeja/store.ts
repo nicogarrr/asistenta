@@ -51,6 +51,11 @@ export interface BandejaExtra {
   tags?: string[];
   pages?: number;
   year?: number;
+  /**
+   * Es una receta: la página trae su ficha schema.org `Recipe` con N ingredientes. La ficha
+   * lleva entonces «🛒 A la compra» (los apunta en /compra, como «/compra receta <enlace>»).
+   */
+  receta?: number;
 }
 
 export interface BandejaItem {

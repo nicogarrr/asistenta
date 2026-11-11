@@ -9,6 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { recipeFromHtml } from '../compra-receta.js';
 import type { VideoText } from '../media/resumen-video.js';
 import { xVideoUrl } from '../media/resumen-video.js';
 import { officeKind } from '../memory/office.js';
@@ -642,6 +643,8 @@ async function linkContent(
     throw new BandejaError('la página no tiene texto que leer (¿pide sesión?)');
   const thin = w < 200;
   const pdfUrl = originalPdfUrl(url, html);
+  // Una receta con su ficha (JSON-LD Recipe): la ficha ofrecerá «🛒 A la compra» (Muse).
+  const receta = isHtml ? (recipeFromHtml(html)?.ingredients.length ?? 0) : 0;
   return {
     title,
     text,
@@ -652,6 +655,7 @@ async function linkContent(
       basis: thin ? 'descripcion' : 'texto',
       ...(thin ? { basisReason: 'la página trae muy poco texto (¿muro de pago o portada?)' } : {}),
       ...(pdfUrl ? { pdfUrl } : {}),
+      ...(receta >= 2 ? { receta } : {}),
     },
     describe: `Artículo o página de ${host}${thin ? ' (muy poco texto: quizá solo la portada o un muro de pago; sé prudente y dilo en el MOTIVO)' : ''}.`,
   };

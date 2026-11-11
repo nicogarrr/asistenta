@@ -6725,6 +6725,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       attached: inbound.photoFileId || inbound.documentFileId ? attached : null,
       progress: (text) => say(inbound, text, { quote: true }),
       kindle: bandejaKindle(inbound.chatId),
+      // «🛒 A la compra» de una receta: como «/compra receta <enlace>», en la lista de este chat.
+      compra: (item) =>
+        recetaACompra(
+          new CompraStore(join(paths.state, 'lista-compra.json'), chatKey(inbound)),
+          item.url ?? '',
+          (url) =>
+            fetchPage(url, { format: 'html', maxChars: 3_000_000, timeoutMs: 30_000 }).then(
+              (p) => p.text,
+            ),
+        ),
     });
     const itemId = reply.itemId;
     await say(inbound, reply.text, {
