@@ -92,6 +92,6 @@ describe('gaps-13: /biblioteca fijar N (Grok Bot «Pin» en la Library)', () => 
     expect(cuerpo.indexOf("orden.kind === 'fijar'")).toBeLessThan(
       cuerpo.indexOf('sendDocumentBytes'),
     );
-    expect(cuerpo).toContain('bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados)');
+    expect(cuerpo).toContain('bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados');
   });
 });

@@ -10,6 +10,9 @@
  *   archivo que te lo vuelve a mandar.
  * - `/biblioteca pdf|excel|word|graficas|csv` — solo ese tipo.
  * - `/biblioteca N` — te manda el N de la lista.
+ * - `/biblioteca factura` (o `buscar factura`) — los que se llaman así, como el buscador de la
+ *   Library de Grok Bot (Cmd/Ctrl+K, https://docs.x.ai/grok-bot/files-and-results): con más
+ *   de 10 archivos, «la gráfica de gastos» de hace dos semanas ya no salía en la lista.
  * Solo lectura: no borra ni cambia nada; la carpeta se poda sola (40 archivos, 50 MB).
  */
 import { createHash } from 'node:crypto';
@@ -141,17 +144,40 @@ export function ordenBiblioteca(
   return [...lista.filter((c) => fijados.has(c.id)), ...lista.filter((c) => !fijados.has(c.id))];
 }
 
+/** Las palabras de una búsqueda, sin tildes ni mayúsculas, y sin «de/la/el…». */
+function palabras(texto: string): string[] {
+  return fold(texto)
+    .split(/[^a-z0-9ñ]+/)
+    .filter((w) => w.length > 1 && !/^(de|del|la|el|los|las|un|una|que|me|mi|mis)$/.test(w));
+}
+
+/** ¿Se llama así? Todas las palabras de la búsqueda en el nombre (sin tildes; «-» y «_» son espacios). */
+export function coincide(nombre: string, busca: string): boolean {
+  const ws = palabras(busca);
+  if (!ws.length) return false;
+  const n = fold(nombre).replace(/[-_.]+/g, ' ');
+  return ws.every((w) => n.includes(w));
+}
+
 export function bibliotecaVista(
   lista: readonly Creado[],
   filtro: Tipo | null,
   now: number = Date.now(),
   fijados: ReadonlySet<string> = new Set(),
+  busca?: string,
 ): BibliotecaView {
   const ordered = ordenBiblioteca(lista, fijados);
-  const all = filtro ? ordered.filter((c) => tipoDe(c.nombre) === filtro) : ordered;
+  const porTipo = filtro ? ordered.filter((c) => tipoDe(c.nombre) === filtro) : ordered;
+  const all = busca ? porTipo.filter((c) => coincide(c.nombre, busca)) : porTipo;
   if (!lista.length)
     return {
       text: '📚 Aún no te he hecho ningún archivo. Pídeme una gráfica, un Excel o un PDF y aquí lo tendrás.',
+      sends: [],
+      pins: [],
+    };
+  if (!all.length && busca)
+    return {
+      text: `📚 No encuentro nada que se llame «${busca}» entre los ${lista.length} archivos que te he hecho. /biblioteca para verlos todos.`,
       sends: [],
       pins: [],
     };
@@ -169,7 +195,7 @@ export function bibliotecaVista(
   const more = all.length > shown.length ? `\n…y ${all.length - shown.length} más.` : '';
   return {
     text:
-      `📚 Lo que te he hecho${filtro ? ` (${filtro})` : ''}: ${all.length}\n${lines.join('\n')}${more}\n\n` +
+      `📚 ${busca ? `Lo que se llama «${busca}»` : 'Lo que te he hecho'}${filtro ? ` (${filtro})` : ''}: ${all.length}\n${lines.join('\n')}${more}\n\n` +
       'Toca 📤 para que te lo mande otra vez, o «/biblioteca N». También te lo adjunto a un correo si me dices su nombre.\n' +
       '📌 Toca «📌 Fijar» (o «/biblioteca fijar N») y lo dejo arriba sin borrarlo nunca (guardo los 40 últimos).',
     sends: shown
@@ -190,7 +216,7 @@ export function bibliotecaVista(
 
 /** Qué pide `/biblioteca <args>`. */
 export type BibliotecaOrden =
-  | { kind: 'lista'; filtro: Tipo | null }
+  | { kind: 'lista'; filtro: Tipo | null; busca?: string }
   | { kind: 'enviar'; n: number; filtro: Tipo | null }
   | { kind: 'clave'; clave: string }
   /**
@@ -227,7 +253,17 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
     return { kind: 'enviar', n: Number(last), filtro };
   }
   const filtro = filtroDe(a);
-  return filtro ? { kind: 'lista', filtro } : { kind: 'ayuda', why: a };
+  if (filtro) return { kind: 'lista', filtro };
+  // «/biblioteca factura», «buscar gastos octubre», «pdf factura»: por nombre. Una orden mal
+  // escrita («fijar abc») no es una búsqueda: la ayuda.
+  if (/^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar|enviar)\b/i.test(a))
+    return { kind: 'ayuda', why: a };
+  const b = /^(?:buscar?|busca|encuentra)\s+(.+)$/i.exec(a)?.[1] ?? a;
+  const tipo = filtroDe(b.split(/\s+/)[0] ?? '');
+  const texto = tipo ? b.split(/\s+/).slice(1).join(' ') : b;
+  if (palabras(texto).length && texto.length <= 60)
+    return { kind: 'lista', filtro: tipo, busca: texto.trim() };
+  return { kind: 'ayuda', why: a };
 }
 
 /** El archivo de una clave de botón («20261111-120000» o «…-h1a2b3c»). */
@@ -301,4 +337,4 @@ export function fijarPorId(
 }
 
 export const BIBLIOTECA_AYUDA =
-  'Uso: /biblioteca (lo último que te he hecho), /biblioteca pdf|excel|word|graficas|csv, /biblioteca N para que te lo mande, o /biblioteca fijar|soltar N para que no se borre.';
+  'Uso: /biblioteca (lo último que te he hecho), /biblioteca pdf|excel|word|graficas|csv, /biblioteca <nombre> para buscarlo, /biblioteca N para que te lo mande, o /biblioteca fijar|soltar N para que no se borre.';

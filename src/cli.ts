@@ -7638,7 +7638,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     if (orden.kind === 'lista') {
-      const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados);
+      const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados, orden.busca);
       // Por fila: «📤 N» y su «📌 Fijar N»/«Soltar N» (dos por fila, la misma clave).
       const pinDe = new Map(v.pins.map((p) => [p.clave, p]));
       const buttons = v.sends
