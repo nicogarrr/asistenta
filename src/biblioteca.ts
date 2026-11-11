@@ -424,6 +424,21 @@ export interface BibliotecaUltimaVista {
   at: number;
 }
 
+/**
+ * Lo que se recuerda de la lista que se acaba de enseñar. Una búsqueda sin nada («No encuentro
+ * nada que se llame…») no deja lista: «/biblioteca 2» después cuenta en la entera, no en una
+ * búsqueda vacía que respondería otra vez «no encuentro» (bugs-37).
+ */
+export function vistaQueQueda(
+  filtro: Tipo | null,
+  busca: string | undefined,
+  filas: number,
+  now: number,
+): BibliotecaUltimaVista | null {
+  if (filas <= 0) return null;
+  return { filtro, ...(busca ? { busca } : {}), at: now };
+}
+
 /** Cuánto vale «la última lista» para un «/biblioteca N» suelto. */
 export const BIBLIOTECA_VISTA_MS = 30 * 60_000;
 
