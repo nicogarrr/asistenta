@@ -212,9 +212,18 @@ export async function guardarEnPausa(
     if (!cands?.length) return null;
     const day = localDay(now);
     const saved = cands.map((c) => store.add(inbound.chatId, c, now, day));
+    // Lo que ya estaba pero falló (⚠️): mandarlo otra vez es pedir otro intento, como fuera
+    // de la pausa (#2306). Vuelve a «nuevo» para que la cola lo retome al levantar; antes
+    // contestaba «Eso ya estaba» y no se reintentaba nunca.
+    const retry = saved.filter((s) => s.dup && s.item.status === 'error');
+    for (const s of retry) store.setStatus(s.item.id, 'nuevo');
     const n = store.countDay(inbound.chatId, day);
-    if (saved.every((s) => s.dup)) return `📥 Eso ya estaba en la bandeja (${n} hoy).`;
-    return `📥 Guardado en la bandeja (${n} hoy). Estoy en pausa: lo miro cuando pulses «${LEVANTAR_BUTTON_LABEL}».`;
+    const levantar = `Estoy en pausa: lo miro cuando pulses «${LEVANTAR_BUTTON_LABEL}».`;
+    if (saved.every((s) => s.dup)) {
+      if (retry.length) return `📥 Eso había fallado (⚠️): lo vuelvo a intentar. ${levantar}`;
+      return `📥 Eso ya estaba en la bandeja (${n} hoy).`;
+    }
+    return `📥 Guardado en la bandeja (${n} hoy). ${levantar}`;
   } finally {
     store.close();
   }
