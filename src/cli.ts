@@ -3686,7 +3686,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       key,
       (call) =>
         effectOverrideReason(gestorStore.activeForScope(key), gate.classifyEffect(call)) ??
-        askFirst.reasonFor(call),
+        // Las de todos los hilos y las que pidió solo para este chat («… en este grupo»).
+        askFirst.reasonFor(call, chatKey_),
     );
     thread.agent = await PersonalAgent.create(config, threadTools(thread), gate, 'telegram-user', {
       sessionId: key,
@@ -7193,7 +7194,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // «pregúntame antes de usar el navegador» (Grok Bot, reglas «Ask first»): se apunta al
     // momento. Si no nombra nada que sepa vigilar, lo lleva el modelo como siempre.
     // Hablando siempre es AÑADIR («antes de borrar archivos» no es «/permisos … borrar»).
-    const askFirstReply = askFirstFromText(askFirst, text);
+    const askFirstReply = askFirstFromText(askFirst, text, {
+      chat: chatKey(inbound),
+      group: false,
+    });
     if (askFirstReply !== null) {
       await say(inbound, askFirstReply, { quote: true });
       return true;
@@ -10547,7 +10551,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const permisosSub = (args.trim().split(/\s+/)[0] ?? '').toLowerCase();
     if (permisosSub === 'preguntar') {
       const rest = args.trim().slice(permisosSub.length).trim();
-      await say(inbound, runAskFirstCommand(askFirst, rest), { quote: true });
+      await say(
+        inbound,
+        runAskFirstCommand(askFirst, rest, { chat: chatKey(inbound), group: false }),
+        { quote: true },
+      );
       return;
     }
     if ((args.trim().split(/\s+/)[0] ?? '').toLowerCase() === 'lista') {
@@ -11233,6 +11241,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             }
           }
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
+          // «pregúntame antes de tocar la tele» dicho por el dueño en un grupo: vale solo en ese
+          // grupo (o en todos con «… en todos los chats»). Solo más estricto; nadie más lo pone.
+          if (
+            inbound.isGroup &&
+            vigilanteOwnerId != null &&
+            inbound.channel === 'telegram' &&
+            inbound.userId === String(vigilanteOwnerId)
+          ) {
+            const reply = askFirstFromText(askFirst, inbound.text, {
+              chat: chatKey_,
+              group: true,
+            });
+            if (reply !== null) {
+              await say(inbound, reply, { quote: true });
+              return;
+            }
+          }
           // «baja el volumen de la tele», y navegando «abajo», «atrás»: al momento, sin modelo.
           if (inbound.text && (await tvFastPath(inbound, inbound.text))) return;
           // 📖 «kindle» contestando a una cosa de la bandeja: al Kindle (src/bandeja/kindle.ts).

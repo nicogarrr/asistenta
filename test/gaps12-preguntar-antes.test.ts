@@ -95,9 +95,10 @@ describe('«pregúntame antes de …» (Grok Bot: reglas propias «Ask first»)'
 
   it('cli: la regla entra en el guardia de cada hilo y /permisos preguntar existe', () => {
     const cli = readFileSync('src/cli.ts', 'utf8');
-    expect(cli).toContain('askFirst.reasonFor(call)');
+    // gaps-13: con el chat del hilo (reglas solo para un chat).
+    expect(cli).toContain('askFirst.reasonFor(call, chatKey_)');
     expect(cli).toContain("if (permisosSub === 'preguntar')");
     // bugs-34: hablando se AÑADE siempre (askFirstFromText), no por el subcomando de /permisos.
-    expect(cli).toContain('askFirstFromText(askFirst, text)');
+    expect(cli).toContain('askFirstFromText(askFirst, text, {');
   });
 });

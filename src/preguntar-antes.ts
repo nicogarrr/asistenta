@@ -101,7 +101,39 @@ export interface AskFirstRule {
   /** Lo que dijo Nico, tal cual (para enseñárselo y en la pregunta). */
   dicho: string;
   createdAt: string;
+  /**
+   * Solo en este chat (su chatKey). Sin él vale en todos los hilos, como hasta ahora.
+   * Dicha en un grupo, la regla es de ese grupo salvo «en todos los chats».
+   */
+  chat?: string;
 }
+
+/** Dónde se pidió la regla: el chat y si es un grupo (en un grupo la regla es de ese grupo). */
+export interface AskFirstWhere {
+  chat: string;
+  group: boolean;
+}
+
+/** «… aquí», «… en este grupo», «… en todos los chats»: lo que dice dónde vale. */
+const SCOPE_HERE =
+  /[,\s]+(?:(?:solo|s[oó]lo|solamente|[uú]nicamente)\s+)?(?:aqu[ií]|ac[aá]|en este (?:chat|grupo|hilo)|en esta conversaci[oó]n)$/iu;
+const SCOPE_ALL =
+  /[,\s]+(?:en todos (?:los )?(?:chats|grupos|sitios|lados)|en todas partes|en cualquier (?:chat|sitio|lado)|siempre y en todos lados)$/iu;
+
+/**
+ * Separa «usar el navegador en este grupo» en lo que es («usar el navegador») y dónde vale:
+ * 'aqui' (este chat), 'todos' (todos los hilos) o null (lo de por defecto).
+ */
+export function splitAskFirstScope(what: string): { what: string; where: 'aqui' | 'todos' | null } {
+  const t = what.trim().replace(/[.!¡]+$/u, '');
+  if (SCOPE_HERE.test(t)) return { what: t.replace(SCOPE_HERE, '').trim(), where: 'aqui' };
+  if (SCOPE_ALL.test(t)) return { what: t.replace(SCOPE_ALL, '').trim(), where: 'todos' };
+  return { what: t, where: null };
+}
+
+/** La regla vale en esta llamada: es de todos los hilos o de este chat. */
+const appliesIn = (r: AskFirstRule, chat: string | undefined): boolean =>
+  r.chat === undefined || (chat !== undefined && r.chat === chat);
 
 const fold = (s: string): string =>
   s
@@ -165,8 +197,14 @@ export class AskFirstStore {
     writeFileReplacing(this.#path, `${JSON.stringify(rules, null, 2)}\n`);
   }
 
-  /** Añade una regla por cada clase que nombra la frase; devuelve las nuevas y las que ya había. */
-  add(dicho: string): { added: AskFirstRule[]; already: AreaId[]; unknown: boolean } {
+  /**
+   * Añade una regla por cada clase que nombra la frase; devuelve las nuevas y las que ya había.
+   * Con `chat`, solo vale en ese chat; una regla de todos los hilos ya lo cubre.
+   */
+  add(
+    dicho: string,
+    chat?: string,
+  ): { added: AskFirstRule[]; already: AreaId[]; unknown: boolean } {
     const areas = areasOf(dicho);
     if (!areas.length) return { added: [], already: [], unknown: true };
     const rules = this.list();
@@ -174,7 +212,7 @@ export class AskFirstStore {
     const already: AreaId[] = [];
     let next = rules.reduce((m, r) => Math.max(m, r.id), 0) + 1;
     for (const area of areas) {
-      if (rules.some((r) => r.area === area)) {
+      if (rules.some((r) => r.area === area && (r.chat === undefined || r.chat === chat))) {
         already.push(area);
         continue;
       }
@@ -184,7 +222,15 @@ export class AskFirstStore {
         area,
         dicho: dicho.trim().slice(0, 120),
         createdAt: new Date(this.#now()).toISOString(),
+        ...(chat === undefined ? {} : { chat }),
       };
+      // Pasa a valer en todos los hilos: las de un solo chat de esa clase sobran.
+      if (chat === undefined) {
+        for (let k = rules.length - 1; k >= 0; k--) {
+          const old = rules[k];
+          if (old && old.area === area && old.chat !== undefined) rules.splice(k, 1);
+        }
+      }
       rules.push(rule);
       added.push(rule);
     }
@@ -192,28 +238,36 @@ export class AskFirstStore {
     return { added, already, unknown: false };
   }
 
-  /** Quita por número, por palabras («el navegador») o todas («todo»). */
-  remove(what: string): AskFirstRule[] {
+  /**
+   * Quita por número, por palabras («el navegador») o todas («todo»). Con `visible`, solo
+   * entre las que se ven desde ese chat (en un grupo, las suyas y las de todos los hilos).
+   */
+  remove(what: string, visible?: (r: AskFirstRule) => boolean): AskFirstRule[] {
     const rules = this.list();
     const w = fold(what);
     const n = Number(w);
     const areas = areasOf(w);
-    const gone = rules.filter((r) =>
-      w === 'todo' || w === 'todas'
-        ? true
-        : Number.isInteger(n) && n > 0
-          ? r.id === n
-          : areas.includes(r.area),
+    const gone = rules.filter(
+      (r) =>
+        (visible?.(r) ?? true) &&
+        (w === 'todo' || w === 'todas'
+          ? true
+          : Number.isInteger(n) && n > 0
+            ? r.id === n
+            : areas.includes(r.area)),
     );
     if (gone.length) this.#write(rules.filter((r) => !gone.includes(r)));
     return gone;
   }
 
-  /** El motivo de la pregunta si alguna regla cubre la llamada; null si no. */
-  reasonFor(call: CallLike): string | null {
+  /**
+   * El motivo de la pregunta si alguna regla cubre la llamada; null si no. `chat` es el chat
+   * del hilo: las reglas de otro chat no cuentan (sin él, solo las de todos los hilos).
+   */
+  reasonFor(call: CallLike, chat?: string): string | null {
     for (const r of this.list()) {
-      if (AREAS[r.area].match(call))
-        return `Me pediste que te preguntara antes de ${AREAS[r.area].label} («${r.dicho}»).`;
+      if (appliesIn(r, chat) && AREAS[r.area].match(call))
+        return `Me pediste que te preguntara antes de ${AREAS[r.area].label}${r.chat === undefined ? '' : ' en este chat'} («${r.dicho}»).`;
     }
     return null;
   }
@@ -222,29 +276,50 @@ export class AskFirstStore {
 const AREA_HINT =
   'comandos, navegador, ratón y teclado, tele, música, calendario, correo o archivos';
 
-/** La respuesta de `/permisos preguntar …` y de «pregúntame antes de …». */
-export function runAskFirstCommand(store: AskFirstStore, args: string): string {
+/** Dónde vale una regla, dicho para Nico desde el chat en que mira la lista. */
+function scopeNote(r: AskFirstRule, where: AskFirstWhere | undefined): string {
+  if (r.chat === undefined) return '';
+  if (where && r.chat === where.chat) return where.group ? ' (solo en este grupo)' : ' (solo aquí)';
+  return /:-\d+/.test(r.chat) ? ' (solo en un grupo)' : ' (solo en otro chat)';
+}
+
+/** Desde un grupo se ven las reglas de todos los hilos y las de ese grupo; desde el privado, todas. */
+const visibleFrom =
+  (where: AskFirstWhere | undefined) =>
+  (r: AskFirstRule): boolean =>
+    !where?.group || r.chat === undefined || r.chat === where.chat;
+
+/**
+ * La respuesta de `/permisos preguntar …` y de «pregúntame antes de …». `where` es el chat en
+ * que se dice: «… aquí» / «… en este grupo» la deja solo para ese chat, y dicha en un grupo
+ * es de ese grupo salvo «… en todos los chats». Sin `where`, todo vale en todos los hilos.
+ */
+export function runAskFirstCommand(
+  store: AskFirstStore,
+  args: string,
+  where?: AskFirstWhere,
+): string {
   const raw = args.trim();
   const sub = fold(raw.split(/\s+/)[0] ?? '');
   if (!raw || sub === 'lista' || sub === 'ver') {
-    const rules = store.list();
+    const rules = store.list().filter(visibleFrom(where));
     if (!rules.length)
-      return `No tienes reglas de «pregúntame antes». Ejemplo: «pregúntame antes de usar el navegador» o /permisos preguntar comandos. Valen: ${AREA_HINT}.`;
+      return `No tienes reglas de «pregúntame antes». Ejemplo: «pregúntame antes de usar el navegador» (o «… en este grupo» para que valga solo ahí) o /permisos preguntar comandos. Valen: ${AREA_HINT}.`;
     return [
       `Te pregunto siempre antes de (${rules.length}):`,
-      ...rules.map((r) => `${r.id}. ${AREAS[r.area].label} — «${r.dicho}»`),
+      ...rules.map((r) => `${r.id}. ${AREAS[r.area].label}${scopeNote(r, where)} — «${r.dicho}»`),
       'Para quitar una: /permisos preguntar quitar <número> (o «todo»).',
     ].join('\n');
   }
   if (sub === 'quitar' || sub === 'borrar' || sub === 'elimina' || sub === 'quita') {
     const what = raw.slice(raw.split(/\s+/)[0]?.length ?? 0).trim();
     if (!what) return 'Dime cuál: /permisos preguntar quitar <número> (o «todo»).';
-    const gone = store.remove(what);
+    const gone = store.remove(what, visibleFrom(where));
     return gone.length
       ? `Vale, ya no te pregunto de más para: ${gone.map((r) => AREAS[r.area].label).join('; ')}. Lo de siempre (dinero, enviar correos, instalar) te lo sigo preguntando.`
       : 'No tengo esa regla. Las tuyas: /permisos preguntar lista.';
   }
-  return askFirstAdd(store, raw);
+  return askFirstAdd(store, raw, where);
 }
 
 /**
@@ -253,14 +328,22 @@ export function runAskFirstCommand(store: AskFirstStore, args: string): string {
  * «borrar», así que QUITABA la regla de archivos en vez de ponerla (y «antes de ver la
  * tele» enseñaba la lista).
  */
-export function askFirstAdd(store: AskFirstStore, raw: string): string {
-  const r = store.add(raw);
+export function askFirstAdd(store: AskFirstStore, raw: string, where?: AskFirstWhere): string {
+  const scope = splitAskFirstScope(raw);
+  const soloAqui =
+    where !== undefined && (scope.where === 'aqui' || (scope.where === null && where.group));
+  const r = store.add(scope.what, soloAqui ? where.chat : undefined);
   if (r.unknown)
     return `No sé a qué acciones te refieres con «${raw}». Puedo preguntarte antes de: ${AREA_HINT}.`;
   const lines: string[] = [];
+  const dondeVale = !soloAqui
+    ? ''
+    : where.group
+      ? ' en este grupo (para todos los chats: «… en todos los chats»)'
+      : ' en este chat';
   if (r.added.length)
     lines.push(
-      `✅ Hecho: desde ahora te pido permiso antes de ${r.added.map((x) => AREAS[x.area].label).join(' y de ')}, aunque antes me hubieras dicho «Siempre». Lo que solo mira (capturas, leer) no pregunta.`,
+      `✅ Hecho: desde ahora te pido permiso antes de ${r.added.map((x) => AREAS[x.area].label).join(' y de ')}${dondeVale}, aunque antes me hubieras dicho «Siempre». Lo que solo mira (capturas, leer) no pregunta.`,
     );
   if (r.already.length)
     lines.push(
@@ -274,8 +357,12 @@ export function askFirstAdd(store: AskFirstStore, raw: string): string {
  * «pregúntame antes de …» dicho hablando: la respuesta si lo apunta, null si no es eso o no
  * nombra nada que se sepa vigilar (entonces lo lleva el modelo como siempre).
  */
-export function askFirstFromText(store: AskFirstStore, text: string): string | null {
+export function askFirstFromText(
+  store: AskFirstStore,
+  text: string,
+  where?: AskFirstWhere,
+): string | null {
   const what = askFirstRequest(text);
-  if (what === null || areasOf(what).length === 0) return null;
-  return askFirstAdd(store, what);
+  if (what === null || areasOf(splitAskFirstScope(what).what).length === 0) return null;
+  return askFirstAdd(store, what, where);
 }
