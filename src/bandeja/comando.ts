@@ -11,6 +11,7 @@
  *   /bandeja hora 22:00      la hora del resumen de cada noche
  *   /bandeja captura on|off  guardar solo lo que llega a secas (on) o solo con /bandeja (off)
  *   /bandeja compra N        «🛒 A la compra»: los ingredientes de esa receta a /compra
+ *   /bandeja calendario N    «📅 Al calendario»: el evento de esa página a tu Google Calendar
  *   /bandeja kindle N [pdf]  «📖 Al Kindle»: el texto entero en EPUB (+AZW3 con Calibre, +PDF)
  *   /bandeja kindle <enlace> lo mismo con un enlace (también «/kindle <enlace>»)
  *   /bandeja kindle auto on|off      lo 🔴 para leer entero va solo al Kindle
@@ -18,8 +19,11 @@
  */
 
 import { isKindleAddress } from '../books/kindle.js';
+import { commandButton } from '../channels/telegram-shared.js';
 import { localDay } from '../datecontext.js';
+import type { EventoArgs } from '../google/workspace.js';
 import { type CaptureCandidate, explicitCapture } from './captura.js';
+import { cuandoTexto, eventoArgs, localWallTime, yaPaso } from './evento.js';
 import {
   ackButtons,
   ackText,
@@ -57,7 +61,7 @@ export function bandejaSlowSub(args: string): boolean {
   const sub = subRaw.toLowerCase();
   if (sub === 'ahora' || sub === 'ya') return true;
   // «🛒 A la compra» abre la página de la receta (hasta 30 s).
-  if (sub === 'compra') return true;
+  if (sub === 'compra' || sub === 'apuntar') return true;
   if (sub !== 'kindle') return false;
   const opt = next.toLowerCase();
   return opt !== '' && !['auto', 'correo', 'email', 'mail'].includes(opt);
@@ -90,6 +94,13 @@ export interface BandejaCommandDeps {
    * (compra.ts recetaACompra con su enlace). Devuelve la lista con sus botones.
    */
   compra?: (item: BandejaItem) => Promise<{ text: string; buttons?: Button[] }>;
+  /**
+   * «📅 Al calendario»: crea el evento en su Google Calendar (google/workspace.ts
+   * crearEvento); devuelve su respuesta («📅 Apuntado…» o el paso que falta).
+   */
+  calendario?: (args: EventoArgs) => Promise<string>;
+  /** Su zona horaria (PA_TIMEZONE); por defecto, Europe/Madrid. */
+  timeZone?: () => string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -185,6 +196,52 @@ async function kindleSub(parts: string[], deps: BandejaCommandDeps): Promise<Ban
     .progress?.(`📖 Preparo #${item.id} ${shortTitle(item, 60)} para el Kindle…`)
     .catch(() => undefined);
   return { text: await deps.kindle({ item, pdf }), itemId: item.id };
+}
+
+/**
+ * «📅 Al calendario» (calendario): enseña qué apuntaría y pide el «✅ Sí, apúntalo»
+ * (apuntar), que lo crea UNA vez en su Google Calendar. Lo que ya pasó no se apunta.
+ */
+async function calendarioSub(
+  sub: string,
+  raw: string | undefined,
+  deps: BandejaCommandDeps,
+): Promise<BandejaReply> {
+  const item = ownItem(deps, raw);
+  if (typeof item === 'string') return { text: item };
+  const ev = item.extra.evento;
+  if (!ev)
+    return {
+      text: `#${item.id} no trae la fecha de un evento. Dime «apunta en el calendario …» con el día y la hora y lo hago.`,
+    };
+  const tz = deps.timeZone?.() ?? 'Europe/Madrid';
+  const args = eventoArgs(ev, tz, item.url);
+  const cuando = cuandoTexto(args);
+  const mark = `cal_added_${item.id}`;
+  if (deps.store.getMeta(mark))
+    return { text: `📅 #${item.id} ya está en tu calendario: «${ev.nombre}», ${cuando}.` };
+  if (yaPaso(args, localWallTime(deps.now().toISOString(), tz)))
+    return { text: `📅 «${ev.nombre}» ya pasó (${cuando}): no lo apunto.` };
+  if (sub === 'calendario') {
+    const yes = commandButton('✅ Sí, apúntalo', 'bandeja', String(item.id), 'apuntar');
+    return {
+      text: `📅 ¿Lo apunto en tu Google Calendar?
+«${ev.nombre}»
+🗓️ ${cuando}${
+        ev.lugar
+          ? `
+📍 ${ev.lugar}`
+          : ''
+      }`,
+      ...(yes ? { buttons: [yes] } : {}),
+      itemId: item.id,
+    };
+  }
+  if (!deps.calendario) return { text: 'El calendario no está disponible desde aquí.' };
+  const text = await deps.calendario(args);
+  // Solo si de verdad se apuntó: sin Google conectado, el siguiente toque lo intenta otra vez.
+  if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, new Date().toISOString());
+  return { text };
 }
 
 const HELP = [
@@ -371,6 +428,9 @@ export async function bandejaCommand(
       const view = await deps.compra(item);
       return { text: view.text, ...(view.buttons?.length ? { buttons: view.buttons } : {}) };
     }
+    case 'calendario':
+    case 'apuntar':
+      return calendarioSub(sub, restParts[0], deps);
     default: {
       const cands = explicitCapture(trimmed);
       if (!cands) return { text: HELP };

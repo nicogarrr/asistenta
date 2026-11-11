@@ -67,9 +67,22 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // deshace con otro toque o con /bandeja; nada sale del chat. «📖 Al Kindle» (kindle) arma el
   // EPUB/AZW3 de esa cosa y lo manda al chat del dueño (y a SU Kindle solo si lo activó).
   // «🛒 A la compra» (compra) apunta los ingredientes de una receta en la lista de /compra.
+  // «📅 Al calendario» (calendario) solo ENSEÑA qué apuntaría; «apuntar» lo crea en su Google
+  // Calendar (el daemon exige dueño en privado y no lo apunta dos veces).
   [
     'bandeja',
-    new Set(['ahora', 'ver', 'visto', 'manana', 'descartar', 'paja', 'kindle', 'compra']),
+    new Set([
+      'ahora',
+      'ver',
+      'visto',
+      'manana',
+      'descartar',
+      'paja',
+      'kindle',
+      'compra',
+      'calendario',
+      'apuntar',
+    ]),
   ],
   // 📚 /biblioteca: «📤 N» te vuelve a mandar un archivo que te hice (arg = la fecha de su
   // id, AAAAMMDD-HHMMSS). Solo lectura: no borra ni cambia nada.
