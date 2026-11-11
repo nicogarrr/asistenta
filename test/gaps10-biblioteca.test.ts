@@ -69,7 +69,12 @@ describe('/biblioteca (Grok Bot: Library de lo que el bot creó, por tipo)', () 
     );
     expect(bibliotecaElegir(lista, bibliotecaOrden('9'))).toBeNull();
     expect(bibliotecaOrden('pepino 2').kind).toBe('ayuda');
-    expect(bibliotecaOrden('cosas raras').kind).toBe('ayuda');
+    // gaps-14: unas palabras que no son un tipo buscan por nombre.
+    expect(bibliotecaOrden('cosas raras')).toEqual({
+      kind: 'lista',
+      filtro: null,
+      busca: 'cosas raras',
+    });
   });
 
   it('vacía, lo dice; más de 10, enseña 10 y cuenta el resto', () => {
