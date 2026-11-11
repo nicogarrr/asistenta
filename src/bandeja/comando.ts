@@ -10,6 +10,7 @@
  *   /bandeja pendientes      todo lo que queda por ver, de cualquier día
  *   /bandeja hora 22:00      la hora del resumen de cada noche
  *   /bandeja captura on|off  guardar solo lo que llega a secas (on) o solo con /bandeja (off)
+ *   /bandeja compra N        «🛒 A la compra»: los ingredientes de esa receta a /compra
  *   /bandeja kindle N [pdf]  «📖 Al Kindle»: el texto entero en EPUB (+AZW3 con Calibre, +PDF)
  *   /bandeja kindle <enlace> lo mismo con un enlace (también «/kindle <enlace>»)
  *   /bandeja kindle auto on|off      lo 🔴 para leer entero va solo al Kindle
@@ -55,6 +56,8 @@ export function bandejaSlowSub(args: string): boolean {
   const [subRaw = '', next = ''] = args.trim().split(/\s+/);
   const sub = subRaw.toLowerCase();
   if (sub === 'ahora' || sub === 'ya') return true;
+  // «🛒 A la compra» abre la página de la receta (hasta 30 s).
+  if (sub === 'compra') return true;
   if (sub !== 'kindle') return false;
   const opt = next.toLowerCase();
   return opt !== '' && !['auto', 'correo', 'email', 'mail'].includes(opt);
@@ -82,6 +85,11 @@ export interface BandejaCommandDeps {
   attached?: CaptureCandidate | null;
   /** «📖 Al Kindle»: arma y manda los ficheros; devuelve qué pasó (kindle.ts deliverToKindle). */
   kindle?: (target: KindleTarget) => Promise<string>;
+  /**
+   * «🛒 A la compra»: los ingredientes de la receta de esa cosa a la lista de /compra
+   * (compra.ts recetaACompra con su enlace). Devuelve la lista con sus botones.
+   */
+  compra?: (item: BandejaItem) => Promise<{ text: string; buttons?: Button[] }>;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -349,6 +357,20 @@ export async function bandejaCommand(
     }
     case 'kindle':
       return kindleSub(restParts, deps);
+    case 'compra': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      if (!item.url)
+        return {
+          text: `#${item.id} no tiene enlace de receta. Pega sus ingredientes con /compra receta y los apunto.`,
+        };
+      if (!deps.compra) return { text: 'La lista de la compra no está disponible desde aquí.' };
+      await deps
+        .progress?.(`🛒 Apunto los ingredientes de #${item.id} ${shortTitle(item, 60)}…`)
+        .catch(() => undefined);
+      const view = await deps.compra(item);
+      return { text: view.text, ...(view.buttons?.length ? { buttons: view.buttons } : {}) };
+    }
     default: {
       const cands = explicitCapture(trimmed);
       if (!cands) return { text: HELP };

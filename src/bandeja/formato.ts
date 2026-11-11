@@ -119,11 +119,25 @@ export function kindleButton(item: BandejaItem, numbered = false): Button | unde
   );
 }
 
-/** Los botones de la ficha: ✅ ⏭️ 🗑️ y, si se lee, «📖 Al Kindle» en su fila. */
+/**
+ * «🛒 A la compra» de una receta (su página trae la ficha schema.org `Recipe`): apunta sus
+ * ingredientes en /compra, como «/compra receta <enlace>» (idea de Muse). Si no, nada.
+ */
+export function compraButton(item: BandejaItem): Button | undefined {
+  if (!item.url || !item.extra.receta || item.extra.receta < 2) return undefined;
+  return commandButton('🛒 A la compra', 'bandeja', String(item.id), 'compra');
+}
+
+/**
+ * Los botones de la ficha: ✅ ⏭️ 🗑️ y, en su fila, «📖 Al Kindle» si se lee y «🛒 A la
+ * compra» si es una receta (también ya vista: la receta sigue valiendo para la lista).
+ */
 export function cardButtons(item: BandejaItem): Button[] {
-  const kb = kindleButton(item);
-  if (item.state !== 'pendiente') return kb ? [kb] : [];
-  return kb ? [...itemButtons(item), kb] : itemButtons(item);
+  const extra = [kindleButton(item), compraButton(item)].filter(
+    (b): b is Button => b !== undefined,
+  );
+  if (item.state !== 'pendiente') return extra;
+  return [...itemButtons(item), ...extra];
 }
 
 /**
