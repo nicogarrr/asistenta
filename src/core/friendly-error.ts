@@ -110,3 +110,48 @@ export const MODEL_ERROR_QUESTION = {
 export function chatReplyText(result: { text: string; error: string | null }): string {
   return result.text.trim() || (result.error ? friendlyModelError(result.error) : 'Sin respuesta.');
 }
+
+/**
+ * La «tarjeta de error» de Hermes en Telegram: si el fallo BLOQUEA (no se arregla esperando:
+ * clave mala, sin saldo, conversación demasiado larga) o es PASAJERO (red, servicio caído o
+ * saturado, un fallo interno que suele salir a la segunda), y la UNA acción que lo arregla,
+ * como botón bajo el mensaje. Antes todo fallo llevaba «🔄 Reintentar», también los que
+ * volverían a fallar igual (una conversación demasiado larga o una clave caducada).
+ */
+export type ModelErrorKind = 'bloqueante' | 'pasajero';
+export type ModelErrorAction = 'reintentar' | 'compactar' | 'estado';
+
+export interface ModelErrorCard {
+  kind: ModelErrorKind;
+  action: ModelErrorAction;
+}
+
+/** null si no es un fallo que enseñar como tarjeta (el guardia te detuvo, o lo paraste tú). */
+export function modelErrorCard(raw: string | null | undefined): ModelErrorCard | null {
+  const error = (raw ?? '').trim();
+  if (!error || /^Te detuve\b/.test(error)) return null;
+  if (any(BAD_KEY, error) || any(NO_FUNDS, error)) return { kind: 'bloqueante', action: 'estado' };
+  if (any(TOO_LONG, error)) return { kind: 'bloqueante', action: 'compactar' };
+  if (isOutageError(error)) return { kind: 'pasajero', action: 'reintentar' };
+  if (any(ABORTED, error)) return null;
+  return { kind: 'pasajero', action: 'reintentar' };
+}
+
+/** El texto del botón de cada acción. */
+export const MODEL_ERROR_ACTION_LABEL: Record<ModelErrorAction, string> = {
+  reintentar: '🔄 Reintentar',
+  compactar: '🗜️ Resumir y reintentar',
+  estado: '🩺 Ver el estado',
+};
+
+/**
+ * La marca de la tarjeta de error que va delante del texto de un turno fallido: «⛔ » si
+ * bloquea (esperar no lo arregla) o «⚠️ » si es pasajero; '' si hay respuesta, si no hubo
+ * error o si no es un fallo que marcar (el guardia, o lo paraste tú).
+ */
+export function modelErrorMark(result: { text: string; error: string | null }): string {
+  if (result.text.trim() || !result.error) return '';
+  const card = modelErrorCard(result.error);
+  if (!card) return '';
+  return card.kind === 'bloqueante' ? '⛔ ' : '⚠️ ';
+}

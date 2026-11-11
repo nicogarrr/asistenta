@@ -50,6 +50,10 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // «🔄 Reintentar» bajo una respuesta que falló: repite ESE mensaje (arg = su id), como
   // /reintentar; si ya hubo otro después, no repite nada.
   ['reintentar', new Set([''])],
+  // Tarjeta de error (Hermes): «🗜️ Resumir y reintentar» (arg = id del mensaje que falló por
+  // conversación demasiado larga) resume y repite ESE mensaje; «🩺 Ver el estado» solo lee.
+  ['compactar', new Set(['reintentar'])],
+  ['estado', new Set([''])],
   // «⏹ Pararlo» del aviso de cola (daemon/busy-note.ts): arg = ficha de ESA tarea; si ya
   // terminó no para nada, y nunca vacía la cola (eso es /stop a secas).
   ['stop', new Set([''])],
