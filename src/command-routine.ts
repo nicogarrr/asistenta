@@ -233,13 +233,19 @@ export interface CommandResult {
   timedOut: boolean;
   /** El programa no se pudo lanzar (no existe, sin permiso…). */
   spawnError?: string;
+  /** Se cortó a mano con «/cron parar» (el aviso del abort llegó antes de terminar). */
+  stopped?: boolean;
 }
 
 export type SpawnLike = typeof spawn;
 
 /** Ejecuta argv sin shell, con tope de tiempo y de bytes leídos. */
 export function runCommand(
-  spec: Pick<CommandSpec, 'argv' | 'cwd' | 'timeoutMs'> & { env?: NodeJS.ProcessEnv },
+  spec: Pick<CommandSpec, 'argv' | 'cwd' | 'timeoutMs'> & {
+    env?: NodeJS.ProcessEnv;
+    /** «/cron parar»: al abortar se mata el árbol del proceso, igual que al pasarse de tiempo. */
+    signal?: AbortSignal;
+  },
   spawnImpl: SpawnLike = spawn,
   platform: NodeJS.Platform = process.platform,
 ): Promise<CommandResult> {
@@ -248,13 +254,19 @@ export function runCommand(
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let stopped = false;
     let settled = false;
     const done = (r: CommandResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(r);
+      spec.signal?.removeEventListener('abort', onAbort);
+      resolve(stopped ? { ...r, stopped: true } : r);
     };
+    if (spec.signal?.aborted) {
+      resolve({ code: null, stdout: '', stderr: '', timedOut: false, stopped: true });
+      return;
+    }
     let child: ReturnType<SpawnLike>;
     try {
       child = spawnImpl(file as string, args, {
@@ -269,8 +281,7 @@ export function runCommand(
       resolve({ code: null, stdout: '', stderr: '', timedOut: false, spawnError: String(err) });
       return;
     }
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const killTree = (): void => {
       // En Windows no hay señales y kill() solo mata al hijo directo: un .bat o
       // un script que lanza otro programa dejaría nietos vivos. taskkill /T mata
       // el árbol entero, igual que la herramienta shell.
@@ -281,7 +292,17 @@ export function runCommand(
       } else {
         child.kill('SIGKILL');
       }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree();
     }, spec.timeoutMs);
+    function onAbort(): void {
+      if (settled) return;
+      stopped = true;
+      killTree();
+    }
+    spec.signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (d: string) => {
@@ -340,8 +361,8 @@ export function formatCommandResult(
 export async function fireCommandRoutine(
   store: Pick<CommandRoutineStore, 'get'>,
   routine: { scope: string; name: string; schedule: string | null },
-  opts: { enabled: boolean; spawnImpl?: SpawnLike },
-): Promise<{ body: string; failed: boolean }> {
+  opts: { enabled: boolean; spawnImpl?: SpawnLike; signal?: AbortSignal },
+): Promise<{ body: string; failed: boolean; stopped?: boolean }> {
   if (!opts.enabled) {
     return {
       body: 'Las rutinas de comando están desactivadas (PA_CRON_COMANDOS=1 para activarlas). No se ha ejecutado nada.',
@@ -360,6 +381,12 @@ export async function fireCommandRoutine(
       failed: true,
     };
   }
-  const result = await runCommand(spec, opts.spawnImpl);
+  const result = await runCommand(
+    opts.signal ? { ...spec, signal: opts.signal } : spec,
+    opts.spawnImpl,
+  );
+  // Parado con «/cron parar»: no se manda nada a medias (quien dispara lo apunta como parada).
+  if (result.stopped)
+    return { body: 'Parada por ti con /cron parar.', failed: false, stopped: true };
   return formatCommandResult(result, spec.timeoutMs);
 }

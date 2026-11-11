@@ -58,6 +58,16 @@ export interface LatidoDeps {
   /** Fichero donde se guardan (sin él, solo en memoria). */
   file?: string;
   later?: (fn: () => void, ms: number) => { cancel: () => void };
+  /**
+   * «Deja de vigilar» mientras una comprobación está en marcha: corta ese turno del agente
+   * (antes seguía navegando hasta terminar y solo se callaba al final).
+   */
+  abortCheck?: (l: Latido) => void;
+}
+
+/** Nombre con el que corre cada comprobación en el hilo (y con el que se para). */
+export function latidoRoutineName(l: Pick<Latido, 'task'>): string {
+  return `latido: ${l.task.slice(0, 60)}`;
 }
 
 const defaultLater = (fn: () => void, ms: number): { cancel: () => void } => {
@@ -89,6 +99,8 @@ export class Latidos {
   readonly #deps: LatidoDeps;
   readonly #items = new Map<string, Latido>();
   readonly #timers = new Map<string, { cancel: () => void }>();
+  /** Los que tienen una comprobación corriendo ahora mismo. */
+  readonly #checking = new Set<string>();
   readonly #later: NonNullable<LatidoDeps['later']>;
   readonly #now: () => number;
   #seq = 0;
@@ -178,7 +190,17 @@ export class Latidos {
   stop(scope: string, needle = ''): Latido[] {
     const want = foldAccents(needle).trim();
     const hit = this.list(scope).filter((l) => !want || foldAccents(l.task).includes(want));
-    for (const l of hit) this.#drop(l.id);
+    for (const l of hit) {
+      const running = this.#checking.has(l.id);
+      this.#drop(l.id);
+      if (running) {
+        try {
+          this.#deps.abortCheck?.(l);
+        } catch (err) {
+          log.warn('latido abort failed', { err: String(err) });
+        }
+      }
+    }
     if (hit.length) this.#save();
     return hit;
   }
@@ -221,11 +243,14 @@ export class Latidos {
       return;
     }
     let text = '';
+    this.#checking.add(id);
     try {
       text = (await this.#deps.run(latidoPrompt(l), l.scope, l)).trim();
     } catch (err) {
       // Sin red o el modelo caído: se salta esta, la siguiente vuelve a mirar.
       log.warn('latido check failed', { err: String(err) });
+    } finally {
+      this.#checking.delete(id);
     }
     if (!this.#items.has(id)) return; // lo pararon mientras comprobaba
     l.checks++;
