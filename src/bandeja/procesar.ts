@@ -65,6 +65,41 @@ export interface ProcesarDeps {
   now?: () => Date;
   /** Tope de la transcripción de una cosa (por defecto TRANSCRIBE_BUDGET_MS; tests). */
   transcribeBudgetMs?: number;
+  /**
+   * Turno de la transcripción (whisper en el PC): de una en una. La cola de la bandeja pone
+   * el suyo, y «📖 Al Kindle» lo comparte (antes transcribía a la vez que la cola).
+   */
+  transcribeSlot?: TranscribeSlot;
+}
+
+/** Corre `run` cuando le toca; `signal` deja de esperar el turno (y lo pasa a `run`). */
+export type TranscribeSlot = <T>(run: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
+
+/**
+ * Un turno de uno en uno. Quien se cansa de esperar (su `signal`) se va sin correr, y el
+ * siguiente no entra hasta que acabe el que está dentro.
+ */
+export function oneAtATime(): TranscribeSlot {
+  let tail: Promise<void> = Promise.resolve();
+  return <T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
+    const prev = tail;
+    let release: () => void = () => {};
+    tail = new Promise<void>((r) => {
+      release = r;
+    });
+    const gaveUp = new Promise<never>((_, reject) => {
+      if (!signal) return;
+      const fail = () => reject(signal.reason ?? new BandejaError('cancelado'));
+      if (signal.aborted) fail();
+      else signal.addEventListener('abort', fail, { once: true });
+    });
+    gaveUp.catch(() => {});
+    return Promise.race([prev, gaveUp])
+      .then(() => run())
+      .finally(() => {
+        void prev.then(release);
+      });
+  };
 }
 
 /** Veces que una cosa puede cortarse a medias (reinicio) antes de dejarla en ⚠️. */
@@ -241,11 +276,15 @@ async function safeVideoText(
   opts: { signal?: AbortSignal; directAudio?: boolean },
 ): ReturnType<ProcesarDeps['videoText']> {
   // La transcripción tiene su propio tope, por debajo del de la cosa entera: lo que dé
-  // tiempo a oír se juzga («solo los primeros N min») y queda margen para el modelo.
-  const budget = AbortSignal.timeout(deps.transcribeBudgetMs ?? TRANSCRIBE_BUDGET_MS);
-  const signal = opts.signal ? AbortSignal.any([opts.signal, budget]) : budget;
+  // tiempo a oír se juzga («solo los primeros N min») y queda margen para el modelo. El
+  // tope empieza al entrar en el turno (no cuenta la espera detrás de otro whisper).
+  const slot: TranscribeSlot = deps.transcribeSlot ?? ((run) => run());
   try {
-    return await deps.videoText(url, { ...opts, signal });
+    return await slot(() => {
+      const budget = AbortSignal.timeout(deps.transcribeBudgetMs ?? TRANSCRIBE_BUDGET_MS);
+      const signal = opts.signal ? AbortSignal.any([opts.signal, budget]) : budget;
+      return deps.videoText(url, { ...opts, signal });
+    }, opts.signal);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return {
@@ -957,8 +996,44 @@ export class BandejaQueue {
     warn: (msg: string, data?: Record<string, unknown>) => void = () => {},
   ) {
     this.#store = store;
-    this.#deps = deps;
+    // Un solo whisper a la vez entre la cola y «📖 Al Kindle» (readable).
+    this.#deps = deps.transcribeSlot ? deps : { ...deps, transcribeSlot: oneAtATime() };
     this.#warn = warn;
+  }
+
+  /**
+   * El texto entero para «📖 Al Kindle» cuando no estaba guardado (una cosa procesada antes
+   * de que se guardara el texto). Comparte el turno del whisper con la cola —antes un vídeo
+   * viejo se transcribía a la vez que la cola transcribía otro: dos whisper en el PC— y tiene
+   * su propio tope. Si mientras esperaba la cola ya guardó el texto, se usa ese.
+   */
+  async readable(
+    item: BandejaItem,
+    timeoutMs = PROCESS_TIMEOUT_MS,
+  ): Promise<{ title: string | null; text: string; extra: BandejaExtra }> {
+    const stored = this.#store.getText(item.id);
+    if (stored) return { title: item.title, text: stored, extra: item.extra };
+    const signal = AbortSignal.timeout(timeoutMs);
+    const timedOut = new Promise<never>((_, reject) => {
+      signal.addEventListener(
+        'abort',
+        () =>
+          reject(
+            new BandejaError(
+              `tardaba demasiado (más de ${Math.max(1, Math.round(timeoutMs / 60_000))} min)`,
+            ),
+          ),
+        { once: true },
+      );
+    });
+    timedOut.catch(() => {});
+    return Promise.race([
+      readableText(item, this.#deps, signal).then((r) => {
+        const again = this.#store.getText(item.id);
+        return again ? { ...r, text: again } : r;
+      }),
+      timedOut,
+    ]);
   }
 
   /**
