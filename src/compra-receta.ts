@@ -101,7 +101,9 @@ export function recipeFromText(text: string): RecetaParsed {
   if (start >= 0) {
     // «Ingredientes: harina, huevos y leche» en la misma línea.
     const inline = (lines[start] ?? '').replace(/^[^:]*:/, '').trim();
-    if (inline && /:/.test(lines[start] ?? '')) out.push(...inline.split(/\s*[,;]\s*/));
+    // «harina, huevos y leche»: también separan «y»/«e» (antes «huevos y leche» era una sola cosa).
+    if (inline && /:/.test(lines[start] ?? ''))
+      out.push(...inline.split(/\s*[,;]\s*|\s+(?:y|e)\s+/i).filter(Boolean));
     for (const l of lines.slice(start + 1)) {
       if (HEAD_END.test(l)) break;
       // Huecos y subtítulos («Para la salsa:») no cortan la lista: corta «Preparación».
