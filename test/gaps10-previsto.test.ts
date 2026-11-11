@@ -57,7 +57,7 @@ describe('/previsto (Muse: «everything it… plans to do»)', () => {
     expect(text).toContain('• 18:42 ⏰ pagar la matrícula');
     expect(text).toContain('• 21:30 📥 resumen de la bandeja');
     expect(text).toContain('• mañana 08:00 🔁 rutina «resumen-mañana»');
-    expect(text).toContain('⏸️ 1 rutina(s) en pausa');
+    expect(text).toContain('⏸️ 1 rutina en pausa no sale');
   });
 
   it('hoy corta a medianoche; semana agrupa por día', () => {

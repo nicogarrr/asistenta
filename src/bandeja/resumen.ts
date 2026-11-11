@@ -251,7 +251,7 @@ export function composeWeekly(items: readonly BandejaItem[]): string | null {
   const chaff = items.filter((i) => i.verdict === 'paja');
   const chaffMin = chaff.reduce((s, i) => s + (i.costMin ?? 0), 0);
   const lines = [
-    `🏆 Tu semana en la bandeja: ${items.length} cosas guardadas · ${red.length} 🔴 (${seen} vista${seen === 1 ? '' : 's'}) · ${done.filter((i) => i.verdict === 'ideas').length} 🟡 · ${chaff.length} ⚪`,
+    `🏆 Tu semana en la bandeja: ${items.length === 1 ? '1 cosa guardada' : `${items.length} cosas guardadas`} · ${red.length} 🔴 (${seen} vista${seen === 1 ? '' : 's'}) · ${done.filter((i) => i.verdict === 'ideas').length} 🟡 · ${chaff.length} ⚪`,
   ];
   if (chaffMin >= 5)
     lines.push(`🧹 Paja quitada: ~${minutesLabel(chaffMin)} que no tuviste que gastar.`);
@@ -503,13 +503,19 @@ export function spokenDigest(items: readonly BandejaItem[]): string {
   const red = items.filter((i) => i.verdict === 'imprescindible');
   const yellow = items.filter((i) => i.verdict === 'ideas');
   const chaff = items.filter((i) => i.verdict === 'paja');
-  const parts = [`Hoy guardaste ${items.length} cosas.`];
+  const parts = [`Hoy guardaste ${items.length === 1 ? 'una cosa' : `${items.length} cosas`}.`];
   if (red.length) {
     parts.push(`${red.length === 1 ? 'Una merece' : `${red.length} merecen`} tu tiempo entero:`);
     for (const it of red.slice(0, 4)) parts.push(`${shortTitle(it, 80)}. ${it.reason ?? ''}`);
   } else parts.push('Nada es imprescindible.');
-  if (yellow.length) parts.push(`${yellow.length} tienen ideas buenas y con el resumen basta.`);
-  if (chaff.length) parts.push(`Y ${chaff.length} son paja.`);
+  if (yellow.length)
+    parts.push(
+      yellow.length === 1
+        ? 'Una tiene ideas buenas y con el resumen basta.'
+        : `${yellow.length} tienen ideas buenas y con el resumen basta.`,
+    );
+  if (chaff.length)
+    parts.push(chaff.length === 1 ? 'Y una es paja.' : `Y ${chaff.length} son paja.`);
   return parts.join(' ');
 }
 

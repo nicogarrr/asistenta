@@ -43,6 +43,17 @@ const ICON: Record<Tipo, string> = {
   otro: '📎',
 };
 
+/** «No tengo ningún PDF» / «ninguna imagen»: el tipo con su artículo (imagen es femenino). */
+const NINGUN: Record<Tipo, string> = {
+  pdf: 'ningún PDF',
+  excel: 'ningún Excel',
+  word: 'ningún Word',
+  imagen: 'ninguna imagen',
+  csv: 'ningún CSV',
+  texto: 'ningún texto',
+  otro: 'ningún archivo de ese tipo',
+};
+
 export function tipoDe(nombre: string): Tipo {
   const ext = /\.([a-z0-9]{1,5})$/i.exec(nombre)?.[1]?.toLowerCase() ?? '';
   return EXT[ext] ?? 'otro';
@@ -124,7 +135,7 @@ export function bibliotecaVista(
     };
   if (!all.length)
     return {
-      text: `📚 No tengo ningún ${filtro} de los que te he hecho. /biblioteca para verlo todo.`,
+      text: `📚 No tengo ${NINGUN[filtro ?? 'otro']} de los que te he hecho. /biblioteca para verlo todo.`,
       sends: [],
     };
   const shown = all.slice(0, BIBLIOTECA_MAX);

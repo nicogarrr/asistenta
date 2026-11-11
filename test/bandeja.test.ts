@@ -396,7 +396,7 @@ describe('bandeja: resumen de la noche', () => {
       env: {},
     });
     expect(sent).toHaveLength(2);
-    expect(sent[1]).toMatch(/^🏆 Tu semana en la bandeja: 1 cosas guardadas/);
+    expect(sent[1]).toMatch(/^🏆 Tu semana en la bandeja: 1 cosa guardada · /);
   });
 
   it('cada cosa del resumen y de su ficha lleva el enlace directo', () => {
