@@ -11,19 +11,49 @@
  * - Un aviso por servicio y caída (el token se borra al caer, así que no se repite), y como
  *   mucho uno cada 12 h por servicio aunque se reconecte y vuelva a caer.
  * - Solo dice; no reconecta nada solo.
+ * - Si al caer no hay a quién decírselo (el PC recién arrancado: el resumen de la mañana
+ *   pide el calendario antes de que escribas nada), el aviso queda guardado y sale con lo
+ *   siguiente que llegue (`entregarAvisosPendientes`). Antes se perdía: el token ya estaba
+ *   borrado y no había otra caída que avisara.
  */
 export type ServicioConexion = 'google' | 'spotify';
 
 const AVISO_CADA_MS = 12 * 60 * 60_000;
 
-type Listener = (servicio: ServicioConexion, texto: string) => void;
+/** Devuelve false si ahora no hay chat al que mandarlo (el aviso se guarda). */
+type Listener = (servicio: ServicioConexion, texto: string) => unknown;
 let listener: Listener | null = null;
 const ultimo = new Map<ServicioConexion, number>();
+const pendientes = new Set<ServicioConexion>();
 
 /** Quién recibe el aviso (el daemon: el chat del dueño). null = nadie (pruebas, `pa`). */
 export function alCaerConexion(next: Listener | null): void {
   listener = next;
   ultimo.clear();
+  pendientes.clear();
+}
+
+function entregar(fn: Listener, servicio: ServicioConexion, now: number): boolean {
+  let ok: unknown = true;
+  try {
+    ok = fn(servicio, textoConexionCaida(servicio));
+  } catch {}
+  if (ok === false) {
+    pendientes.add(servicio);
+    return false;
+  }
+  pendientes.delete(servicio);
+  ultimo.set(servicio, now);
+  return true;
+}
+
+/** Los avisos que no tuvieron a quién llegar; los manda ahora si ya hay chat. */
+export function entregarAvisosPendientes(now: number = Date.now()): number {
+  const fn = listener;
+  if (!fn || !pendientes.size) return 0;
+  let n = 0;
+  for (const servicio of [...pendientes]) if (entregar(fn, servicio, now)) n++;
+  return n;
 }
 
 export function textoConexionCaida(servicio: ServicioConexion): string {
@@ -46,9 +76,5 @@ export function avisarConexionCaida(servicio: ServicioConexion, now: number = Da
   if (!fn) return false;
   const last = ultimo.get(servicio);
   if (last !== undefined && now - last < AVISO_CADA_MS) return false;
-  ultimo.set(servicio, now);
-  try {
-    fn(servicio, textoConexionCaida(servicio));
-  } catch {}
-  return true;
+  return entregar(fn, servicio, now);
 }

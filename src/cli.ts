@@ -8,7 +8,7 @@ import {
   STOP_USAGE,
   WATCHDOG_USAGE,
 } from './cli-uso.js';
-import { alCaerConexion } from './conexion-caida.js';
+import { alCaerConexion, entregarAvisosPendientes } from './conexion-caida.js';
 import { doneCheckLine } from './core/hecho.js';
 import { resolveModelCaps } from './core/models.js';
 import { RouteStore, routeAfterTurn, routesOn } from './core/rutas.js';
@@ -10080,8 +10080,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
   // Google/Spotify retiran el permiso (invalid_grant): un aviso al chat en vez de fallar en
   // silencio dentro de una rutina (src/conexion-caida.ts).
+  // Al chat privado del dueño si se sabe; si no, al último chat. Sin ninguno (recién
+  // arrancado), se guarda y sale con el siguiente mensaje (entregarAvisosPendientes).
   alCaerConexion((_servicio, texto) => {
+    const owner = briefingOwner();
+    if (owner) {
+      void telegram
+        .send({ channel: 'telegram', account: telegram.account, chatId: owner, text: texto })
+        .catch(() => {});
+      return true;
+    }
+    if (!lastChat) return false;
     void notifyLastChat(texto).catch(() => {});
+    return true;
   });
   /** «sí» tras un aviso del micrófono: vuelve a encender la escucha. */
   const WAKE_ON_ASK = { command: 'wake', args: 'on' };
@@ -10919,6 +10930,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             },
             setLastChat: (chat) => {
               lastChat = chat;
+              // Un «Google se ha desconectado» que cayó sin chat al que decirlo.
+              entregarAvisosPendientes();
             },
             recordAudio: (key, audio) => {
               recall.record(key, audio);
