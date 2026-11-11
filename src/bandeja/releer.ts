@@ -44,15 +44,19 @@ export async function releerCosa(
     return `🔄 No pude abrir la página de #${item.id} (${String(err instanceof Error ? err.message : err).slice(0, 100)}). No cambio nada.`;
   }
   const f = fichasDe(html);
-  const { receta: _r, evento: _e, ...resto } = item.extra;
+  // La copia de AHORA, no la de antes del fetch (hasta 30 s; «releer todo», 20 seguidas): si
+  // entretanto se guardó otro resultado de la cosa (se estaba juzgando, o «reprocesar»), su
+  // autor, temas o Goodreads se perdían con la copia vieja (bugs-37).
+  const actual = store.get(item.id) ?? item;
+  const { receta: _r, evento: _e, ...resto } = actual.extra;
   const extra: BandejaExtra = { ...resto, ...f, releidaAt: now.toISOString() };
   const nuevo: string[] = [];
-  if (f.receta && !item.extra.receta) nuevo.push(`🛒 es una receta (${f.receta} ingredientes)`);
-  if (f.evento && !item.extra.evento) nuevo.push(`📅 es un evento: «${f.evento.nombre}»`);
-  if (f.evento && item.extra.evento && f.evento.inicio !== item.extra.evento.inicio)
+  if (f.receta && !actual.extra.receta) nuevo.push(`🛒 es una receta (${f.receta} ingredientes)`);
+  if (f.evento && !actual.extra.evento) nuevo.push(`📅 es un evento: «${f.evento.nombre}»`);
+  if (f.evento && actual.extra.evento && f.evento.inicio !== actual.extra.evento.inicio)
     nuevo.push('📅 ha cambiado la fecha del evento');
   store.setExtra(item.id, extra);
-  return { nuevo, item: store.get(item.id) ?? { ...item, extra } };
+  return { nuevo, item: store.get(item.id) ?? { ...actual, extra } };
 }
 
 /** Días hacia atrás que mira «/bandeja releer todo» (por defecto) y su tope. */
