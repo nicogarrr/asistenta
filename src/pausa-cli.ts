@@ -190,6 +190,36 @@ export interface ServePausaOptions {
  * El daemon en modo pausa: Telegram para el dueño y nada más (ni modelo, ni rutinas, ni
  * micrófono, ni panel, ni navegadores). Vive hasta que `pa pausa levantar` lo cierra.
  */
+/**
+ * En pausa, lo que Nico manda a secas (un enlace, un PDF, una captura, «libro: …») se guarda
+ * en la bandeja SIN procesarlo: nada de transcribir ni de llamar al modelo con el PC parado.
+ * Al levantar, el daemon normal lo retoma solo (BandejaQueue.resume, lo «nuevo»). Antes se
+ * contestaba «estoy en pausa» y el enlace se perdía. null = no es para la bandeja.
+ */
+export async function guardarEnPausa(
+  stateDir: string,
+  inbound: Inbound,
+  now: Date = new Date(),
+): Promise<string | null> {
+  if (inbound.channel !== 'telegram') return null;
+  const { detectCapture } = await import('./bandeja/captura.js');
+  const { captureOn } = await import('./bandeja/comando.js');
+  const { BandejaStore } = await import('./bandeja/store.js');
+  const { localDay } = await import('./datecontext.js');
+  const store = new BandejaStore(join(stateDir, 'bandeja.db'));
+  try {
+    const cands = detectCapture(inbound, { auto: captureOn(store) });
+    if (!cands?.length) return null;
+    const day = localDay(now);
+    const saved = cands.map((c) => store.add(inbound.chatId, c, now, day));
+    const n = store.countDay(inbound.chatId, day);
+    if (saved.every((s) => s.dup)) return `📥 Eso ya estaba en la bandeja (${n} hoy).`;
+    return `📥 Guardado en la bandeja (${n} hoy). Estoy en pausa: lo miro cuando pulses «${LEVANTAR_BUTTON_LABEL}».`;
+  } finally {
+    store.close();
+  }
+}
+
 export async function servePausa(opts: ServePausaOptions): Promise<number> {
   const { stateDir } = opts;
   assertNotRunning(stateDir, 'agent');
@@ -226,6 +256,15 @@ export async function servePausa(opts: ServePausaOptions): Promise<number> {
     );
     if (r.kind === 'ignore') return;
     if (r.kind === 'reply') {
+      // Un enlace o un PDF a secas: a la bandeja, para cuando se levante.
+      const saved = await guardarEnPausa(stateDir, inbound).catch((err: unknown) => {
+        log.warn('pausa: no guardé en la bandeja', { err: String(err) });
+        return null;
+      });
+      if (saved) {
+        await say(inbound, saved, true);
+        return;
+      }
       await say(inbound, r.text, r.levantar);
       return;
     }
