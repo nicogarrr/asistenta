@@ -7,6 +7,9 @@
  * había que buscarlos subiendo por el chat. Se leen de las respuestas ya guardadas en la
  * memoria de sesiones (lo mismo que usa /buscar): nada nuevo se guarda.
  */
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { displayUrl } from './bandeja/captura.js';
 import { localDay, localTimeZone } from './datecontext.js';
 import { sliceSafe } from './text.js';
@@ -91,27 +94,159 @@ function dominio(url: string): string {
   }
 }
 
-/** El mensaje: una línea por enlace y un botón «🔗 N» que lo abre (botón-enlace de Telegram). */
+/** Enlaces fijados como mucho por chat (📌: no se pierden entre los 10 últimos). */
+export const ENLACES_MAX_FIJADOS = 10;
+
+/** Una clave corta de un enlace (cabe en un botón de 64 bytes): misma URL, misma clave. */
+export function claveEnlace(url: string): string {
+  const norm = displayUrl(url)
+    .trim()
+    .replace(/^https?:\/\/(?:www\.)?/i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  return createHash('sha1').update(norm).digest('hex').slice(0, 10);
+}
+
+/**
+ * «📌» en /biblioteca enlaces (Grok Bot «Pin», https://docs.x.ai/grok-bot/files-and-results):
+ * un enlace fijado sale arriba aunque ya no esté entre los 10 últimos que te mandé. Por chat,
+ * en un JSON pequeño (solo URL, etiqueta y fecha: lo mismo que ya se veía en la lista).
+ */
+export class EnlacesFijados {
+  readonly #file: string;
+  constructor(file: string) {
+    this.#file = file;
+  }
+
+  #leer(): Record<string, EnlaceEnviado[]> {
+    try {
+      const raw = JSON.parse(readFileSync(this.#file, 'utf8')) as unknown;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+      const out: Record<string, EnlaceEnviado[]> = {};
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (!Array.isArray(v)) continue;
+        out[k] = v
+          .filter(
+            (e): e is EnlaceEnviado =>
+              !!e &&
+              typeof e.url === 'string' &&
+              /^https?:\/\//i.test(e.url) &&
+              typeof e.etiqueta === 'string' &&
+              typeof e.at === 'number',
+          )
+          .slice(0, ENLACES_MAX_FIJADOS);
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  }
+
+  #guardar(datos: Record<string, EnlaceEnviado[]>): void {
+    mkdirSync(dirname(this.#file), { recursive: true });
+    const tmp = `${this.#file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(datos, null, 2));
+    renameSync(tmp, this.#file);
+  }
+
+  lista(chat: string): EnlaceEnviado[] {
+    return this.#leer()[chat] ?? [];
+  }
+
+  fijar(chat: string, e: EnlaceEnviado): 'ok' | 'ya' | 'lleno' {
+    const datos = this.#leer();
+    const l = datos[chat] ?? [];
+    if (l.some((x) => claveEnlace(x.url) === claveEnlace(e.url))) return 'ya';
+    if (l.length >= ENLACES_MAX_FIJADOS) return 'lleno';
+    datos[chat] = [{ url: e.url, etiqueta: e.etiqueta, at: e.at }, ...l];
+    this.#guardar(datos);
+    return 'ok';
+  }
+
+  soltar(chat: string, clave: string): EnlaceEnviado | null {
+    const datos = this.#leer();
+    const l = datos[chat] ?? [];
+    const e = l.find((x) => claveEnlace(x.url) === clave) ?? null;
+    if (!e) return null;
+    datos[chat] = l.filter((x) => x !== e);
+    this.#guardar(datos);
+    return e;
+  }
+}
+
+/** Lo fijado arriba y luego lo último que te mandé (sin repetir lo fijado). La numeración de la lista. */
+export function enlacesConFijados(
+  recientes: readonly EnlaceEnviado[],
+  fijados: readonly EnlaceEnviado[],
+): Array<EnlaceEnviado & { fijado: boolean }> {
+  const claves = new Set(fijados.map((f) => claveEnlace(f.url)));
+  return [
+    ...fijados.map((f) => ({ ...f, fijado: true })),
+    ...recientes
+      .filter((r) => !claves.has(claveEnlace(r.url)))
+      .map((r) => ({ ...r, fijado: false })),
+  ];
+}
+
+/** La respuesta a «📌» / «Soltar» de un enlace. */
+export function textoFijarEnlace(
+  fijar: boolean,
+  e: EnlaceEnviado | null,
+  r: 'ok' | 'ya' | 'lleno' | boolean,
+): string {
+  if (!e) return 'No tengo ese enlace en la lista. «/biblioteca enlaces» para verla.';
+  const d = dominio(e.url);
+  const nombre =
+    e.etiqueta && e.etiqueta.toLowerCase() !== d.toLowerCase() ? `${e.etiqueta} (${d})` : d;
+  if (!fijar) return r ? `Suelto «${nombre}».` : `«${nombre}» no estaba fijado.`;
+  if (r === 'ya') return `📌 «${nombre}» ya estaba fijado.`;
+  if (r === 'lleno')
+    return `Ya tienes ${ENLACES_MAX_FIJADOS} enlaces fijados, que es el tope. Suelta alguno con su botón «Soltar N».`;
+  return `📌 Fijado «${nombre}»: sale arriba en «/biblioteca enlaces» aunque te mande muchos más.`;
+}
+
+/**
+ * El mensaje: una línea por enlace, un botón «🔗 N» que lo abre (botón-enlace de Telegram) y
+ * su «📌 N» / «Soltar N» (en `pins`, con la clave del enlace: el daemon lo hace botón).
+ */
 export function enlacesVista(
   enlaces: readonly EnlaceEnviado[],
   now: number = Date.now(),
   tz: string = localTimeZone(),
-): { text: string; buttons: Array<{ label: string; action: string }> } {
-  if (!enlaces.length)
+  fijados: readonly EnlaceEnviado[] = [],
+): {
+  text: string;
+  buttons: Array<{ label: string; action: string }>;
+  pins: Array<{ label: string; clave: string; sub: 'fijarenlace' | 'soltarenlace' }>;
+} {
+  const todos = enlacesConFijados(enlaces, fijados);
+  if (!todos.length)
     return {
       text: '🔗 Aún no te he mandado ningún enlace en este chat (o es de antes de que guardara las conversaciones).',
       buttons: [],
+      pins: [],
     };
-  const lineas = enlaces.map((e, i) => {
+  const linea = (e: EnlaceEnviado & { fijado: boolean }, i: number) => {
     const d = dominio(e.url);
     const que =
       e.etiqueta && e.etiqueta.toLowerCase() !== d.toLowerCase() ? `${e.etiqueta} — ` : '';
-    return `${i + 1}. ${que}${d} · ${cuando(e.at, now, tz)}\n   ${displayUrl(e.url)}`;
-  });
+    return `${i + 1}. ${e.fijado ? '📌 ' : ''}${que}${d} · ${cuando(e.at, now, tz)}\n   ${displayUrl(e.url)}`;
+  };
+  const nFij = todos.filter((e) => e.fijado).length;
+  const lineas = todos.map(linea);
+  const cuerpo = nFij
+    ? `📌 Fijados:\n${lineas.slice(0, nFij).join('\n')}${todos.length > nFij ? `\nLos últimos:\n${lineas.slice(nFij).join('\n')}` : ''}`
+    : lineas.join('\n');
+  const recientes = todos.length - nFij;
   return {
-    text: `🔗 Los enlaces que te he mandado (los ${enlaces.length} últimos):\n${lineas.join('\n')}\n\nToca 🔗 N para abrirlo.`,
-    buttons: enlaces
+    text: `🔗 Los enlaces que te he mandado${recientes ? ` (los ${recientes} últimos${nFij ? `, y ${nFij} fijado${nFij === 1 ? '' : 's'}` : ''})` : ''}:\n${cuerpo}\n\nToca 🔗 N para abrirlo y 📌 N para tenerlo siempre arriba.`,
+    buttons: todos
       .map((e, i) => ({ label: `🔗 ${i + 1}`, action: `url:${e.url}` }))
       .filter((b) => /^url:https:\/\/\S+$/.test(b.action) && Buffer.byteLength(b.action) <= 2052),
+    pins: todos.map((e, i) => ({
+      label: e.fijado ? `Soltar ${i + 1}` : `📌 ${i + 1}`,
+      clave: claveEnlace(e.url),
+      sub: e.fijado ? ('soltarenlace' as const) : ('fijarenlace' as const),
+    })),
   };
 }
