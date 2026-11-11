@@ -101,7 +101,8 @@ describe('gaps-15: invitaciones .ics leídas sin modelo', () => {
     const congreso = parseIcs(
       ev('DTSTART;VALUE=DATE:20261202\r\nDTEND;VALUE=DATE:20261204\r\nSUMMARY:South Summit'),
     ).eventos[0];
-    expect(congreso).toMatchObject({ inicio: '2026-12-02', fin: '2026-12-04' });
+    // DTEND de día entero es exclusivo: el último día es el 3 (bugs-36).
+    expect(congreso).toMatchObject({ inicio: '2026-12-02', fin: '2026-12-03' });
     expect(
       parseIcs(ev('DTSTART:20261120T083000Z\r\nRRULE:FREQ=WEEKLY\r\nSUMMARY:Pádel')).eventos[0]
         ?.repite,
