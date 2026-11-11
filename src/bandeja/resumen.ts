@@ -37,6 +37,12 @@ export const DEFAULT_BANDEJA_HORA = '21:30';
 export const MAX_DIGEST_BUTTON_ITEMS = 10;
 /** Cosas listadas en un resumen; el resto, «y N más» con /bandeja. */
 export const MAX_DIGEST_ITEMS = 15;
+/**
+ * Cosas ⚪ (paja) con «📅 N calendario» / «🛒 N compra» en el resumen: la paja no lleva
+ * ✅/⏭️/🗑️ (para eso está 🧹), pero un evento o una receta valen por lo práctico aunque
+ * su contenido sea paja, y el botón ahorra abrir la ficha.
+ */
+export const MAX_DIGEST_CHAFF_ACTION_ITEMS = 4;
 
 /**
  * Minutos de audio que transcribe la bandeja por cosa (PA_BANDEJA_MAX_MIN, 180 por
@@ -162,7 +168,7 @@ export function composeDigest(
       // La fecha del evento (congreso, webinar, junta): se ve sin abrir la ficha.
       const cuando = eventLine(it, now);
       if (cuando) lines.push(`   ${cuando}`);
-      if (it.url && it.extra.receta && it.extra.receta >= 2)
+      if (esReceta(it))
         lines.push(
           `   🛒 Receta: ${it.extra.receta} ingredientes (🛒 ${it.id} compra los apunta en /compra)`,
         );
@@ -179,6 +185,8 @@ export function composeDigest(
   };
   section('🔴 Imprescindible: dale tiempo entero', red, 2);
   section('🟡 Ideas buenas: con esto basta', yellow, 3);
+  /** Paja con «📅 / 🛒» (sin ✅/⏭️/🗑️: para eso está 🧹). */
+  const chaffActions: BandejaItem[] = [];
   if (chaff.length) {
     // La paja, recogida: una línea por cosa, con su enlace por si acaso.
     lines.push('', `⚪ Paja (${chaff.length}), la quito con 🧹:`);
@@ -187,6 +195,11 @@ export function composeDigest(
       lines.push(
         `#${it.id} ${shortTitle(it, 40)} ${linkLines(it)[0]?.replace(/^🔗 /, '🔗') ?? ''}`.trim(),
       );
+      const cuando = eventLine(it, now);
+      const futuro = !!cuando && !cuando.endsWith('(ya pasó)');
+      if (futuro) lines.push(`   ${cuando}`);
+      if (chaffActions.length < MAX_DIGEST_CHAFF_ACTION_ITEMS && (futuro || esReceta(it)))
+        chaffActions.push(it);
     }
     if (chaff.length > 8) lines.push(`…y ${chaff.length - 8} más`);
   }
@@ -209,13 +222,16 @@ export function composeDigest(
   if (rest > 0) lines.push('', `…y ${rest} más: /bandeja`);
   const buttons: Button[] = [];
   for (const it of withButtons) buttons.push(...itemButtons(it, true));
+  // «📅 / 🛒» también de la paja que sea un evento o una receta (📖 no: casi toda la paja
+  // se puede leer, y cuatro «📖 Kindle» de paja serían ruido).
+  const actionable = [...withButtons, ...chaffActions];
   // «📖 N Kindle» de lo que se lee, detrás (de tres en tres: no descuadra las filas de arriba).
   for (const it of withButtons) {
     const kb = kindleButton(it, true);
     if (kb) buttons.push(kb);
   }
   // «📅 N calendario» de lo que es un evento que aún no ha pasado (enseña qué apunta; no apunta).
-  for (const it of withButtons) {
+  for (const it of actionable) {
     const cuando = eventLine(it, now);
     if (!cuando || cuando.endsWith('(ya pasó)')) continue;
     const b = commandButton(`📅 ${it.id} calendario`, 'bandeja', String(it.id), 'calendario');
@@ -223,8 +239,8 @@ export function composeDigest(
   }
   // «🛒 N compra» de lo que es una receta (con su ficha Recipe): sus ingredientes a /compra,
   // como el «🛒 A la compra» de la ficha, sin tener que abrirla.
-  for (const it of withButtons) {
-    if (!it.url || !it.extra.receta || it.extra.receta < 2) continue;
+  for (const it of actionable) {
+    if (!esReceta(it)) continue;
     const b = commandButton(`🛒 ${it.id} compra`, 'bandeja', String(it.id), 'compra');
     if (b) buttons.push(b);
   }
@@ -233,6 +249,11 @@ export function composeDigest(
     if (b) buttons.push(b);
   }
   return { text: lines.join('\n'), buttons, ids: shownIds, empty: false };
+}
+
+/** Una receta con su ficha `Recipe` (2+ ingredientes), como el «🛒 A la compra» de la ficha. */
+function esReceta(it: BandejaItem): boolean {
+  return !!it.url && !!it.extra.receta && it.extra.receta >= 2;
 }
 
 /** «🧹 Quitar la paja»: descarta todo lo ⚪ pendiente hasta ese día. */
