@@ -8,6 +8,7 @@
  * Todo llega por `deps` (red, modelo, Telegram), así que los tests no tocan nada real.
  */
 
+import { createHash } from 'node:crypto';
 import type { VideoText } from '../media/resumen-video.js';
 import { xVideoUrl } from '../media/resumen-video.js';
 import { officeKind } from '../memory/office.js';
@@ -62,6 +63,12 @@ export interface ProcesarDeps {
   ) => { item: BandejaItem; dup: boolean } | null;
   /** Una cosa recién juzgada (para mandar solo lo 🔴 al Kindle con «kindle auto»). */
   onDone?: (item: BandejaItem) => void | Promise<void>;
+  /**
+   * La huella (sha256) de un fichero recién bajado de Telegram; devuelve la cosa pendiente
+   * que ya tenía ese mismo fichero, o null. La pone la cola (store) para no juzgar dos veces
+   * el mismo PDF mandado dos veces.
+   */
+  fileSeen?: (item: BandejaItem, sha256: string) => number | null;
   now?: () => Date;
   /** Tope de la transcripción de una cosa (por defecto TRANSCRIBE_BUDGET_MS; tests). */
   transcribeBudgetMs?: number;
@@ -78,6 +85,30 @@ export const WORDS_PER_MIN = 230;
 const WORDS_PER_BOOK_PAGE = 300;
 
 export class BandejaError extends Error {}
+
+/** El mismo fichero ya estaba en la bandeja (pendiente): esta cosa se cierra como repetida. */
+export class BandejaDuplicate extends Error {
+  readonly twinId: number;
+  constructor(twinId: number) {
+    super(`repetido de #${twinId}`);
+    this.twinId = twinId;
+  }
+}
+
+/**
+ * Baja el fichero de una cosa y, si es el mismo (byte a byte) que otro aún pendiente, para
+ * antes de gastar modelo: Telegram da un file_id nuevo cada vez que se reenvía, así que el
+ * mismo PDF mandado dos veces eran dos cosas, dos veredictos y dos líneas en el resumen.
+ */
+async function downloadItemFile(item: BandejaItem, deps: ProcesarDeps): Promise<Buffer | null> {
+  if (!item.fileId || !deps.download) return null;
+  const bytes = await deps.download(item.fileId);
+  if (bytes && deps.fileSeen) {
+    const twin = deps.fileSeen(item, createHash('sha256').update(bytes).digest('hex'));
+    if (twin) throw new BandejaDuplicate(twin);
+  }
+  return bytes;
+}
 
 /** Una captura que era una lista: ya está partida y no lleva veredicto propio. */
 export class BandejaSplit extends Error {
@@ -581,7 +612,7 @@ async function linkContent(
 async function pdfContent(item: BandejaItem, deps: ProcesarDeps): Promise<Content> {
   if (!item.fileId || !deps.download || !deps.pdfText)
     throw new BandejaError('no puedo leer PDFs desde aquí');
-  const bytes = await deps.download(item.fileId);
+  const bytes = await downloadItemFile(item, deps);
   if (!bytes) throw new BandejaError('no pude descargar el PDF de Telegram (¿más de 20 MB?)');
   const raw = await deps.pdfText(bytes);
   const pages = raw ? raw.split('\n\n').length : 0;
@@ -615,7 +646,7 @@ async function docContent(item: BandejaItem, deps: ProcesarDeps): Promise<Conten
   const kind = readableDocKind(item);
   if (!item.fileId || !kind || !deps.download || !deps.docText)
     throw new BandejaError('no puedo leer ese documento desde aquí');
-  const bytes = await deps.download(item.fileId);
+  const bytes = await downloadItemFile(item, deps);
   if (!bytes) throw new BandejaError('no pude descargar el documento de Telegram (¿más de 20 MB?)');
   let raw: string;
   try {
@@ -692,7 +723,7 @@ async function imageContent(
   signal?: AbortSignal,
 ): Promise<Content> {
   if (!item.fileId || !deps.download) throw new BandejaError('no puedo leer fotos desde aquí');
-  const bytes = await deps.download(item.fileId);
+  const bytes = await downloadItemFile(item, deps);
   if (!bytes) throw new BandejaError('no pude descargar la foto de Telegram');
   const images = [
     {
@@ -1042,6 +1073,24 @@ export class BandejaQueue {
     }
   }
 
+  /**
+   * Las deps del procesado con `fileSeen`: el mismo fichero dos veces lleva su huella en
+   * url_key («sha256:…») y la segunda se cierra como repetida.
+   */
+  #withFileSeen(): ProcesarDeps {
+    if (this.#deps.fileSeen) return this.#deps;
+    const store = this.#store;
+    return {
+      ...this.#deps,
+      fileSeen: (item, sha) => {
+        const key = `sha256:${sha}`;
+        const twin = store.findPendingByKey(item.chatId, key, item.id);
+        if (!twin) store.setKey(item.id, key);
+        return twin?.id ?? null;
+      },
+    };
+  }
+
   async #runOne(id: number): Promise<void> {
     let item = this.#store.get(id);
     if (!item || item.state === 'descartado') return;
@@ -1069,7 +1118,7 @@ export class BandejaQueue {
     timer.unref?.();
     try {
       const result = await Promise.race([
-        processItem(item, this.#deps, ctl.signal),
+        processItem(item, this.#withFileSeen(), ctl.signal),
         new Promise<never>((_, reject) => {
           ctl.signal.addEventListener('abort', () =>
             reject(
@@ -1101,6 +1150,10 @@ export class BandejaQueue {
           );
       }
     } catch (err) {
+      if (err instanceof BandejaDuplicate) {
+        this.#store.closeAs(id, err.message);
+        return;
+      }
       if (err instanceof BandejaSplit) {
         const parts = err.children.map((c) => `#${c}`).join(', ');
         this.#store.closeAs(

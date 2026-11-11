@@ -260,6 +260,11 @@ export class BandejaStore {
     return r ? mapRow(r) : null;
   }
 
+  /** La clave de «lo mismo» de una cosa sin enlace (la huella de su fichero). */
+  setKey(id: number, key: string): void {
+    this.#db.prepare('UPDATE items SET url_key = ? WHERE id = ?').run(key, id);
+  }
+
   /** Pone el enlace a una cosa que llegó sin él (un vídeo visto en una captura). */
   setUrl(id: number, url: string): void {
     this.#db
