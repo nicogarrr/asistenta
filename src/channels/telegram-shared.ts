@@ -86,6 +86,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'ics',
       // «🔄 Releer la página»: vuelve a leer su receta o su evento (solo esas fichas).
       'releer',
+      // «🗑️ Sí, quítalo» (la cancelación .ics de algo que apuntó): borra SOLO el evento que
+      // creó su «✅ Sí, apúntalo» (su id de Google guardado), y solo al tocarlo.
+      'desapuntar',
     ]),
   ],
   // 📚 /biblioteca: «📤 N» te vuelve a mandar un archivo que te hice (arg = la fecha de su

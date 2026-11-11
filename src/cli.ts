@@ -261,7 +261,7 @@ import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
-import { crearEvento } from './google/workspace.js';
+import { borrarEvento, crearEvento } from './google/workspace.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { endpointKind, llmHealthCommand, providerKeyFor, providerKeySource } from './llm-health.js';
@@ -6779,6 +6779,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         crearEvento(
           { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
           args,
+        ),
+      // «🗑️ Sí, quítalo» de una cancelación .ics: lo que se apuntó con «✅ Sí» (bugs-37).
+      quitarCalendario: (id) =>
+        borrarEvento(
+          { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
+          { id },
         ),
       timeZone: () => localTimeZone(),
       // «🔄 Releer la página» (lo guardado antes de 🛒/📅): la misma descarga de la bandeja.

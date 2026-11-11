@@ -951,7 +951,8 @@ async function icsResult(item: BandejaItem, deps: ProcesarDeps): Promise<Process
   const ev = eventos[0];
   if (!ev) throw new BandejaError('el .ics no trae ningún evento con fecha');
   const otros = eventos.length > 1 ? ` (trae ${eventos.length} eventos; te enseño el primero)` : '';
-  const { cancelado, repite, ...evento } = ev;
+  const { cancelado, repite, uid, ...evento } = ev;
+  const conUid = uid ? { icsUid: uid } : {};
   if (cancelado)
     return {
       title: `Cancelado: ${ev.nombre}`,
@@ -961,7 +962,12 @@ async function icsResult(item: BandejaItem, deps: ProcesarDeps): Promise<Process
       ideas: [],
       costMin: 0,
       costLabel: '📅 cancelación',
-      extra: { source: ICS_SOURCE, basis: 'texto' },
+      extra: {
+        source: ICS_SOURCE,
+        basis: 'texto',
+        ...conUid,
+        icsCancelado: { nombre: ev.nombre, inicio: ev.inicio },
+      },
     };
   return {
     title: ev.nombre,
@@ -971,7 +977,7 @@ async function icsResult(item: BandejaItem, deps: ProcesarDeps): Promise<Process
     ideas: [],
     costMin: 0,
     costLabel: '📅 invitación',
-    extra: { source: ICS_SOURCE, basis: 'texto', evento },
+    extra: { source: ICS_SOURCE, basis: 'texto', evento, ...conUid },
   };
 }
 

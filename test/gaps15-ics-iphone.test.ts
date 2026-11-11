@@ -74,6 +74,8 @@ describe('gaps-15: «📲 .ics (iPhone)» — el evento sin Google', () => {
       inicio: '2026-11-20T08:30:00Z',
       fin: '2026-11-20T09:30:00Z',
       lugar: 'IFEMA, Madrid',
+      // bugs-37: el UID también se lee (la cancelación lo usa para quitar lo apuntado).
+      uid: 'bandeja-1@asistenta',
     });
   });
 
