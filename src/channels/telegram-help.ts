@@ -211,8 +211,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'expertos', description: 'apuntes por tema' },
       {
         command: 'biblioteca',
-        args: '[pdf|excel|word|graficas] [N]',
-        description: 'lo que te he hecho (gráficas, Excel, PDF…): te lo vuelvo a mandar',
+        args: '[pdf|excel|word|graficas|enlaces|<nombre>] [N]',
+        description: 'lo que te he hecho (gráficas, Excel, PDF, enlaces…): te lo vuelvo a mandar',
       },
     ],
   },

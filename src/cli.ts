@@ -7637,6 +7637,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, bib.textoFijar(orden.kind, c, r, CREADOS_MAX_FIJADOS), { quote: true });
       return;
     }
+    // «/biblioteca enlaces»: los enlaces que te he mandado en este chat (Grok Bot, Library → Links).
+    if (orden.kind === 'enlaces') {
+      const { enlacesDe, enlacesVista } = await import('./enlaces-enviados.js');
+      const key = (await resolveThread(inbound)).key;
+      const v = enlacesVista(enlacesDe(sessions.recentAssistantTurns(key, 300)));
+      await say(inbound, v.text, {
+        quote: true,
+        ...(v.buttons.length ? { buttons: v.buttons, buttonsPerRow: 5 } : {}),
+      });
+      return;
+    }
     if (orden.kind === 'lista') {
       const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados, orden.busca);
       // Por fila: «📤 N» y su «📌 Fijar N»/«Soltar N» (dos por fila, la misma clave).

@@ -325,6 +325,21 @@ export class SessionStore {
     return this.#searchLike(needle, scope, cap);
   }
 
+  /**
+   * Las últimas respuestas del asistente en un ámbito (un chat), lo más nuevo primero:
+   * de aquí salen «los enlaces que te he mandado» (enlaces-enviados.ts).
+   */
+  recentAssistantTurns(scope: string, limit = 200): Array<{ text: string; at: number }> {
+    const cap = Math.max(1, Math.floor(limit));
+    const rows = this.#db
+      .prepare(
+        `SELECT t.text AS text, t.at AS at FROM session_turns t JOIN sessions s ON s.id = t.session_id
+         WHERE s.scope = ? AND t.role = 'assistant' ORDER BY t.at DESC, t.id DESC LIMIT ?`,
+      )
+      .all(scope, cap) as Array<{ text: string; at: number }>;
+    return rows.map((r) => ({ text: String(r.text ?? ''), at: Number(r.at) }));
+  }
+
   /** Most recent first. `rowid DESC` breaks ties within the same millisecond. */
   recent(scope?: string, limit = 10): Session[] {
     const cap = Math.max(1, Math.floor(limit));

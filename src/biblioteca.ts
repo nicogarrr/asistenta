@@ -219,6 +219,8 @@ export type BibliotecaOrden =
   | { kind: 'lista'; filtro: Tipo | null; busca?: string }
   | { kind: 'enviar'; n: number; filtro: Tipo | null }
   | { kind: 'clave'; clave: string }
+  /** «/biblioteca enlaces»: los enlaces que te he mandado (enlaces-enviados.ts). */
+  | { kind: 'enlaces' }
   /**
    * «/biblioteca fijar N» / «soltar N» (N de la lista sin filtro). El botón «📌 Fijar N»
    * manda la clave del archivo en vez de N (n = 0): sigue siendo el mismo archivo aunque la
@@ -254,6 +256,7 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
   }
   const filtro = filtroDe(a);
   if (filtro) return { kind: 'lista', filtro };
+  if (/^(?:los\s+|mis\s+)?(?:enlaces?|links?|urls?)$/i.test(a)) return { kind: 'enlaces' };
   // «/biblioteca factura», «buscar gastos octubre», «pdf factura»: por nombre. Una orden mal
   // escrita («fijar abc») no es una búsqueda: la ayuda.
   if (/^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar|enviar)\b/i.test(a))
@@ -337,4 +340,4 @@ export function fijarPorId(
 }
 
 export const BIBLIOTECA_AYUDA =
-  'Uso: /biblioteca (lo último que te he hecho), /biblioteca pdf|excel|word|graficas|csv, /biblioteca <nombre> para buscarlo, /biblioteca N para que te lo mande, o /biblioteca fijar|soltar N para que no se borre.';
+  'Uso: /biblioteca (lo último que te he hecho), /biblioteca pdf|excel|word|graficas|csv, /biblioteca <nombre> para buscarlo, /biblioteca enlaces (los enlaces que te he mandado), /biblioteca N para que te lo mande, o /biblioteca fijar|soltar N para que no se borre.';
