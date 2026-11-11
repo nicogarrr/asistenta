@@ -19,6 +19,20 @@ export function converterCandidates(env: NodeJS.ProcessEnv = process.env): strin
   return list.filter(Boolean);
 }
 
+/**
+ * Borra la carpeta temporal sin tumbar la conversión. En Windows el antivirus o el propio
+ * Calibre (aún cerrándose) tienen el fichero abierto un momento y rmSync lanza EBUSY/EPERM:
+ * dentro del `finally` eso tiraba el AZW3 ya hecho y Nico veía «no pude convertirlo».
+ * Se reintenta unas veces y, si sigue, se deja (la limpia el sistema) y se apunta.
+ */
+export function cleanTmp(dir: string, rm: typeof rmSync = rmSync): void {
+  try {
+    rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (err) {
+    log.warn('temp folder left behind', { dir, err: String(err) });
+  }
+}
+
 export type Runner = (
   cmd: string,
   args: string[],
@@ -87,7 +101,7 @@ export async function pdfToEpub(
     }
     return { ok: true, epub: readFileSync(output) };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    cleanTmp(dir);
   }
 }
 
@@ -135,7 +149,7 @@ export async function epubToAzw3(
     }
     return { ok: true, azw3: readFileSync(output) };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    cleanTmp(dir);
   }
 }
 
