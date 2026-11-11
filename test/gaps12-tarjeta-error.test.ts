@@ -54,7 +54,10 @@ describe('tarjeta de error en Telegram (Hermes: bloqueante o pasajero + una acci
     expect(cli).toContain(
       "commandButton(MODEL_ERROR_ACTION_LABEL.compactar, 'compactar', id, 'reintentar')",
     );
-    expect(cli).toContain('if (retryId && compacted) await cmdReintentar(');
+    // bugs-35: «Resumir y reintentar» quita el intento fallido ANTES de resumir y repite el
+    // mensaje él mismo (antes resumía y llamaba a /reintentar, que ya no podía quitarlo).
+    expect(cli).toContain('compactForRetry(last, current, () => thread.agent.compactNow())');
+    expect(cli).toContain('if (!last || !compacted) return;');
   });
 
   it('los botones caben en los 64 bytes y vuelven a ser la orden que arregla', () => {

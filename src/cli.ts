@@ -52,6 +52,7 @@ import {
 } from './project-context.js';
 import {
   compactarRetryTarget,
+  compactForRetry,
   formatTokens,
   LastTurns,
   RETRY_BUTTON_LABEL,
@@ -7468,10 +7469,25 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const thread = await resolveThread(inbound);
     // «🗜️ Resumir y reintentar» de la tarjeta de error: resume y repite ESE mensaje.
     const retryId = compactarRetryTarget(args);
-    let compacted = false;
+    const last = retryId ? lastTurns.get(thread.key) : undefined;
+    if (retryId && !(last && retryMatches(last, retryId))) {
+      await say(inbound, RETRY_STALE_TEXT, { quote: true });
+      return;
+    }
     const next = queueThreadTurn(thread, async () => {
+      let compacted = false;
       try {
-        const r = await thread.agent.compactNow();
+        const current = {
+          agent: thread.agent,
+          messages: thread.agent.messages,
+          compactions: thread.agent.compactions,
+        };
+        // Para repetirlo, el intento fallido sale ANTES de resumir: si no, quedaba dentro
+        // del resumen y el mensaje iba dos veces (y el chat decía «la respuesta anterior
+        // se queda»).
+        const r = last
+          ? (await compactForRetry(last, current, () => thread.agent.compactNow())).result
+          : await thread.agent.compactNow();
         compacted = r.compacted;
         // Los índices del historial ya no valen: /reintentar no rebobina.
         await say(
@@ -7486,9 +7502,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           quote: true,
         });
       }
+      if (!last || !compacted) return;
+      lastTurns.remember(thread.key, {
+        ...last,
+        agent: thread.agent,
+        mark: thread.agent.messages.length,
+        compactions: thread.agent.compactions,
+      });
+      await say(inbound, `Repito: «${sliceSafe(last.text, 80)}».`, { quote: true });
+      await runTurn(thread, { ...inbound, text: last.text, images: last.images }, last.text, {
+        images: last.images,
+      });
     });
     await next;
-    if (retryId && compacted) await cmdReintentar({ ...inbound, text: `/reintentar ${retryId}` });
   };
 
   // /modelo: avisa si el modelo nuevo tiene mucha menos ventana o no ve imágenes.

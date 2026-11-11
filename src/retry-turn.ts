@@ -51,6 +51,39 @@ export function rewindLastTurn<A>(
   return current.messages.splice(turn.mark).length;
 }
 
+/**
+ * «🗜️ Resumir y reintentar»: quita primero el intento fallido y LUEGO resume, para que
+ * el mensaje que se va a repetir no quede dos veces (una dentro del resumen o de la cola
+ * que se conserva, y otra al repetirlo). Antes se resumía con el intento fallido dentro:
+ * `rewindLastTurn` ya no podía quitarlo (el resumen cambia los índices) y el chat decía
+ * «El historial cambió desde entonces, así que la respuesta anterior se queda».
+ * Si no se llega a resumir, el intento vuelve a su sitio tal cual.
+ */
+export async function compactForRetry<A, R extends { compacted: boolean }>(
+  turn: Pick<RetryableTurn<A>, 'agent' | 'mark' | 'compactions'>,
+  current: { agent: A; messages: unknown[]; compactions: number },
+  compact: () => Promise<R>,
+): Promise<{ result: R; removed: number }> {
+  const safe =
+    current.agent === turn.agent &&
+    current.compactions === turn.compactions &&
+    turn.mark >= 0 &&
+    turn.mark <= current.messages.length;
+  const cut = safe ? current.messages.splice(turn.mark) : [];
+  let result: R;
+  try {
+    result = await compact();
+  } catch (err) {
+    current.messages.push(...cut);
+    throw err;
+  }
+  if (!result.compacted) {
+    current.messages.push(...cut);
+    return { result, removed: 0 };
+  }
+  return { result, removed: cut.length };
+}
+
 /** Etiqueta del botón que sale bajo una respuesta que falló. */
 export const RETRY_BUTTON_LABEL = '🔄 Reintentar';
 
