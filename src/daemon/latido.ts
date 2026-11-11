@@ -65,9 +65,15 @@ export interface LatidoDeps {
   abortCheck?: (l: Latido) => void;
 }
 
-/** Nombre con el que corre cada comprobación en el hilo (y con el que se para). */
-export function latidoRoutineName(l: Pick<Latido, 'task'>): string {
-  return `latido: ${l.task.slice(0, 60)}`;
+/**
+ * Nombre con el que corre cada comprobación en el hilo (y con el que se para). Lleva el id:
+ * con solo los 60 primeros caracteres de la tarea, dos vigilancias que empiezan igual
+ * («mira si baja el precio de las zapatillas Nike Pegasus 41 talla 43 en …») compartían
+ * nombre, y «deja de vigilar» una cortaba también la comprobación en marcha de la otra
+ * (bugs-36).
+ */
+export function latidoRoutineName(l: Pick<Latido, 'task' | 'id'>): string {
+  return `latido: ${l.task.slice(0, 60)} · ${l.id}`;
 }
 
 const defaultLater = (fn: () => void, ms: number): { cancel: () => void } => {
