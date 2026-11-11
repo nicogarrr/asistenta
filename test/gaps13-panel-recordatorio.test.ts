@@ -53,7 +53,12 @@ describe('gaps-13: recordatorio de aprobación también en el panel', () => {
     expect(html).toContain('recordarAprobaciones(ahora);');
     expect(html).toContain('aprobacionesRecordadas[id] = true;');
     expect(html).toContain("Notification.permission !== 'granted'");
-    expect(html).not.toContain('Notification.requestPermission');
+    // gaps-14: el permiso solo se pide al tocar «🔔 Activar avisos», nunca solo.
+    const pide = html.indexOf('Notification.requestPermission');
+    expect(html.lastIndexOf('Notification.requestPermission')).toBe(pide);
+    expect(html.lastIndexOf("b.addEventListener('click'", pide)).toBeGreaterThan(
+      html.lastIndexOf("getElementById('activar-avisos')", pide),
+    );
     expect(html).toContain('.aprobacion .recordatorio');
   });
 });

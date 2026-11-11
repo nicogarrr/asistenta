@@ -516,6 +516,8 @@ export function renderPage(): string {
       <article id="tarjeta-aprobaciones" class="tarjeta" aria-labelledby="titulo-aprobaciones">
         <header class="tarjeta-cabecera">
           <h2 id="titulo-aprobaciones">Aprobaciones <span id="contador-aprobaciones" class="contador" hidden></span></h2>
+          <button id="activar-avisos" class="mini" type="button" hidden>🔔 Activar avisos</button>
+          <button id="sonido-avisos" class="mini" type="button" aria-pressed="true">🔊 Sonido</button>
           <button class="mini" type="button" data-refrescar="aprobaciones" aria-label="Refrescar Aprobaciones">Refrescar</button>
         </header>
         <p id="conexion-aprobaciones" class="aviso-conexion" role="status" hidden>Sin conexión con el asistente. Reintento cada 15 s; lo que ves puede estar desactualizado.</p>
@@ -1153,6 +1155,7 @@ ${renderMiniAppScript()}
             aprobacionesRecordadas[id] = true;
             anunciar(texto);
             avisoDelNavegador(t.getAttribute('data-titulo') || 'Aprobación pendiente', id);
+            sonarAviso();
           }
         }
         if (alguno !== hayRecordatorio) {
@@ -1160,6 +1163,98 @@ ${renderMiniAppScript()}
           document.title = (alguno ? '⏳ ' : '') + formato.tituloPestana(pendientesPrevios || 0);
         }
       }
+
+      // Un «din-don» corto con el recordatorio (Grok Bot hace sonar el móvil otra vez). Sin
+      // archivos: dos tonos de WebAudio, bajitos. El navegador solo deja sonar después de que
+      // Nico haya tocado la página una vez (se desbloquea con su primer toque o tecla), y
+      // «🔊 Sonido» lo apaga en este navegador.
+      var SONIDO_CLAVE = 'asistenta-sonido-avisos';
+      var contextoSonido = null;
+      function sonidoActivo() {
+        try { return window.localStorage.getItem(SONIDO_CLAVE) !== 'no'; } catch (error) { return true; }
+      }
+      function pintarBotonSonido() {
+        var b = document.getElementById('sonido-avisos');
+        if (!b) return;
+        var on = sonidoActivo();
+        b.textContent = on ? '🔊 Sonido' : '🔇 Sin sonido';
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.title = on ? 'Suena un aviso corto cuando una aprobación lleva 3 min esperando' : 'Los recordatorios no suenan';
+      }
+      function desbloquearSonido() {
+        try {
+          var Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return;
+          if (!contextoSonido) contextoSonido = new Ctx();
+          if (contextoSonido.state === 'suspended') contextoSonido.resume();
+        } catch (error) {
+          contextoSonido = null;
+        }
+      }
+      function sonarAviso() {
+        if (!sonidoActivo() || !contextoSonido || contextoSonido.state !== 'running') return;
+        try {
+          var ahoraSonido = contextoSonido.currentTime;
+          [880, 660].forEach(function (hz, i) {
+            var osc = contextoSonido.createOscillator();
+            var vol = contextoSonido.createGain();
+            var inicio = ahoraSonido + i * 0.18;
+            osc.type = 'sine';
+            osc.frequency.value = hz;
+            vol.gain.setValueAtTime(0.0001, inicio);
+            vol.gain.exponentialRampToValueAtTime(0.08, inicio + 0.02);
+            vol.gain.exponentialRampToValueAtTime(0.0001, inicio + 0.16);
+            osc.connect(vol);
+            vol.connect(contextoSonido.destination);
+            osc.start(inicio);
+            osc.stop(inicio + 0.17);
+          });
+        } catch (error) {
+          // Sin sonido: quedan la línea, la pestaña y el aviso del sistema.
+        }
+      }
+      document.addEventListener('pointerdown', desbloquearSonido, { passive: true });
+      document.addEventListener('keydown', desbloquearSonido);
+      (function () {
+        var b = document.getElementById('sonido-avisos');
+        if (!b) return;
+        pintarBotonSonido();
+        b.addEventListener('click', function () {
+          try { window.localStorage.setItem(SONIDO_CLAVE, sonidoActivo() ? 'no' : 'si'); } catch (error) {}
+          pintarBotonSonido();
+          desbloquearSonido();
+          sonarAviso();
+        });
+      })();
+
+      // «🔔 Activar avisos»: el permiso de avisos del sistema SOLO se pide al tocar este botón
+      // (el navegador exige un toque, y nunca se pide por sorpresa). Sale solo si aún no se
+      // decidió; si Nico lo bloqueó, el panel le dice dónde cambiarlo.
+      function pintarBotonAvisos() {
+        var b = document.getElementById('activar-avisos');
+        if (!b) return;
+        b.hidden = typeof Notification === 'undefined' || Notification.permission !== 'default';
+      }
+      (function () {
+        var b = document.getElementById('activar-avisos');
+        if (!b) return;
+        pintarBotonAvisos();
+        b.addEventListener('click', function () {
+          desbloquearSonido();
+          if (typeof Notification === 'undefined') return;
+          var hecho = function (permiso) {
+            pintarBotonAvisos();
+            if (permiso === 'granted') mostrarAviso('🔔 Listo: si una aprobación lleva 3 min esperando, te sale un aviso del sistema.');
+            else if (permiso === 'denied') mostrarAviso('Avisos bloqueados en este navegador. Puedes activarlos en los ajustes del sitio (el candado de la barra de direcciones).');
+          };
+          try {
+            var r = Notification.requestPermission(hecho);
+            if (r && typeof r.then === 'function') r.then(hecho);
+          } catch (error) {
+            pintarBotonAvisos();
+          }
+        });
+      })();
 
       // Solo si Nico ya dio permiso de avisos a la página: nunca se pide aquí por sorpresa.
       function avisoDelNavegador(titulo, id) {
