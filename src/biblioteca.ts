@@ -122,12 +122,26 @@ export interface BibliotecaView {
   sends: Array<{ label: string; clave: string }>;
 }
 
+/**
+ * El orden de la lista: lo fijado arriba (Grok Bot, «Pin» en su Library,
+ * https://docs.x.ai/grok-bot/files-and-results), luego lo demás, siempre lo más nuevo
+ * primero. «📤 N», «/biblioteca N» y «fijar N» cuentan con este mismo orden.
+ */
+export function ordenBiblioteca(
+  lista: readonly Creado[],
+  fijados: ReadonlySet<string> = new Set(),
+): Creado[] {
+  return [...lista.filter((c) => fijados.has(c.id)), ...lista.filter((c) => !fijados.has(c.id))];
+}
+
 export function bibliotecaVista(
   lista: readonly Creado[],
   filtro: Tipo | null,
   now: number = Date.now(),
+  fijados: ReadonlySet<string> = new Set(),
 ): BibliotecaView {
-  const all = filtro ? lista.filter((c) => tipoDe(c.nombre) === filtro) : [...lista];
+  const ordered = ordenBiblioteca(lista, fijados);
+  const all = filtro ? ordered.filter((c) => tipoDe(c.nombre) === filtro) : ordered;
   if (!lista.length)
     return {
       text: '📚 Aún no te he hecho ningún archivo. Pídeme una gráfica, un Excel o un PDF y aquí lo tendrás.',
@@ -141,13 +155,14 @@ export function bibliotecaVista(
   const shown = all.slice(0, BIBLIOTECA_MAX);
   const lines = shown.map(
     (c, i) =>
-      `${i + 1}. ${ICON[tipoDe(c.nombre)]} ${c.nombre} · ${size(c.bytes)} · ${cuando(c.creado, now)}`,
+      `${i + 1}. ${fijados.has(c.id) ? '📌 ' : ''}${ICON[tipoDe(c.nombre)]} ${c.nombre} · ${size(c.bytes)} · ${cuando(c.creado, now)}`,
   );
   const more = all.length > shown.length ? `\n…y ${all.length - shown.length} más.` : '';
   return {
     text:
       `📚 Lo que te he hecho${filtro ? ` (${filtro})` : ''}: ${all.length}\n${lines.join('\n')}${more}\n\n` +
-      'Toca 📤 para que te lo mande otra vez, o «/biblioteca N». También te lo adjunto a un correo si me dices su nombre.',
+      'Toca 📤 para que te lo mande otra vez, o «/biblioteca N». También te lo adjunto a un correo si me dices su nombre.\n' +
+      '📌 «/biblioteca fijar N» lo deja arriba y no se borra nunca (guardo los 40 últimos).',
     sends: shown
       .map((c, i) => ({ label: `📤 ${i + 1}`, clave: claveBoton(c, lista) }))
       .filter((s) => s.clave),
@@ -159,11 +174,19 @@ export type BibliotecaOrden =
   | { kind: 'lista'; filtro: Tipo | null }
   | { kind: 'enviar'; n: number; filtro: Tipo | null }
   | { kind: 'clave'; clave: string }
+  /** «/biblioteca fijar N» / «soltar N» (N de la lista sin filtro). */
+  | { kind: 'fijar' | 'soltar'; n: number }
   | { kind: 'ayuda'; why: string };
 
 export function bibliotecaOrden(args: string): BibliotecaOrden {
   const a = args.trim();
   if (!a) return { kind: 'lista', filtro: null };
+  const pin = /^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar)\s+(\d{1,2})$/i.exec(a);
+  if (pin?.[1] && pin[2])
+    return {
+      kind: /^(fijar|fija|anclar)$/i.test(pin[1]) ? 'fijar' : 'soltar',
+      n: Number(pin[2]),
+    };
   const send = /^enviar\s+(\d{8}-\d{6}(?:-\d{1,2})?(?:-h[0-9a-f]{6})?)$/i.exec(a);
   if (send?.[1]) return { kind: 'clave', clave: send[1] };
   const parts = a.split(/\s+/);
@@ -178,7 +201,11 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
 }
 
 /** El archivo que pide una orden; null si no existe (ya podado o número fuera de lista). */
-export function bibliotecaElegir(lista: readonly Creado[], orden: BibliotecaOrden): Creado | null {
+export function bibliotecaElegir(
+  lista: readonly Creado[],
+  orden: BibliotecaOrden,
+  fijados: ReadonlySet<string> = new Set(),
+): Creado | null {
   if (orden.kind === 'clave') {
     const m = /^(.*)-(h[0-9a-f]{6})$/i.exec(orden.clave);
     if (m)
@@ -187,10 +214,32 @@ export function bibliotecaElegir(lista: readonly Creado[], orden: BibliotecaOrde
       );
     return lista.find((c) => claveDe(c.id) === orden.clave) ?? null;
   }
+  const ordered = ordenBiblioteca(lista, fijados);
+  if (orden.kind === 'fijar' || orden.kind === 'soltar')
+    return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (ordered[orden.n - 1] ?? null) : null;
   if (orden.kind !== 'enviar') return null;
-  const all = orden.filtro ? lista.filter((c) => tipoDe(c.nombre) === orden.filtro) : lista;
+  const all = orden.filtro ? ordered.filter((c) => tipoDe(c.nombre) === orden.filtro) : ordered;
   return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (all[orden.n - 1] ?? null) : null;
 }
 
+/** La respuesta a «fijar N» / «soltar N» (lo hace `CreadosStore.fijar/soltar`). */
+export function textoFijar(
+  kind: 'fijar' | 'soltar',
+  c: Creado | null,
+  r: 'ok' | 'ya' | 'lleno' | 'no' | boolean,
+  max: number,
+): string {
+  if (!c) return 'No tengo ese número en la lista. /biblioteca para verla.';
+  if (kind === 'soltar')
+    return r
+      ? `Suelto «${c.nombre}»: vuelve a la lista normal (se borra cuando haya 40 más nuevos).`
+      : `«${c.nombre}» no estaba fijado.`;
+  if (r === 'ya') return `📌 «${c.nombre}» ya estaba fijado.`;
+  if (r === 'lleno')
+    return `Ya tienes ${max} fijados, que es el tope. Suelta alguno con «/biblioteca soltar N».`;
+  if (r !== 'ok') return 'Ese archivo ya no lo tengo. /biblioteca para ver los que quedan.';
+  return `📌 Fijado «${c.nombre}»: sale arriba en /biblioteca y no se borra. «/biblioteca soltar N» lo suelta.`;
+}
+
 export const BIBLIOTECA_AYUDA =
-  'Uso: /biblioteca (lo último que te he hecho), /biblioteca pdf|excel|word|graficas|csv, o /biblioteca N para que te lo mande.';
+  'Uso: /biblioteca (lo último que te he hecho), /biblioteca pdf|excel|word|graficas|csv, /biblioteca N para que te lo mande, o /biblioteca fijar|soltar N para que no se borre.';
