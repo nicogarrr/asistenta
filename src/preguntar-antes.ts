@@ -154,7 +154,14 @@ export function areasOf(text: string): AreaId[] {
  * de ahora consúltame antes de ejecutar comandos» → lo que va tras «antes de». null si no es eso.
  */
 export function askFirstRequest(text: string): string | null {
-  const t = text.trim().replace(/[.!¡]+$/u, '');
+  // En un grupo el bot solo atiende si lo mencionan, y la mención llega en el texto
+  // («@asistenta_bot pregúntame antes de …»): fuera, al principio o al final (bugs-35).
+  const t = text
+    .trim()
+    .replace(/[.!¡]+$/u, '')
+    .replace(/^@[A-Za-z0-9_]{3,32}[\s,:]+/u, '')
+    .replace(/[\s,]+@[A-Za-z0-9_]{3,32}$/u, '')
+    .replace(/[.!¡]+$/u, '');
   const m =
     /^(?:(?:a partir de ahora|desde ahora|de ahora en adelante|siempre)[,\s]+)?(?:preg[uú]ntame|p[ií]deme permiso|cons[uú]ltame)(?:\s+siempre)?\s+antes\s+de\s+(.{3,120})$/iu.exec(
       t,
