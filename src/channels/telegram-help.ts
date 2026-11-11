@@ -44,8 +44,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         command: 'compra',
-        args: '[cosas]',
-        description: 'lista de la compra con botones para tachar',
+        args: '[cosas|receta <enlace>]',
+        description: 'lista de la compra con botones para tachar; «receta» apunta sus ingredientes',
       },
       { command: 'estado', description: 'cómo estoy: herramientas y errores de hoy' },
       {

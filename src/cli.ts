@@ -592,6 +592,7 @@ import {
   compraPress,
   createCompraTool,
   itemsFromText,
+  recetaACompra,
   runCompraIntent,
 } from './compra.js';
 import { fetchGoQuota } from './core/go-quota.js';
@@ -3241,7 +3242,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // «cuando llegue a casa recuérdame…»: salta con la ubicación en directo (src/llegada.ts).
       createLlegadaTool(llegadaDeps(), () => thread.chatKey.split(':')[1] ?? ''),
       // «añade leche», «ya he comprado el pan»: la lista de la compra de este chat (/compra con botones).
-      createCompraTool(new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey)),
+      createCompraTool(
+        new CompraStore(join(paths.state, 'lista-compra.json'), thread.chatKey),
+        (url) =>
+          fetchPage(url, { format: 'html', maxChars: 3_000_000, timeoutMs: 30_000 }).then(
+            (p) => p.text,
+          ),
+      ),
       // «el pedido de Mercadona los lunes»: el día del aviso semanal (pedir y pagar van con botones).
       createMercadonaTool(join(paths.state, 'mercadona.json')),
       // «prepárame la cesta y la pago yo»: el carrito o el pago a Telegram con un botón que
@@ -8518,6 +8525,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const cmdCompra = async (inbound: Inbound, args: string): Promise<void> => {
     const store = new CompraStore(join(paths.state, 'lista-compra.json'), chatKey(inbound));
     const a = args.trim();
+    // «/compra receta <enlace o texto>»: los ingredientes a la lista (idea de Muse).
+    const receta = /^receta\b[:\s]*/i.exec(a);
+    if (receta) {
+      const view = await recetaACompra(store, a.slice(receta[0].length), (url) =>
+        fetchPage(url, { format: 'html', maxChars: 3_000_000, timeoutMs: 30_000 }).then(
+          (p) => p.text,
+        ),
+      );
+      await say(inbound, view.text, { quote: true, buttons: view.buttons });
+      return;
+    }
     const intent = !a
       ? ({ kind: 'show' } as const)
       : /^(?:limpiar|limpia|tachados)$/i.test(a)
