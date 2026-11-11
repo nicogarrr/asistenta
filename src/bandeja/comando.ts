@@ -291,14 +291,25 @@ async function calendarioSub(
   const args = eventoArgs(ev, tz, item.url);
   const cuando = cuandoTexto(args);
   const mark = `cal_added_${item.id}`;
-  if (deps.store.getMeta(mark))
+  // La marca guarda con qué fecha se apuntó («inicio=…»). Si «🔄 Releer la página» trae otra
+  // fecha (el congreso se movió), antes decía «ya está en tu calendario» con la fecha NUEVA,
+  // y en su calendario seguía la vieja (bugs-36). Una marca antigua (sin fecha) vale como
+  // la de ahora.
+  const marca = deps.store.getMeta(mark);
+  const conFecha = marca?.startsWith('inicio=') ? marca.slice('inicio='.length) : null;
+  const otraFecha = Boolean(marca && conFecha !== null && conFecha !== ev.inicio);
+  if (marca && !otraFecha)
     return { text: `📅 #${item.id} ya está en tu calendario: «${ev.nombre}», ${cuando}.` };
   if (yaPaso(args, localWallTime(deps.now().toISOString(), tz)))
     return { text: `📅 «${ev.nombre}» ya pasó (${cuando}): no lo apunto.` };
   if (sub === 'calendario') {
     const yes = commandButton('✅ Sí, apúntalo', 'bandeja', String(item.id), 'apuntar');
+    const { fin: _fin, ...sinFin } = ev;
+    const antes = otraFecha
+      ? `⚠️ Lo apuntaste con otra fecha (${cuandoTexto(eventoArgs({ ...sinFin, inicio: conFecha ?? ev.inicio }, tz, item.url))}) y la página dice ahora otra. Borra el de antes en tu calendario si ya no vale.\n`
+      : '';
     return {
-      text: `📅 ¿Lo apunto en tu Google Calendar?
+      text: `${antes}📅 ¿Lo apunto en tu Google Calendar?
 «${ev.nombre}»
 🗓️ ${cuando}${
         ev.lugar
@@ -320,7 +331,7 @@ async function calendarioSub(
   try {
     const text = await deps.calendario(args);
     // Solo si de verdad se apuntó: sin Google conectado, el siguiente toque lo intenta otra vez.
-    if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, new Date().toISOString());
+    if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, `inicio=${ev.inicio}`);
     return { text };
   } finally {
     calendarioEnCurso.delete(busy);
