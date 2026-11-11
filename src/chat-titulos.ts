@@ -74,7 +74,13 @@ export class ChatTitulos {
     const prev = datos[key];
     const now = this.#now();
     // Reescribe el «visto» como mucho una vez al día (para la poda), o si cambia el nombre.
-    if (prev && prev.titulo === titulo && now - prev.visto < 86_400_000) return false;
+    if (prev && prev.titulo === titulo && now - prev.visto < 86_400_000) {
+      // En memoria sí, al momento: «/estado» dice «último mensaje hoy» de un grupo que habló
+      // hace un minuto (antes podía decir «ayer»: el fichero se reescribe una vez al día).
+      // Se guarda en disco con el siguiente cambio de nombre o al día siguiente (bugs-36).
+      datos[key] = { titulo, visto: now };
+      return false;
+    }
     datos[key] = { titulo, visto: now };
     const keys = Object.keys(datos);
     if (keys.length > CHAT_TITULOS_MAX) {

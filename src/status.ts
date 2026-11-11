@@ -1,4 +1,5 @@
 import { REACTION_LOG_MSG, REACTION_NEGATIVE_LOG_MSG } from './channels/telegram-reacciones.js';
+import { localDay } from './datecontext.js';
 import { type ProjectContext, projectFolderName } from './project-context.js';
 /**
  * Datos para /estado: que Nico vea desde Telegram si algo falla, sin abrir el PC.
@@ -113,8 +114,13 @@ export function conversationStatus(c: {
 /** Grupos que enseña /estado como mucho (el resto, «y N más»). */
 export const ESTADO_GRUPOS_MAX = 8;
 
-function haceDias(ms: number): string {
-  const d = Math.floor(ms / 86_400_000);
+/**
+ * «hoy», «ayer» o «hace N días» por días de calendario en su hora. Antes contaba bloques de
+ * 24 h: un mensaje de ayer a las 18:00 salía «hoy» hasta las 18:00 de hoy (bugs-36).
+ */
+function haceDias(visto: number, now: number): string {
+  const dia = (t: number) => Date.parse(`${localDay(new Date(t))}T12:00:00Z`);
+  const d = Math.round((dia(now) - dia(visto)) / 86_400_000);
   if (d <= 0) return 'hoy';
   if (d === 1) return 'ayer';
   return `hace ${d} días`;
@@ -132,7 +138,7 @@ export function gruposEstado(
   if (!grupos.length) return [];
   const lines = grupos
     .slice(0, ESTADO_GRUPOS_MAX)
-    .map((g) => `«${g.titulo}» (último mensaje ${haceDias(now - g.visto)})`);
+    .map((g) => `«${g.titulo}» (último mensaje ${haceDias(g.visto, now)})`);
   if (grupos.length > ESTADO_GRUPOS_MAX) lines.push(`…y ${grupos.length - ESTADO_GRUPOS_MAX} más`);
   return lines;
 }
