@@ -52,6 +52,23 @@ const TEMA_DESPUES = new RegExp(
 );
 
 /**
+ * Lo de cuándo o cómo al final del tema («con Marta mañana», «con el banco el lunes», «con Ana
+ * por teléfono») no es parte del tema: «Marta mañana» no sale nunca en lo que escribe y el
+ * recordatorio no saltaría (bugs-38).
+ */
+const CUANDO_FINAL =
+  /\s+(?:hoy|mañana|manana|pasado\s+mañana|luego|después|despues|otra\s+vez|de\s+nuevo|pronto|esta\s+(?:mañana|manana|tarde|noche|semana)|este\s+(?:mes|finde|fin\s+de\s+semana)|(?:el|este|el\s+próximo|el\s+proximo)\s+(?:lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)|la\s+(?:semana|próxima\s+semana|proxima\s+semana)(?:\s+que\s+viene)?|por\s+(?:teléfono|telefono|whatsapp|correo|mail|email)|en\s+persona)$/i;
+function sinCuando(tema: string): string {
+  let t = tema.trim();
+  for (let i = 0; i < 3; i++) {
+    const s = t.replace(CUANDO_FINAL, '').trim();
+    if (s === t || s.length < 2) break;
+    t = s;
+  }
+  return t;
+}
+
+/**
  * «cuando hable de Indra, recuérdame mirar el dividendo», «si menciono a Ana, pregúntame por
  * su viaje», «cuando salga el tema de la hipoteca, dime que llame al banco», y al revés
  * («recuérdame mirar el dividendo cuando hable de Indra»). null si no lo es.
@@ -66,7 +83,9 @@ export function intencionIntent(text: string): { claves: string[]; texto: string
   const temaCrudo = a ? a[1] : b?.[2] && b[2].trim().split(/\s+/).length <= 5 ? b[2] : undefined;
   const textoCrudo = a ? a[2] : b?.[1];
   if (!temaCrudo || !textoCrudo) return null;
-  const tema = temaCrudo.replace(/^(?:el|la|los|las|mi|mis)\s+/i, '').trim();
+  const tema = sinCuando(temaCrudo)
+    .replace(/^(?:el|la|los|las|mi|mis)\s+/i, '')
+    .trim();
   if (/^(?:casa|del?\s+trabajo|la\s+oficina)$/i.test(tema)) return null;
   const claves = tema
     .split(/\s*(?:,|\s+o\s+|\s+u\s+|\/)\s*/i)
