@@ -175,6 +175,11 @@ export interface Outbound {
    * exactly one place that decides approve vs deny. Adapters must not rewrite it.
    */
   buttons?: Array<{ label: string; action: string }>;
+  /**
+   * Botones por fila (2 si no se dice). La bandeja usa 3: «✅ visto · ⏭️ mañana · 🗑️ fuera»
+   * de una misma cosa en una fila, y la siguiente cosa en la de abajo.
+   */
+  buttonsPerRow?: number;
   replyToMessageId?: string;
 }
 

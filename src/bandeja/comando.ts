@@ -1,0 +1,271 @@
+/**
+ * /bandeja desde Telegram (también /guardar):
+ *   /bandeja                 lo de hoy, una línea por cosa (🔴🟡⚪⏳⚠️)
+ *   /bandeja <enlace|texto>  guarda a mano; /bandeja libro <título> guarda un libro
+ *   /bandeja ver N           la ficha de una (veredicto, nota, ideas, Goodreads) con botones
+ *   /bandeja ahora N         la procesa ya (o la repite si falló) y manda su ficha
+ *   /bandeja visto|manana|descartar N   lo mismo que los botones ✅ ⏭️ 🗑️
+ *   /bandeja resumen         el resumen de hoy ahora (no cambia el de la noche)
+ *   /bandeja semana          lo mejor de los últimos 7 días
+ *   /bandeja pendientes      todo lo que queda por ver, de cualquier día
+ *   /bandeja hora 22:00      la hora del resumen de cada noche
+ *   /bandeja captura on|off  guardar solo lo que llega a secas (on) o solo con /bandeja (off)
+ */
+import { localDay } from '../datecontext.js';
+import { type CaptureCandidate, explicitCapture } from './captura.js';
+import {
+  ackButtons,
+  ackText,
+  type Button,
+  byVerdict,
+  cardText,
+  itemButtons,
+  kindEmoji,
+  listText,
+  shortTitle,
+} from './formato.js';
+import type { BandejaQueue } from './procesar.js';
+import {
+  composeDigest,
+  composeWeekly,
+  digestHora,
+  digestItems,
+  parseHora,
+  pdfName,
+  pdfsToAttach,
+  tomorrowFor,
+} from './resumen.js';
+import type { BandejaItem, BandejaStore } from './store.js';
+
+export interface BandejaReply {
+  text: string;
+  buttons?: Button[];
+  /** Botones por fila (3 para ✅ ⏭️ 🗑️ de una misma cosa). */
+  perRow?: number;
+  /** PDF original que adjuntar detrás (lo 🔴 con PDF del autor). */
+  pdf?: { url: string; name: string };
+}
+
+export interface BandejaCommandDeps {
+  store: BandejaStore;
+  queue: BandejaQueue;
+  chatId: string;
+  now: () => Date;
+  /** Un aviso intermedio («⏳ Lo miro ahora…») antes de una respuesta lenta. */
+  progress?: (text: string) => Promise<unknown>;
+  /** Un fichero que vino con la orden (foto o PDF con pie «/bandeja»). */
+  attached?: CaptureCandidate | null;
+  env?: NodeJS.ProcessEnv;
+}
+
+/** ¿Está encendida la captura automática? /bandeja captura manda; si no, PA_BANDEJA_CAPTURA (por defecto sí). */
+export function captureOn(store: BandejaStore, env: NodeJS.ProcessEnv = process.env): boolean {
+  const set = store.getMeta('captura');
+  if (set === 'on') return true;
+  if (set === 'off') return false;
+  const v = (env.PA_BANDEJA_CAPTURA ?? '').trim().toLowerCase();
+  return !['0', 'off', 'no', 'false'].includes(v);
+}
+
+/** Guarda y encola; devuelve el aviso con sus botones. */
+export function captureAndAck(
+  deps: Pick<BandejaCommandDeps, 'store' | 'queue' | 'chatId' | 'now' | 'env'>,
+  cands: readonly CaptureCandidate[],
+): BandejaReply {
+  const now = deps.now();
+  const day = localDay(now);
+  const saved = cands.map((c) => deps.store.add(deps.chatId, c, now, day));
+  for (const s of saved) if (!s.dup) void deps.queue.enqueue(s.item.id);
+  return {
+    text: ackText(saved, deps.store.countDay(deps.chatId, day), digestHora(deps.store, deps.env)),
+    buttons: ackButtons(saved),
+  };
+}
+
+function ownItem(deps: BandejaCommandDeps, raw: string | undefined): BandejaItem | string {
+  const id = Number((raw ?? '').replace(/^#/, ''));
+  if (!Number.isSafeInteger(id) || id <= 0)
+    return 'Dime el número, por ejemplo «/bandeja ver 12» (sale como #12 en /bandeja).';
+  const item = deps.store.get(id);
+  if (!item || item.chatId !== deps.chatId)
+    return `No tengo la #${id} en tu bandeja. Mira /bandeja.`;
+  return item;
+}
+
+const HELP = [
+  '📥 La bandeja: mándame a secas (sin escribir nada más) enlaces de YouTube, X o artículos, PDFs, capturas o «libro: título», y los guardo.',
+  'Cada noche te digo qué hacer con cada cosa: 🔴 imprescindible (entero) · 🟡 ideas buenas (basta el resumen) · ⚪ paja, con nota del 1 al 10.',
+  'Si escribes algo con el enlace («resúmeme esto…»), te contesto como siempre.',
+  '',
+  '/bandeja — lo de hoy · /bandeja ver N — ficha · /bandeja resumen — el resumen ya',
+  '/bandeja semana · /bandeja pendientes · /bandeja hora 22:00 · /bandeja captura off',
+].join('\n');
+
+export async function bandejaCommand(
+  args: string,
+  deps: BandejaCommandDeps,
+): Promise<BandejaReply> {
+  const trimmed = args.trim();
+  const [subRaw, ...restParts] = trimmed.split(/\s+/);
+  const sub = (subRaw ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const rest = restParts.join(' ').trim();
+  const now = deps.now();
+  const today = localDay(now);
+  const hora = digestHora(deps.store, deps.env);
+
+  if (!trimmed && deps.attached) return captureAndAck(deps, [deps.attached]);
+
+  switch (sub) {
+    case '':
+    case 'hoy': {
+      const items = deps.store.ofDay(deps.chatId, today);
+      const carried = deps.store
+        .pending(deps.chatId)
+        .filter((i) => i.day !== today && i.verdict === 'imprescindible');
+      return { text: listText(items, carried, hora) };
+    }
+    case 'ayuda':
+    case 'help':
+      return { text: HELP };
+    case 'ver':
+    case 'ficha': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      return {
+        text: cardText(item),
+        buttons: item.state === 'pendiente' ? itemButtons(item) : [],
+        perRow: 3,
+      };
+    }
+    case 'ahora':
+    case 'ya': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      if (item.status !== 'listo') {
+        if (item.status === 'error') deps.store.setStatus(item.id, 'nuevo');
+        await deps
+          .progress?.(`⏳ Mirando #${item.id} ${kindEmoji(item.kind)} ${shortTitle(item, 60)}…`)
+          .catch(() => undefined);
+        await deps.queue.enqueue(item.id);
+      }
+      const fresh = deps.store.get(item.id) ?? item;
+      const pdf = pdfsToAttach([fresh])[0];
+      return {
+        text: cardText(fresh),
+        buttons: fresh.state === 'pendiente' ? itemButtons(fresh) : [],
+        perRow: 3,
+        ...(pdf?.extra.pdfUrl ? { pdf: { url: pdf.extra.pdfUrl, name: pdfName(pdf) } } : {}),
+      };
+    }
+    case 'visto': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      deps.store.setState(item.id, 'visto');
+      return { text: `✅ #${item.id} visto: ${shortTitle(item, 60)}.` };
+    }
+    case 'manana': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      if (item.state !== 'pendiente') deps.store.setState(item.id, 'pendiente');
+      deps.store.moveTo(item.id, tomorrowFor(now));
+      return { text: `⏭️ #${item.id} para mañana: ${shortTitle(item, 60)}.` };
+    }
+    case 'descartar':
+    case 'quitar':
+    case 'borrar': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      deps.store.setState(item.id, 'descartado');
+      return { text: `🗑️ #${item.id} fuera: ${shortTitle(item, 60)}.` };
+    }
+    case 'paja': {
+      const m = /^(\d{4})(\d{2})(\d{2})$/.exec(restParts[0] ?? '');
+      const upTo = m ? `${m[1]}-${m[2]}-${m[3]}` : today;
+      const chaff = deps.store
+        .pending(deps.chatId)
+        .filter((i) => i.verdict === 'paja' && i.day <= upTo);
+      for (const it of chaff) deps.store.setState(it.id, 'descartado');
+      return {
+        text: chaff.length
+          ? `🧹 Quitada la paja: ${chaff.length} cosa${chaff.length === 1 ? '' : 's'}.`
+          : '🧹 No quedaba paja.',
+      };
+    }
+    case 'resumen': {
+      const items = digestItems(deps.store, deps.chatId, today);
+      const d = composeDigest(items, today);
+      return {
+        text: d.empty ? `${d.text} Mándame enlaces o PDFs a secas y te los filtro.` : d.text,
+        buttons: d.buttons,
+        perRow: 3,
+      };
+    }
+    case 'semana': {
+      const items = deps.store.processedBetween(
+        deps.chatId,
+        new Date(now.getTime() - 7 * 86_400_000).toISOString(),
+        now.toISOString(),
+      );
+      return { text: composeWeekly(items) ?? '🏆 Esta semana no guardaste nada en la bandeja.' };
+    }
+    case 'pendientes':
+    case 'todo': {
+      const items = deps.store.pending(deps.chatId).sort(byVerdict);
+      if (!items.length) return { text: '📥 No te queda nada pendiente en la bandeja.' };
+      const lines = [`📥 Pendiente de ver: ${items.length}`];
+      for (const it of items.slice(0, 40)) {
+        const mark =
+          it.verdict === 'imprescindible'
+            ? '🔴'
+            : it.verdict === 'ideas'
+              ? '🟡'
+              : it.verdict === 'paja'
+                ? '⚪'
+                : it.status === 'error'
+                  ? '⚠️'
+                  : '⏳';
+        lines.push(
+          `${mark} #${it.id} ${kindEmoji(it.kind)} ${shortTitle(it, 60)}${it.score ? ` ${it.score}/10` : ''}`,
+        );
+      }
+      if (items.length > 40) lines.push(`…y ${items.length - 40} más.`);
+      return { text: lines.join('\n') };
+    }
+    case 'hora': {
+      const h = parseHora(rest);
+      if (!h)
+        return {
+          text: `El resumen de la bandeja sale a las ${hora}. Para cambiarlo: «/bandeja hora 22:00».`,
+        };
+      deps.store.setMeta('hora', h);
+      // Si el de hoy ya salió, no se repite; si aún no, sale a la hora nueva.
+      return { text: `⏰ Hecho: el resumen de la bandeja sale cada noche a las ${h}.` };
+    }
+    case 'captura': {
+      const v = rest.toLowerCase();
+      if (['on', 'si', 'sí', '1'].includes(v)) {
+        deps.store.setMeta('captura', 'on');
+        return {
+          text: '📥 Captura encendida: lo que me mandes a secas (enlaces, PDFs, capturas) va a la bandeja.',
+        };
+      }
+      if (['off', 'no', '0'].includes(v)) {
+        deps.store.setMeta('captura', 'off');
+        return {
+          text: '📥 Captura apagada: solo guardo con «/bandeja <enlace>» o «libro: título». Lo demás te lo contesto como siempre.',
+        };
+      }
+      return {
+        text: `La captura automática está ${captureOn(deps.store, deps.env) ? 'encendida' : 'apagada'}. «/bandeja captura on|off».`,
+      };
+    }
+    default: {
+      const cands = explicitCapture(trimmed);
+      if (!cands) return { text: HELP };
+      return captureAndAck(deps, cands);
+    }
+  }
+}
