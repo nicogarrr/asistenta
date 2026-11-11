@@ -7757,6 +7757,35 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       `📚 ${file.nombre}`,
     );
   };
+  /**
+   * Recordatorios por tema con lo que dijo el dueño (escrito o su nota de voz ya transcrita):
+   * true si el mensaje ERA uno nuevo (apuntado y contestado: no hace falta turno); si nombra
+   * un tema apuntado, el aviso sale con «🔕 No me lo recuerdes más» y sigue la respuesta normal.
+   * Lo reenviado no crea nada (no lo dijo él), solo avisa.
+   */
+  const atenderIntencionesDe = async (
+    inbound: Inbound,
+    text: string,
+    send: typeof say,
+  ): Promise<boolean> => {
+    const it = await import('./intenciones.js');
+    const intenciones = new it.IntencionesStore(join(paths.state, 'intenciones.json'));
+    const r = it.atenderIntenciones(intenciones, chatKey(inbound), text, Date.now(), {
+      crear: !inbound.forwardedFrom,
+    });
+    if (r.creada) {
+      await send(inbound, it.textoCreada(r.creada), { quote: true });
+      return true;
+    }
+    for (const i of r.avisos) {
+      const quedan = i.veces < it.INTENCION_MAX_VECES;
+      const b = quedan
+        ? commandButton(it.OLVIDAR_LABEL, 'intenciones', String(i.id), 'olvidar')
+        : undefined;
+      await send(inbound, it.textoAviso(i), { quote: true, ...(b ? { buttons: [b] } : {}) });
+    }
+    return false;
+  };
   /** /intenciones: los recordatorios por tema («cuando hable de X, recuérdame Y»). */
   const cmdIntenciones = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -7771,6 +7800,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const now = Date.now();
     if (!orden) {
       await say(inbound, 'Uso: /intenciones (las ves) o /intenciones quitar N.', { quote: true });
+      return;
+    }
+    if (orden.kind === 'olvidar') {
+      const q = store.quitarId(chatKey(inbound), orden.id);
+      await say(
+        inbound,
+        q ? `🔕 Vale, ya no te recuerdo «${q.texto}».` : 'Ese recordatorio ya no estaba.',
+        { quote: true },
+      );
       return;
     }
     if (orden.kind === 'quitar') {
@@ -9786,6 +9824,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             // losing only its long-term index must not kill the turn.
             log.warn('transcript index failed', { err });
           }
+          // «cuando hable de Indra, recuérdame…» dicho en una nota de voz: se apunta igual que
+          // escrito (sin turno); y si la nota nombra un tema apuntado, el aviso sale antes.
+          if (
+            !opts.external &&
+            !out &&
+            !inbound.albumAudios?.length &&
+            heard.text.trim() &&
+            isOwnerDm(inbound, vigilanteOwnerId)
+          ) {
+            if (await atenderIntencionesDe(inbound, heard.text, tell)) return;
+          }
           // Nota de voz con una orden clara de tele: al momento, sin modelo.
           if (!opts.external && !inbound.albumAudios?.length) {
             try {
@@ -11388,16 +11437,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           // (OpenClaw «standing intents»), sin modelo. Y si este mensaje nombra un tema
           // apuntado, el aviso sale antes de la respuesta normal (que sigue su curso).
           if (inbound.text && isOwnerDm(inbound, vigilanteOwnerId)) {
-            const it = await import('./intenciones.js');
-            const intenciones = new it.IntencionesStore(join(paths.state, 'intenciones.json'));
-            const nueva = it.intencionIntent(inbound.text);
-            if (nueva) {
-              const r = intenciones.crear(chatKey(inbound), nueva.claves, nueva.texto, Date.now());
-              await say(inbound, it.textoCreada(r), { quote: true });
-              return;
-            }
-            for (const i of intenciones.disparar(chatKey(inbound), inbound.text, Date.now()))
-              await say(inbound, it.textoAviso(i), { quote: true });
+            if (await atenderIntencionesDe(inbound, inbound.text, say)) return;
           }
           // «cuando llegue a casa recuérdame sacar la basura» / «cuando salga de casa…»:
           // aviso por ubicación, sin modelo. «guarda esto como el gimnasio» guarda la

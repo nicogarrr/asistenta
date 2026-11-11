@@ -32,19 +32,37 @@ export interface Intencion {
 
 const fold = (s: string): string => foldAccents(s).toLowerCase();
 
+/** «hable de», «mencione a», «salga el tema de»… (lo que dispara: decir, no llegar). */
+const HABLAR = String.raw`(?:yo\s+)?(?:te\s+)?(?:hable(?:s|mos)?|hablo|mencione(?:s|mos)?|menciono|nombre|nombro|saque|saco|salga\s+(?:el\s+)?tema|sale\s+(?:el\s+)?tema|escriba|escribo)\s+(?:de|sobre|del|a|con|el\s+tema\s+de)?\s*`;
+const CUANDO = String.raw`(?:cuando|cada\s+vez\s+que|si(?:\s+alguna\s+vez)?)\s+`;
+const PIDE = String.raw`(?:recu[eé]rdame|av[ií]same(?:\s+de)?|dime|preg[uú]ntame(?:\s+por)?)\s+(?:que\s+|de\s+)?`;
+/** «cuando hable de Indra, recuérdame mirar el dividendo». */
+const TEMA_PRIMERO = new RegExp(
+  String.raw`^${CUANDO}${HABLAR}(.{2,80}?)\s*[,;:]?\s+${PIDE}(.{3,300})$`,
+  'i',
+);
+/** Al revés: «recuérdame mirar el dividendo cuando hable de Indra». */
+const TEMA_DESPUES = new RegExp(
+  String.raw`^${PIDE}(.{3,300}?)\s*[,;:]?\s+${CUANDO}${HABLAR}(.{2,80})$`,
+  'i',
+);
+
 /**
  * «cuando hable de Indra, recuérdame mirar el dividendo», «si menciono a Ana, pregúntame por
- * su viaje», «cuando salga el tema de la hipoteca, dime que llame al banco». null si no lo es.
+ * su viaje», «cuando salga el tema de la hipoteca, dime que llame al banco», y al revés
+ * («recuérdame mirar el dividendo cuando hable de Indra»). null si no lo es.
  * «cuando llegue/salga de casa» es otra cosa (llegada.ts) y no se toca.
  */
 export function intencionIntent(text: string): { claves: string[]; texto: string } | null {
   const t = text.trim().replace(/[.!]+$/, '');
-  const m =
-    /^(?:cuando|cada\s+vez\s+que|si(?:\s+alguna\s+vez)?)\s+(?:yo\s+)?(?:te\s+)?(?:hable(?:s|mos)?|hablo|mencione(?:s|mos)?|menciono|nombre|nombro|saque|saco|salga\s+(?:el\s+)?tema|sale\s+(?:el\s+)?tema|escriba|escribo)\s+(?:de|sobre|del|a|con|el\s+tema\s+de)?\s*(.{2,80}?)\s*[,;:]?\s+(?:recu[eé]rdame|av[ií]same(?:\s+de)?|dime|preg[uú]ntame(?:\s+por)?)\s+(?:que\s+|de\s+)?(.{3,300})$/i.exec(
-      t,
-    );
-  if (!m?.[1] || !m[2]) return null;
-  const tema = m[1].replace(/^(?:el|la|los|las|mi|mis)\s+/i, '').trim();
+  const a = TEMA_PRIMERO.exec(t);
+  const b = a ? null : TEMA_DESPUES.exec(t);
+  // Al revés, el tema va hasta el final: corto (un nombre, «la hipoteca del piso»), para no
+  // tragarse una frase entera («…cuando hable con Pedro le pida el libro»).
+  const temaCrudo = a ? a[1] : b?.[2] && b[2].trim().split(/\s+/).length <= 5 ? b[2] : undefined;
+  const textoCrudo = a ? a[2] : b?.[1];
+  if (!temaCrudo || !textoCrudo) return null;
+  const tema = temaCrudo.replace(/^(?:el|la|los|las|mi|mis)\s+/i, '').trim();
   if (/^(?:casa|del?\s+trabajo|la\s+oficina)$/i.test(tema)) return null;
   const claves = tema
     .split(/\s*(?:,|\s+o\s+|\s+u\s+|\/)\s*/i)
@@ -52,7 +70,7 @@ export function intencionIntent(text: string): { claves: string[]; texto: string
     .filter((c) => c.length >= 2)
     .slice(0, 5);
   if (!claves.length) return null;
-  return { claves, texto: m[2].trim() };
+  return { claves, texto: textoCrudo.trim() };
 }
 
 /** ¿Sale la palabra (o la frase) en el texto? Sin tildes ni mayúsculas, palabra entera. */
@@ -137,6 +155,15 @@ export class IntencionesStore {
     return i;
   }
 
+  /** Quita la de ese id («🔕 No me lo recuerdes más» del aviso). null si ya no estaba. */
+  quitarId(chat: string, id: number): Intencion | null {
+    const todas = this.#leer();
+    const i = todas.find((x) => x.id === id && x.chat === chat);
+    if (!i) return null;
+    this.#guardar(todas.filter((x) => x !== i));
+    return i;
+  }
+
   /**
    * Las que dispara este mensaje (y las apunta: una vez al día como mucho, 3 en total).
    * Nada si el mensaje es el que la creó.
@@ -192,12 +219,38 @@ export function intencionesVista(l: readonly Intencion[], now: number): string {
   ].join('\n');
 }
 
-/** «/intenciones», «/intenciones quitar 2». */
+/**
+ * «/intenciones», «/intenciones quitar 2», y «/intenciones olvidar 7» (el botón 🔕 del aviso:
+ * el número es el id de ESA intención, no su puesto en la lista, que cambia).
+ */
 export function intencionesOrden(
   args: string,
-): { kind: 'lista' } | { kind: 'quitar'; n: number } | null {
+): { kind: 'lista' } | { kind: 'quitar'; n: number } | { kind: 'olvidar'; id: number } | null {
   const a = args.trim();
   if (!a || /^(?:lista|ver)$/i.test(a)) return { kind: 'lista' };
+  const o = /^olvidar\s+(\d{1,6})$/i.exec(a);
+  if (o) return { kind: 'olvidar', id: Number(o[1]) };
   const m = /^(?:quitar|quita|borrar|borra|olvida)\s+(\d{1,2})$/i.exec(a);
   return m ? { kind: 'quitar', n: Number(m[1]) } : null;
+}
+
+/** Etiqueta del botón del aviso que la quita para siempre. */
+export const OLVIDAR_LABEL = '🔕 No me lo recuerdes más';
+
+/**
+ * Lo que hace un mensaje del dueño (escrito o la transcripción de su nota de voz) con los
+ * recordatorios por tema: si ES uno nuevo, lo apunta (y no hay que contestar nada más); si
+ * no, devuelve los que nombra para avisarle. `crear: false` (algo reenviado: no lo dijo él)
+ * solo avisa.
+ */
+export function atenderIntenciones(
+  store: IntencionesStore,
+  chat: string,
+  text: string,
+  now: number,
+  opts: { crear?: boolean } = {},
+): { creada: Intencion | 'lleno' | null; avisos: Intencion[] } {
+  const nueva = opts.crear === false ? null : intencionIntent(text);
+  if (nueva) return { creada: store.crear(chat, nueva.claves, nueva.texto, now), avisos: [] };
+  return { creada: null, avisos: store.disparar(chat, text, now) };
 }
