@@ -7757,6 +7757,37 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       `📚 ${file.nombre}`,
     );
   };
+  /** /intenciones: los recordatorios por tema («cuando hable de X, recuérdame Y»). */
+  const cmdIntenciones = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const it = await import('./intenciones.js');
+    const store = new it.IntencionesStore(join(paths.state, 'intenciones.json'));
+    const orden = it.intencionesOrden(args);
+    const now = Date.now();
+    if (!orden) {
+      await say(inbound, 'Uso: /intenciones (las ves) o /intenciones quitar N.', { quote: true });
+      return;
+    }
+    if (orden.kind === 'quitar') {
+      const q = store.quitar(chatKey(inbound), orden.n, now);
+      await say(
+        inbound,
+        q
+          ? `Quitado: ya no te recuerdo «${q.texto}».`
+          : 'No tengo ese número. /intenciones para verlas.',
+        { quote: true },
+      );
+      return;
+    }
+    await say(inbound, it.intencionesVista(store.lista(chatKey(inbound), now), now), {
+      quote: true,
+    });
+  };
   /** /spotify: estado, conectar (permiso en el navegador del PC), desconectar, pausa… */
   const cmdSpotify = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -10898,6 +10929,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     { names: ['topics'], run: (inbound) => cmdTopics(inbound) },
     { names: ['routines'], run: (inbound) => cmdRoutines(inbound) },
     { names: ['previsto', 'planes'], run: (inbound, args) => cmdPrevisto(inbound, args) },
+    { names: ['intenciones', 'temas'], run: (inbound, args) => cmdIntenciones(inbound, args) },
     {
       names: ['routine'],
       run: async (inbound, args) => cmdRoutine(await resolveThread(inbound), inbound, args),
@@ -11351,6 +11383,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               await say(inbound, reply, { quote: true });
               return;
             }
+          }
+          // «cuando hable de Indra, recuérdame mirar el dividendo»: recordatorio por tema
+          // (OpenClaw «standing intents»), sin modelo. Y si este mensaje nombra un tema
+          // apuntado, el aviso sale antes de la respuesta normal (que sigue su curso).
+          if (inbound.text && isOwnerDm(inbound, vigilanteOwnerId)) {
+            const it = await import('./intenciones.js');
+            const intenciones = new it.IntencionesStore(join(paths.state, 'intenciones.json'));
+            const nueva = it.intencionIntent(inbound.text);
+            if (nueva) {
+              const r = intenciones.crear(chatKey(inbound), nueva.claves, nueva.texto, Date.now());
+              await say(inbound, it.textoCreada(r), { quote: true });
+              return;
+            }
+            for (const i of intenciones.disparar(chatKey(inbound), inbound.text, Date.now()))
+              await say(inbound, it.textoAviso(i), { quote: true });
           }
           // «cuando llegue a casa recuérdame sacar la basura» / «cuando salga de casa…»:
           // aviso por ubicación, sin modelo. «guarda esto como el gimnasio» guarda la
