@@ -86,6 +86,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       { command: 'resolver', args: '<id>', description: 'marca un pendiente como resuelto' },
       { command: 'agenda', description: 'calendario, pendientes, rutinas y objetivos' },
       {
+        command: 'intenciones',
+        args: '[quitar <n>]',
+        description: 'recordatorios por tema: «cuando hable de X, recuérdame Y»',
+      },
+      {
         command: 'previsto',
         args: '[hoy|semana]',
         description: 'lo que haré por ti, por hora: recordatorios, rutinas y la bandeja',
