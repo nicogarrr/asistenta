@@ -281,6 +281,31 @@ export function detectCapture(
   }));
 }
 
+/** Cuánto vale «te lo acabo de pedir»: pasado esto, una captura a secas va a la bandeja. */
+export const PIDIO_ADJUNTO_MS = 15 * 60_000;
+// Petición (imperativo o «¿me mandas…?»), no «te he mandado»: el asistente diciendo que ya
+// lo envió no espera nada.
+const PIDE_VERBO =
+  /\b(m[aá]nd(a|ame|amela|amelo|as|arme|[aá]rmela|[aá]rmelo)|env[ií](a|ame|amela|amelo|as|arme)|p[aá]s(a|ame|amela|amelo|as|arme)|s[uú]b(e|eme|es|ir|irme)|adjunt(a|ame|as|ar)|compart(e|eme|es|ir|irme)|p[eé]g(a|ame|as)|reenv[ií](a|ame|as))\b/i;
+const PIDE_COSA =
+  /\b(fotos?|capturas?|pantallazos?|im[aá]gen(es)?|pdfs?|archivos?|ficheros?|documentos?|enlaces?|links?|urls?|tickets?|facturas?)\b/i;
+
+/**
+ * ¿El asistente acaba de pedir un archivo, una foto o un enlace? («Mándame una captura del
+ * error», «pásame el PDF y lo reviso».) Entonces lo que llega a secas es la respuesta, no
+ * algo para la bandeja: antes la captura del error acababa «📥 guardada» y la conversación
+ * se quedaba esperando.
+ */
+export function pidioAdjunto(
+  last: { text: string; at: number } | null | undefined,
+  now: number,
+): boolean {
+  if (!last?.text || now - last.at > PIDIO_ADJUNTO_MS || now < last.at - 60_000) return false;
+  // Solo el final del mensaje: la petición suele ir al cierre.
+  const tail = last.text.slice(-400);
+  return PIDE_VERBO.test(tail) && PIDE_COSA.test(tail);
+}
+
 /** «/bandeja <cosa>» a mano: enlaces, «libro X» o un texto/idea suelto. */
 export function explicitCapture(args: string): CaptureCandidate[] | null {
   const t = args.trim();

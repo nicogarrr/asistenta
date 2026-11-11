@@ -549,7 +549,7 @@ import {
   tvStopperFromVault,
 } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
-import { detectCapture } from './bandeja/captura.js';
+import { detectCapture, pidioAdjunto } from './bandeja/captura.js';
 import { bandejaCommand, bandejaSlowSub, captureAndAck, captureOn } from './bandeja/comando.js';
 import {
   autoKindle,
@@ -6726,8 +6726,30 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         .catch((err: unknown) => log.warn('bandeja: PDF no adjuntado', { err: String(err) }));
   };
   /** Lo que llega a secas (enlace, PDF, captura, «libro: …»): a la bandeja, sin modelo. */
+  /** La última respuesta del asistente en este chat (si la conversación acabó en ella). */
+  const lastAssistantSaid = (key: string): { text: string; at: number } | null => {
+    let best: { text: string; at: number } | null = null;
+    for (const t of threads.values()) {
+      if (t.chatKey !== key) continue;
+      const last = t.agent.messages.at(-1) as
+        | { role?: string; content?: unknown; timestamp?: number }
+        | undefined;
+      if (last?.role !== 'assistant' || typeof last.timestamp !== 'number') continue;
+      const text = Array.isArray(last.content)
+        ? last.content
+            .map((b: { type?: string; text?: string }) =>
+              b?.type === 'text' ? (b.text ?? '') : '',
+            )
+            .join('')
+        : '';
+      if (text && (!best || last.timestamp > best.at)) best = { text, at: last.timestamp };
+    }
+    return best;
+  };
   const bandejaByCapture = async (inbound: Inbound): Promise<boolean> => {
     if (inbound.channel !== 'telegram' || !isOwnerDm(inbound, vigilanteOwnerId)) return false;
+    // «Mándame una captura del error»: lo que llega es la respuesta, no algo para la bandeja.
+    if (pidioAdjunto(lastAssistantSaid(chatKey(inbound)), Date.now())) return false;
     const cands = detectCapture(inbound, { auto: captureOn(bandejaStore) });
     if (!cands?.length) return false;
     const reply = captureAndAck(
