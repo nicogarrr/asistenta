@@ -43,6 +43,12 @@ const stamp = (ms: number): string => {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 };
 
+/** Orden de un id: «20261111-120000-2-x» → 20261111120000·100 + 2 (sin número = 1). */
+function ordenCreado(id: string): number {
+  const m = /^(\d{8})-(\d{6})(?:-(\d+))?-/.exec(id);
+  return m ? Number(`${m[1]}${m[2]}`) * 100 + Number(m[3] ?? 1) : 0;
+}
+
 export interface Creado {
   id: string;
   nombre: string;
@@ -107,7 +113,13 @@ export class CreadosStore {
         });
       } catch {}
     }
-    return out.sort((a, b) => b.creado - a.creado || b.id.localeCompare(a.id));
+    // En Windows la hora de modificación avanza a saltos (~15 ms): dos guardados seguidos
+    // pueden empatar. Entonces manda el id: su segundo y su número («-2-», «-10-»). Con el
+    // texto del id a secas «…-2-grafica.png» (la nueva) iba detrás de «…-grafica.png».
+    return out.sort(
+      (a, b) =>
+        b.creado - a.creado || ordenCreado(b.id) - ordenCreado(a.id) || b.id.localeCompare(a.id),
+    );
   }
 
   /** Bytes y tipo de un archivo para el panel; null si el id no vale o no existe. */
