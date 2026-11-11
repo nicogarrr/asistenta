@@ -97,6 +97,28 @@ function cuando(ms: number, now: number): string {
 }
 const tz = () => localTimeZone();
 
+type Grupo = 'fijado' | 'hoy' | 'semana' | 'antes';
+const GRUPO: Record<Grupo, string> = {
+  fijado: '📌 Fijados',
+  hoy: 'Hoy',
+  semana: 'Esta semana',
+  antes: 'Antes',
+};
+
+/** Días locales entre dos instantes (por fecha en su zona, no por 24 h). */
+function diasEntre(a: number, b: number): number {
+  const d = (ms: number) => Date.parse(`${localDay(new Date(ms))}T12:00:00Z`);
+  return Math.round((d(b) - d(a)) / 86_400_000);
+}
+
+function grupoDe(c: Creado, fijados: ReadonlySet<string>, now: number): Grupo {
+  if (fijados.has(c.id)) return 'fijado';
+  const dias = diasEntre(c.creado, now);
+  if (dias <= 0) return 'hoy';
+  if (dias < 7) return 'semana';
+  return 'antes';
+}
+
 /** La parte de fecha del id («20261111-120000» o «…-2»): cabe en un botón (64 bytes). */
 export function claveDe(id: string): string {
   return /^\d{8}-\d{6}(?:-\d{1,2}(?=-))?/.exec(id)?.[0] ?? '';
@@ -219,10 +241,20 @@ export function bibliotecaVista(
       pins: [],
     };
   const shown = all.slice(0, BIBLIOTECA_MAX);
-  const lines = shown.map(
+  const rows = shown.map(
     (c, i) =>
       `${i + 1}. ${fijados.has(c.id) ? '📌 ' : ''}${ICON[tipoDe(c.nombre)]} ${c.nombre} · ${size(c.bytes)} · ${cuando(c.creado, now)}`,
   );
+  // «Hoy / Esta semana / Antes» (y lo fijado aparte), como la Library de Grok Bot
+  // (https://docs.x.ai/grok-bot/files-and-results). Solo si hay más de un grupo: una lista
+  // toda de hoy no necesita título. La numeración sigue igual (📤 N, fijar N).
+  const grupos = shown.map((c) => grupoDe(c, fijados, now));
+  const lines =
+    new Set(grupos).size > 1
+      ? rows.flatMap((r, i) =>
+          i === 0 || grupos[i] !== grupos[i - 1] ? [`${GRUPO[grupos[i] ?? 'antes']}:`, r] : [r],
+        )
+      : rows;
   const more = all.length > shown.length ? `\n…y ${all.length - shown.length} más.` : '';
   return {
     text:
