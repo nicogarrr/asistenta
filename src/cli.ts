@@ -7656,6 +7656,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
     await say(inbound, r.text, { quote: true, buttons: r.buttons });
   };
+  /** La última lista de /biblioteca de cada chat: «/biblioteca 2» cuenta en ella (bugs-37). */
+  const bibliotecaUltimaVista = new Map<string, import('./biblioteca.js').BibliotecaUltimaVista>();
   /** /biblioteca: lo que te he hecho (src/biblioteca.ts), con «📤 N» para que te lo mande. */
   /** «/biblioteca enlaces» y su «📌 N» / «Soltar N» (enlaces-enviados.ts). */
   const cmdBibliotecaEnlaces = async (
@@ -7705,13 +7707,22 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const bib = await import('./biblioteca.js');
     const { commandButton } = await import('./channels/telegram-shared.js');
-    const orden = bib.bibliotecaOrden(args);
     const lista = creados.lista();
+    const fijados = creados.fijados();
+    // «/biblioteca 2» tras «/biblioteca factura»: el 2 de la lista que tiene delante (bugs-37).
+    const orden = bib.bibliotecaConBusqueda(
+      lista,
+      bib.conVistaAnterior(
+        bib.bibliotecaOrden(args),
+        bibliotecaUltimaVista.get(inbound.chatId),
+        Date.now(),
+      ),
+      fijados,
+    );
     if (orden.kind === 'ayuda') {
       await say(inbound, bib.BIBLIOTECA_AYUDA, { quote: true });
       return;
     }
-    const fijados = creados.fijados();
     // 📌 «/biblioteca fijar N»: no se poda (Grok Bot «Pin»); «soltar N» lo devuelve a la poda.
     if (orden.kind === 'fijar' || orden.kind === 'soltar') {
       const c = bib.bibliotecaElegir(lista, orden, fijados);
@@ -7726,6 +7737,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (orden.kind === 'lista') {
       const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados, orden.busca);
+      bibliotecaUltimaVista.set(inbound.chatId, {
+        filtro: orden.filtro,
+        ...(orden.busca ? { busca: orden.busca } : {}),
+        at: Date.now(),
+      });
       // Por fila: «📤 N» y su «📌 Fijar N»/«Soltar N» (dos por fila, la misma clave).
       const pinDe = new Map(v.pins.map((p) => [p.clave, p]));
       const buttons = v.sends

@@ -68,7 +68,8 @@ describe('/biblioteca (Grok Bot: Library de lo que el bot creó, por tipo)', () 
       '20261105-090000-2-Informe-ASTS.pdf',
     );
     expect(bibliotecaElegir(lista, bibliotecaOrden('9'))).toBeNull();
-    expect(bibliotecaOrden('pepino 2').kind).toBe('ayuda');
+    // bugs-37: «pepino 2» es el 2 de la búsqueda «pepino» (antes, la ayuda).
+    expect(bibliotecaOrden('pepino 2')).toMatchObject({ kind: 'enviar', busca: 'pepino' });
     // gaps-14: unas palabras que no son un tipo buscan por nombre.
     expect(bibliotecaOrden('cosas raras')).toEqual({
       kind: 'lista',

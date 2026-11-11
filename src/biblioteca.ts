@@ -195,17 +195,19 @@ const PALABRA: Record<Tipo, string> = {
 /**
  * Las dos líneas de ayuda bajo la lista. Los números de una lista filtrada son los de esa
  * lista: «/biblioteca fijar 1» tras «/biblioteca pdf» fijaba el 1 de la lista ENTERA (otro
- * archivo, bugs-36). Con tipo, la orden lleva el tipo; con búsqueda, solo los botones.
+ * archivo, bugs-36). La orden lleva el tipo y la búsqueda de esa lista.
  */
 function pistaNumeros(filtro: Tipo | null, busca?: string): string {
   const fijar = '📌 Toca «📌 Fijar»';
   const resto = ' y lo dejo arriba sin borrarlo nunca (guardo los 40 últimos).';
+  // Con búsqueda, la orden lleva la búsqueda: «/biblioteca factura 2» (bugs-37; antes solo
+  // los botones, porque «/biblioteca 2» mandaba el 2 de la lista entera).
+  const t = `${filtro ? `${PALABRA[filtro]} ` : ''}${busca ? `${busca} ` : ''}`;
   if (busca)
     return (
-      'Toca 📤 para que te lo mande otra vez. También te lo adjunto a un correo si me dices su nombre.\n' +
+      `Toca 📤 para que te lo mande otra vez, o «/biblioteca ${t}N». También te lo adjunto a un correo si me dices su nombre.\n` +
       `${fijar}${resto}`
     );
-  const t = filtro ? `${PALABRA[filtro]} ` : '';
   return (
     `Toca 📤 para que te lo mande otra vez, o «/biblioteca ${t}N». También te lo adjunto a un correo si me dices su nombre.\n` +
     `${fijar} (o «/biblioteca ${t}fijar N»)${resto}`
@@ -279,7 +281,11 @@ export function bibliotecaVista(
 /** Qué pide `/biblioteca <args>`. */
 export type BibliotecaOrden =
   | { kind: 'lista'; filtro: Tipo | null; busca?: string }
-  | { kind: 'enviar'; n: number; filtro: Tipo | null }
+  /**
+   * «/biblioteca 3», «/biblioteca pdf 3» o, con `busca`, «/biblioteca factura 3»: el 3 de esa
+   * lista (la misma que enseña «/biblioteca factura»).
+   */
+  | { kind: 'enviar'; n: number; filtro: Tipo | null; busca?: string }
   | { kind: 'clave'; clave: string }
   /** «/biblioteca enlaces»: los enlaces que te he mandado (enlaces-enviados.ts). */
   | { kind: 'enlaces' }
@@ -293,7 +299,7 @@ export type BibliotecaOrden =
    * manda la clave del archivo en vez de N (n = 0): sigue siendo el mismo archivo aunque la
    * lista se haya reordenado desde que salió el mensaje.
    */
-  | { kind: 'fijar' | 'soltar'; n: number; clave?: string; filtro?: Tipo }
+  | { kind: 'fijar' | 'soltar'; n: number; clave?: string; filtro?: Tipo; busca?: string }
   | { kind: 'ayuda'; why: string };
 
 export function bibliotecaOrden(args: string): BibliotecaOrden {
@@ -343,9 +349,15 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
   const parts = a.split(/\s+/);
   const last = parts[parts.length - 1] ?? '';
   if (/^\d{1,2}$/.test(last)) {
-    const filtro = parts.length > 1 ? filtroDe(parts.slice(0, -1).join(' ')) : null;
-    if (parts.length > 1 && !filtro) return { kind: 'ayuda', why: a };
-    return { kind: 'enviar', n: Number(last), filtro };
+    const antes = parts.slice(0, -1).join(' ');
+    const filtro = parts.length > 1 ? filtroDe(antes) : null;
+    if (parts.length === 1 || filtro) return { kind: 'enviar', n: Number(last), filtro };
+    // «/biblioteca factura 2» (el 2 de «/biblioteca factura») o «/biblioteca gastos 10»
+    // (¿octubre?): antes daban la ayuda. `bibliotecaConBusqueda` decide con la lista si el
+    // número es parte del nombre (bugs-37).
+    const busca = textoDeBusqueda(antes);
+    if (busca) return { kind: 'enviar', n: Number(last), filtro: busca.tipo, busca: busca.texto };
+    return { kind: 'ayuda', why: a };
   }
   const filtro = filtroDe(a);
   if (filtro) return { kind: 'lista', filtro };
@@ -354,12 +366,85 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
   // escrita («fijar abc») no es una búsqueda: la ayuda.
   if (/^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar|enviar)\b/i.test(a))
     return { kind: 'ayuda', why: a };
+  const busca = textoDeBusqueda(a);
+  if (busca) return { kind: 'lista', filtro: busca.tipo, busca: busca.texto };
+  return { kind: 'ayuda', why: a };
+}
+
+/**
+ * «factura», «buscar gastos de octubre», «pdf factura»: el tipo (si empieza por uno) y lo que
+ * hay que buscar. null si no es una búsqueda (una orden mal escrita, «enlaces», sin palabras).
+ */
+function textoDeBusqueda(a: string): { tipo: Tipo | null; texto: string } | null {
+  if (/^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar|enviar)\b/i.test(a)) return null;
+  if (/^(?:los\s+|mis\s+)?(?:enlaces?|links?|urls?)$/i.test(a)) return null;
   const b = /^(?:buscar?|busca|encuentra)\s+(.+)$/i.exec(a)?.[1] ?? a;
   const tipo = filtroDe(b.split(/\s+/)[0] ?? '');
-  const texto = tipo ? b.split(/\s+/).slice(1).join(' ') : b;
-  if (palabras(texto).length && texto.length <= 60)
-    return { kind: 'lista', filtro: tipo, busca: texto.trim() };
-  return { kind: 'ayuda', why: a };
+  const texto = (tipo ? b.split(/\s+/).slice(1).join(' ') : b).trim();
+  if (palabras(texto).length && texto.length <= 60) return { tipo, texto };
+  return null;
+}
+
+/** La lista de una búsqueda (con su tipo), en el orden de /biblioteca. */
+function deLaBusqueda(
+  ordered: readonly Creado[],
+  filtro: Tipo | null | undefined,
+  busca: string | undefined,
+): Creado[] {
+  const porTipo = filtro ? ordered.filter((c) => tipoDe(c.nombre) === filtro) : [...ordered];
+  return busca ? porTipo.filter((c) => coincide(c.nombre, busca)) : porTipo;
+}
+
+/**
+ * «/biblioteca gastos 10»: ¿el 10 es parte del nombre («Gastos-10-2026.xlsx») o el número de
+ * la lista de «gastos»? Si con el número hay algo que se llame así, la lista de eso; si no, y
+ * «gastos» tiene un 10, ese; y si tampoco, la lista (que dice «no encuentro…» o enseña lo que
+ * hay), en vez de «ya no lo tengo». Un número de una cifra nunca es parte de la búsqueda.
+ */
+export function bibliotecaConBusqueda(
+  lista: readonly Creado[],
+  orden: BibliotecaOrden,
+  fijados: ReadonlySet<string> = new Set(),
+): BibliotecaOrden {
+  if (orden.kind !== 'enviar' || !orden.busca) return orden;
+  const ordered = ordenBiblioteca(lista, fijados);
+  const conNumero = `${orden.busca} ${orden.n}`;
+  const numeroCuenta = palabras(String(orden.n)).length > 0;
+  if (numeroCuenta && deLaBusqueda(ordered, orden.filtro, conNumero).length)
+    return { kind: 'lista', filtro: orden.filtro, busca: conNumero };
+  const de = deLaBusqueda(ordered, orden.filtro, orden.busca);
+  if (orden.n >= 1 && orden.n <= Math.min(BIBLIOTECA_MAX, de.length)) return orden;
+  return { kind: 'lista', filtro: orden.filtro, busca: numeroCuenta ? conNumero : orden.busca };
+}
+
+/** La última lista que se enseñó en un chat (cli.ts la guarda): para «/biblioteca 2» después. */
+export interface BibliotecaUltimaVista {
+  filtro: Tipo | null;
+  busca?: string;
+  at: number;
+}
+
+/** Cuánto vale «la última lista» para un «/biblioteca N» suelto. */
+export const BIBLIOTECA_VISTA_MS = 30 * 60_000;
+
+/**
+ * «/biblioteca factura» y luego «/biblioteca 2»: el 2 es el de la lista que tiene delante (la
+ * de «factura»), no el 2 de la lista entera, que es otro archivo (bugs-37; como #2361 con los
+ * tipos). Solo un número suelto, y solo si esa lista salió hace menos de media hora.
+ */
+export function conVistaAnterior(
+  orden: BibliotecaOrden,
+  vista: BibliotecaUltimaVista | undefined,
+  now: number = Date.now(),
+): BibliotecaOrden {
+  if (!vista || now - vista.at > BIBLIOTECA_VISTA_MS || now < vista.at) return orden;
+  if (!vista.filtro && !vista.busca) return orden;
+  const de = { ...(vista.busca ? { busca: vista.busca } : {}) };
+  if (orden.kind === 'enviar' && !orden.filtro && !orden.busca)
+    return { ...orden, filtro: vista.filtro, ...de };
+  if ((orden.kind === 'fijar' || orden.kind === 'soltar') && !orden.clave && !orden.filtro)
+    return { ...orden, ...(vista.filtro ? { filtro: vista.filtro } : {}), ...de };
+  return orden;
 }
 
 /** El archivo de una clave de botón («20261111-120000» o «…-h1a2b3c»). */
@@ -382,13 +467,9 @@ export function bibliotecaElegir(
   if ((orden.kind === 'fijar' || orden.kind === 'soltar') && orden.clave)
     return porClave(lista, orden.clave);
   const ordered = ordenBiblioteca(lista, fijados);
-  if (orden.kind === 'fijar' || orden.kind === 'soltar') {
-    const de = orden.filtro ? ordered.filter((c) => tipoDe(c.nombre) === orden.filtro) : ordered;
-    return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (de[orden.n - 1] ?? null) : null;
-  }
-  if (orden.kind !== 'enviar') return null;
-  const all = orden.filtro ? ordered.filter((c) => tipoDe(c.nombre) === orden.filtro) : ordered;
-  return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (all[orden.n - 1] ?? null) : null;
+  if (orden.kind !== 'fijar' && orden.kind !== 'soltar' && orden.kind !== 'enviar') return null;
+  const de = deLaBusqueda(ordered, orden.filtro, orden.busca);
+  return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (de[orden.n - 1] ?? null) : null;
 }
 
 /** La respuesta a «fijar N» / «soltar N» (lo hace `CreadosStore.fijar/soltar`). */

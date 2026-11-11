@@ -35,7 +35,8 @@ describe('gaps-14: /biblioteca <nombre> busca (Grok Bot, buscador de la Library)
     expect(bibliotecaOrden('pdf')).toEqual({ kind: 'lista', filtro: 'pdf' });
     expect(bibliotecaOrden('3')).toMatchObject({ kind: 'enviar', n: 3 });
     expect(bibliotecaOrden('fijar abc').kind).toBe('ayuda');
-    expect(bibliotecaOrden('pepino 2').kind).toBe('ayuda');
+    // «pepino 2» es el 2 de la búsqueda «pepino» (bugs-37; antes, la ayuda).
+    expect(bibliotecaOrden('pepino 2')).toMatchObject({ kind: 'enviar', n: 2, busca: 'pepino' });
     expect(bibliotecaOrden('de la').kind).toBe('ayuda');
   });
 
