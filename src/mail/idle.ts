@@ -2,6 +2,13 @@
 import { createHash } from 'node:crypto';
 import { vaultGet } from '../vault.js';
 import { toMessage } from './client.js';
+import {
+  bajarCalendarios,
+  type CalendarDownloader,
+  type CalendarStructNode,
+  calendarioCortado,
+  SOURCE_MAX_BYTES,
+} from './invitacion-grande.js';
 import type { MailMessage } from './types.js';
 
 /** Separate credential capability: never load mail:password or SMTP configuration. */
@@ -53,6 +60,7 @@ export interface IdleRow {
   };
   source?: Buffer | string;
   flags?: Set<string>;
+  bodyStructure?: CalendarStructNode;
 }
 export interface IdleClient {
   capabilities: Map<string, unknown>;
@@ -67,9 +75,15 @@ export interface IdleClient {
       source: { maxLength: number };
       flags: true;
       internalDate: true;
+      bodyStructure?: true;
     },
     options: { uid: true },
   ): Promise<IdleRow | false>;
+  /**
+   * Una parte del mensaje, decodificada (imapflow). Solo para la invitación de un correo cuya
+   * fuente vino cortada; un cliente sin él (o que falla) deja el correo sin invitación.
+   */
+  download?: CalendarDownloader['download'];
   on(event: string, listener: () => void): unknown;
   close(): void;
   idle(): Promise<boolean>;
@@ -240,16 +254,25 @@ export class MailIdleTransport {
                     {
                       uid: true,
                       envelope: true,
-                      source: { maxLength: 32_768 },
+                      source: { maxLength: SOURCE_MAX_BYTES },
                       flags: true,
                       internalDate: true,
+                      bodyStructure: true,
                     },
                     { uid: true },
                   ),
                 );
                 if (raw && raw.uid !== uid) throw new Error('UID mismatch');
                 if (raw) {
-                  const message = toMessage(raw, 'INBOX');
+                  // Invitación detrás de un HTML grande: la fuente cortada no la trae; se baja
+                  // solo esa parte para que el aviso diga «📅 Invitación: …».
+                  const cortados = calendarioCortado(raw.source, raw.bodyStructure);
+                  const download = client.download?.bind(client);
+                  const aparte =
+                    cortados.length && download
+                      ? await this.bounded(bajarCalendarios({ download }, uid, cortados))
+                      : [];
+                  const message = toMessage(raw, 'INBOX', aparte);
                   // Stable Gmail message ID survives UIDVALIDITY resets; fallback includes epoch.
                   message.id = raw.emailId
                     ? `object:${raw.emailId}`
