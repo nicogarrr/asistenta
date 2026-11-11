@@ -35,6 +35,10 @@ import { stableStringify } from './utils.js';
  */
 export type Verdict = 'allow' | 'deny' | 'ask';
 
+/** Lo que oye el modelo si repite una acción que el dueño ya denegó en este turno. */
+export const DENIED_AGAIN_REASON =
+  'el dueño ya dijo que no a esta misma acción en este mensaje: no se la vuelvas a pedir; dile qué harías en su lugar o pregúntale qué prefiere';
+
 /**
  * How wide one human approval is:
  *
@@ -1075,6 +1079,8 @@ export class Gate {
    * gestion stops forcing on its own.
    */
   readonly #forcedAsk = new Map<string, (call: ToolCall) => string | null>();
+  /** Acciones (huella exacta) que el dueño denegó en este turno: no se repregunta. */
+  readonly #denied = new Map<string, Set<string>>();
   /** sessionId -> last outside content read in this session (taint gate). */
   readonly #taint = new Map<string, { source: string; at: number }>();
   #taintGate = true;
@@ -1998,6 +2004,7 @@ export class Gate {
    */
   clearSession(sessionId: string): void {
     this.#approved.delete(sessionId);
+    this.#denied.delete(sessionId);
     this.#unsettled.delete(sessionId);
     this.#grants.delete(sessionId);
     this.#scopes.delete(sessionId);
@@ -2795,6 +2802,14 @@ export class Gate {
       }
     }
 
+    // Ya dijo que no a ESTA misma acción en este turno (o la dejó caducar): no se le vuelve
+    // a preguntar hasta su próximo mensaje (Grok Bot: «Deny… won't ask you about it until
+    // you send another message»). Antes el modelo podía repetir la misma petición y Nico
+    // recibía la misma pregunta otra vez. Solo endurece: es un «no» sin preguntar.
+    if (this.#denied.get(sessionId)?.has(fp)) {
+      return this.#record(call, { verdict: 'deny', reason: DENIED_AGAIN_REASON });
+    }
+
     if (!this.#approver) {
       // No way to ask means we must not guess. Fail closed.
       return this.#record(call, {
@@ -2810,7 +2825,12 @@ export class Gate {
       log.error('approver threw, failing closed', { tool: call.tool, ...redact({ err }) });
       ok = false;
     }
-    if (!ok) return this.#record(call, { verdict: 'deny', reason: `denied by ${call.actor}` });
+    if (!ok) {
+      const denied = this.#denied.get(sessionId) ?? new Set<string>();
+      denied.add(fp);
+      this.#denied.set(sessionId, denied);
+      return this.#record(call, { verdict: 'deny', reason: `denied by ${call.actor}` });
+    }
     approved.add(fp);
     this.#markStarted(sessionId, fp, true);
     // One approval covers the rest of this task, so a multi-step job asks once
