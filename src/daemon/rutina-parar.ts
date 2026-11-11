@@ -89,3 +89,24 @@ export class RoutineStops {
     return running ? 'parada' : 'en-cola';
   }
 }
+
+/**
+ * Corre `fn` apuntada como ejecución de esa rutina, con una señal que «/cron parar» aborta.
+ * Lo usan las rutinas de comando (F4): al parar se mata el árbol del programa y el disparo
+ * no manda nada a medias. Antes decía «no se puede cortar a medias».
+ */
+export async function runStoppable<T>(
+  stops: Pick<RoutineStops, 'begin'>,
+  scope: string,
+  name: string,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const ac = new AbortController();
+  const handle = stops.begin(scope, name);
+  handle.started(() => ac.abort());
+  try {
+    return await fn(ac.signal);
+  } finally {
+    handle.end();
+  }
+}

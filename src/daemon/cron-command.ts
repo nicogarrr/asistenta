@@ -346,9 +346,6 @@ export function runCronCommand(deps: CronCommandDeps, args: string): string {
       return 'Ahora mismo no hay ninguna rutina en marcha.';
     }
     if (!routine) return 'Ahora mismo no hay ninguna rutina en marcha.';
-    if (isCommandRoutine(routine)) {
-      return `"${routine.name}" es una rutina de comando: termina sola en segundos y no se puede cortar a medias.`;
-    }
     const outcome = stops.stop(routine.scope, routine.name);
     if (outcome === 'no-en-curso') {
       return `La rutina "${routine.name}" no está en marcha ahora mismo. Su horario sigue igual; para que no vuelva a sonar: /cron pausa ${routine.name}.`;

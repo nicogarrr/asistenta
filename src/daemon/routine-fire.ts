@@ -81,7 +81,9 @@ export interface RoutineFireDeps {
    * F4: ejecuta una rutina de comando (sin modelo). Ausente = función apagada:
    * la rutina avisa y no hace nada; jamás cae a runTask.
    */
-  fireCommand?: (ctx: RoutineRunContext) => Promise<{ body: string; failed: boolean }>;
+  fireCommand?: (
+    ctx: RoutineRunContext,
+  ) => Promise<{ body: string; failed: boolean; stopped?: boolean }>;
   /**
    * Sin red o con el modelo caído, la rutina se reintenta tras estas esperas
    * (por defecto 1, 2, 5, 10 y 15 min). Lista vacía = no reintentar (PA_AUTO_RETRY=0).
@@ -280,6 +282,12 @@ export function createRoutineFire(deps: RoutineFireDeps): RoutineFire {
               body: 'Las rutinas de comando están desactivadas (PA_CRON_COMANDOS=1 para activarlas). No se ha ejecutado nada.',
               failed: true,
             };
+        // «/cron parar» cortó el comando: el dueño ya tiene su confirmación; nada más.
+        if ('stopped' in out && out.stopped) {
+          log.info('command routine stopped by the owner', { routine: ctx.routine.name });
+          record('parada', 'Parada por ti con /cron parar.');
+          return;
+        }
         body = out.body;
         failed = out.failed;
       } else {

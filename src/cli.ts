@@ -200,6 +200,7 @@ import {
   Latidos,
   latidoLine,
   latidoListRequest,
+  latidoRoutineName,
   latidoStopRequest,
 } from './daemon/latido.js';
 import { runPanelChat, type TurnOutput, withSpecialistNote } from './daemon/panel-chat.js';
@@ -210,7 +211,7 @@ import { durableMessageThread, openReplyThreadStore } from './daemon/reply-threa
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { RoutineResendQueue } from './daemon/routine-resend-queue.js';
 import { createRoutineTask } from './daemon/routine-task.js';
-import { RoutineStops } from './daemon/rutina-parar.js';
+import { RoutineStops, runStoppable } from './daemon/rutina-parar.js';
 import { createSpecialistAsk, denySpecialistAsksForChat } from './daemon/specialist-ask.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
@@ -4045,7 +4046,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         routine: {
           id: `latido-${l.id}`,
           scope,
-          name: `latido: ${l.task.slice(0, 60)}`,
+          name: latidoRoutineName(l),
           kind: 'schedule',
           params: null,
           steps: null,
@@ -4060,6 +4061,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     send: (chatId, text) => sendToChat(chatId, text),
     isBusy: (scope) => [...threads.values()].some((t) => t.key === scope && t.active),
     file: join(paths.state, 'latidos.json'),
+    // «Deja de vigilar» a media comprobación: corta ese turno (como /cron parar).
+    abortCheck: (l) => {
+      routineStops.stop(l.scope, latidoRoutineName(l));
+    },
   });
   latidos.restore();
   // F4: rutinas de comando (sin modelo), apagadas salvo PA_CRON_COMANDOS=1.
@@ -4092,7 +4097,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const runRoutineFire = createRoutineFire({
     store,
     fireCommand: commandRoutinesEnabled()
-      ? (ctx) => fireCommandRoutine(commandRoutines, ctx.routine, { enabled: true })
+      ? (ctx) =>
+          runStoppable(routineStops, ctx.scope, ctx.routine.name, (signal) =>
+            fireCommandRoutine(commandRoutines, ctx.routine, { enabled: true, signal }),
+          )
       : undefined,
     tickGoal: (name) => goalRunner.tickByRoutineName(name),
     runTask: runRoutineTask,
