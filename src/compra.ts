@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { recetaItems, recetaNote, recetaUrl } from './compra-receta.js';
+import { recetaItems, recetaNote, recetaUrl, splitRaciones } from './compra-receta.js';
 import { lazySchema, Type } from './core/lazy-schema.js';
 import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
@@ -402,7 +402,7 @@ const Params = lazySchema(() =>
       Type.String({
         maxLength: 8000,
         description:
-          'Para accion=receta: el enlace de la receta, o su texto (lo pegado o leído de una foto) con la lista de ingredientes.',
+          'Para accion=receta: el enlace de la receta, o su texto (lo pegado o leído de una foto) con la lista de ingredientes. Termina con «para N» si el dueño quiere otras raciones.',
       }),
     ),
   }),
@@ -417,7 +417,7 @@ export async function recetaACompra(
   input: string,
   fetchHtml?: (url: string) => Promise<string>,
 ): Promise<CompraView> {
-  const arg = input.trim();
+  const { rest: arg, servings } = splitRaciones(input.trim());
   if (!arg)
     return {
       text: 'Mándame el enlace de la receta o pega sus ingredientes: /compra receta https://… (o el texto).',
@@ -435,18 +435,18 @@ export async function recetaACompra(
         buttons: [],
       };
     }
-    r = recetaItems({ html });
+    r = recetaItems({ html, ...(servings ? { servings } : {}) });
   } else {
-    r = recetaItems({ text: arg });
+    r = recetaItems({ text: arg, ...(servings ? { servings } : {}) });
     // Pegado sin título «Ingredientes»: una línea con comas también vale.
     if (!r.items.length && !r.skipped.length && !url)
       r = { ...r, items: itemsFromText(arg), source: 'texto' };
   }
   if (!r.items.length) {
-    return { text: recetaNote(r, [], []), buttons: [] };
+    return { text: recetaNote(r, [], [], servings), buttons: [] };
   }
   const added = store.add(r.items);
-  return compraView(store.list(), recetaNote(r, added.added, added.already));
+  return compraView(store.list(), recetaNote(r, added.added, added.already, servings));
 }
 
 /** Herramienta del modelo: «añade leche», «ya he comprado el pan», «¿qué me falta?». */
