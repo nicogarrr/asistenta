@@ -542,9 +542,21 @@ import {
 import { verifyCallAudit } from './audit/calls.js';
 import { detectCapture } from './bandeja/captura.js';
 import { bandejaCommand, captureAndAck, captureOn } from './bandeja/comando.js';
-import { type BandejaComplete, BandejaQueue } from './bandeja/procesar.js';
+import {
+  autoKindle,
+  deliverToKindle,
+  type KindleTarget,
+  kindleReplyWord,
+  kindleSettings,
+} from './bandeja/kindle.js';
+import {
+  type BandejaComplete,
+  BandejaQueue,
+  type ProcesarDeps,
+  readableText,
+} from './bandeja/procesar.js';
 import { bandejaMaxMinutes, type DigestDeps, startDigestTimer } from './bandeja/resumen.js';
-import { BandejaStore } from './bandeja/store.js';
+import { type BandejaItem, BandejaStore } from './bandeja/store.js';
 import { SecretLibrary } from './books/secret.js';
 import {
   agendaTodayLines,
@@ -6485,27 +6497,66 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     return (await fetchPage(url, { format: 'html', maxChars: 3_000_000, timeoutMs: 30_000 })).text;
   };
-  const bandejaQueue = new BandejaQueue(
-    bandejaStore,
-    {
-      complete: () => bandejaComplete().catch(() => undefined),
-      fetchRaw: bandejaFetchRaw,
-      videoText: async (url, opts) => {
-        const { getVideoText } = await import('./media/resumen-video.js');
-        // La bandeja transcribe en segundo plano y entero (un podcast de 4 h): su propio tope.
-        return getVideoText(url, {
-          cookiesFromBrowser: config.downloadCookiesBrowser,
-          env: { ...process.env, PA_RESUMEN_MAX_MIN: String(bandejaMaxMinutes()) },
-          ...(opts?.directAudio ? { directAudio: true } : {}),
-        });
-      },
-      download: (fileId) => telegram.downloadFile(fileId, 20_000_000),
-      pdfText: (bytes) => extractDocText(bytes, 'application/pdf'),
-      temas: () => temasDeNico(),
-      addChild: (parent, child) => bandejaStore.add(parent.chatId, child, new Date(), parent.day),
+  const bandejaProcDeps: ProcesarDeps = {
+    complete: () => bandejaComplete().catch(() => undefined),
+    fetchRaw: bandejaFetchRaw,
+    videoText: async (url, opts) => {
+      const { getVideoText } = await import('./media/resumen-video.js');
+      // La bandeja transcribe en segundo plano y entero (un podcast de 4 h): su propio tope.
+      return getVideoText(url, {
+        cookiesFromBrowser: config.downloadCookiesBrowser,
+        env: { ...process.env, PA_RESUMEN_MAX_MIN: String(bandejaMaxMinutes()) },
+        ...(opts?.directAudio ? { directAudio: true } : {}),
+      });
     },
-    (msg, data) => log.warn(msg, data),
+    download: (fileId) => telegram.downloadFile(fileId, 20_000_000),
+    pdfText: (bytes) => extractDocText(bytes, 'application/pdf'),
+    temas: () => temasDeNico(),
+    addChild: (parent, child) => bandejaStore.add(parent.chatId, child, new Date(), parent.day),
+    // «/bandeja kindle auto on»: lo 🔴 para leer entero se manda solo al Kindle.
+    onDone: (item) => bandejaAutoKindle(item),
+  };
+  const bandejaQueue = new BandejaQueue(bandejaStore, bandejaProcDeps, (msg, data) =>
+    log.warn(msg, data),
   );
+  /** Un PDF por enlace, comprobado (público, ≤ 20 MB, empieza por %PDF-), o null. */
+  const bandejaPdfBytes = async (url: string): Promise<Buffer | null> => {
+    if (!(await isFetchableResolved(url))) return null;
+    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+    const len = Number(res.headers.get('content-length') ?? '0');
+    if (!res.ok || len > 20_000_000) return null;
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length > 20_000_000 || bytes.subarray(0, 5).toString() !== '%PDF-') return null;
+    return bytes;
+  };
+  /** «📖 Al Kindle» en el chat del dueño (src/bandeja/kindle.ts). */
+  const bandejaKindle =
+    (chatId: string) =>
+    (target: KindleTarget): Promise<string> =>
+      deliverToKindle(target, {
+        store: bandejaStore,
+        chatId,
+        fetchRaw: bandejaFetchRaw,
+        download: (fileId) => telegram.downloadFile(fileId, 20_000_000),
+        fetchPdf: bandejaPdfBytes,
+        readable: (item) => readableText(item, bandejaProcDeps),
+        sendFile: (bytes, name, caption) =>
+          telegram.sendDocumentBytes(Number(chatId), bytes, name, caption),
+        mail: { account: () => loadMailAccount(), send: (account, req) => sendMail(account, req) },
+      });
+  const bandejaAutoKindle = async (item: BandejaItem): Promise<void> => {
+    if (!kindleSettings(bandejaStore).auto || !autoKindle(item)) return;
+    const mark = `kindle_auto_sent_${item.id}`;
+    if (bandejaStore.getMeta(mark)) return;
+    bandejaStore.setMeta(mark, new Date().toISOString());
+    const text = await bandejaKindle(item.chatId)({ item });
+    await telegram.send({
+      channel: 'telegram',
+      account: telegram.account,
+      chatId: item.chatId,
+      text: `🔴 #${item.id} es para leerlo entero, así que va directo al Kindle.\n${text}`,
+    });
+  };
   const bandejaDeps: DigestDeps = {
     store: bandejaStore,
     now: () => new Date(),
@@ -6522,13 +6573,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         .then(() => true),
     // PDF original que ofrece el autor (citation_pdf_url, arXiv, enlace .pdf): se adjunta tal cual.
     sendPdf: async (chatId, url, name) => {
-      if (!(await isFetchableResolved(url))) return;
-      const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-      const len = Number(res.headers.get('content-length') ?? '0');
-      if (!res.ok || len > 20_000_000) return;
-      const bytes = Buffer.from(await res.arrayBuffer());
-      if (bytes.length > 20_000_000 || bytes.subarray(0, 5).toString() !== '%PDF-') return;
-      await telegram.sendDocumentBytes(Number(chatId), bytes, name, `📄 ${name}`);
+      const bytes = await bandejaPdfBytes(url);
+      if (bytes) await telegram.sendDocumentBytes(Number(chatId), bytes, name, `📄 ${name}`);
     },
     speak:
       envOn(process.env.PA_BANDEJA_VOZ) && desktop
@@ -6572,11 +6618,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       now: () => new Date(),
       attached: inbound.photoFileId || inbound.documentFileId ? attached : null,
       progress: (text) => say(inbound, text, { quote: true }),
+      kindle: bandejaKindle(inbound.chatId),
     });
+    const itemId = reply.itemId;
     await say(inbound, reply.text, {
       quote: true,
       ...(reply.buttons?.length ? { buttons: reply.buttons } : {}),
       ...(reply.perRow ? { buttonsPerRow: reply.perRow } : {}),
+      // Contestar «kindle» a esta ficha la manda al Kindle.
+      ...(itemId ? { onSent: (mid: string) => bandejaLink(inbound.chatId, mid, itemId) } : {}),
     });
     if (reply.pdf)
       await bandejaDeps
@@ -6592,10 +6642,39 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       { store: bandejaStore, queue: bandejaQueue, chatId: inbound.chatId, now: () => new Date() },
       cands,
     );
+    const itemId = reply.itemId;
+    // Contestar «kindle» a tu enlace o al «📥 guardado» manda esa cosa al Kindle.
+    if (itemId && inbound.messageId) bandejaLink(inbound.chatId, inbound.messageId, itemId);
     await say(inbound, reply.text, {
       quote: true,
       ...(reply.buttons?.length ? { buttons: reply.buttons } : {}),
+      ...(itemId ? { onSent: (mid: string) => bandejaLink(inbound.chatId, mid, itemId) } : {}),
     });
+    return true;
+  };
+  function bandejaLink(chatId: string, messageId: string, itemId: number): void {
+    try {
+      bandejaStore.linkMessage(chatId, messageId, itemId);
+    } catch (err) {
+      log.warn('bandeja: no apunté el mensaje', { err: String(err) });
+    }
+  }
+  /** «kindle» (o «📖», «al kindle», «kindle pdf») contestando a una cosa de la bandeja. */
+  const bandejaKindleReply = async (inbound: Inbound): Promise<boolean> => {
+    if (inbound.channel !== 'telegram' || !inbound.replyToMessageId) return false;
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) return false;
+    const m = kindleReplyWord(inbound.text ?? '');
+    if (!m) return false;
+    const item = bandejaStore.itemForMessage(inbound.chatId, inbound.replyToMessageId);
+    if (!item) {
+      await say(
+        inbound,
+        'No sé de qué cosa de la bandeja es ese mensaje. Dime «/kindle N» (el número de /bandeja) o «/kindle <enlace>».',
+        { quote: true },
+      );
+      return true;
+    }
+    await cmdBandeja(inbound, `kindle ${item.id}${m.pdf ? ' pdf' : ''}`);
     return true;
   };
   // Cerrar el círculo: algo con fecha que contaste ya pasó → una pregunta, una vez.
@@ -10472,6 +10551,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     // 📥 La bandeja: lo de hoy, guardar a mano, ficha, ✅ ⏭️ 🗑️, resumen, hora, captura.
     { names: ['bandeja', 'guardar'], run: (inbound, args) => cmdBandeja(inbound, args) },
+    // 📖 «/kindle 12», «/kindle <enlace> [pdf]»: el texto entero en EPUB/AZW3 (y su correo).
+    { names: ['kindle'], run: (inbound, args) => cmdBandeja(inbound, `kindle ${args}`.trim()) },
     // «⏸️ Parar todo en el PC»: pide confirmación con botón y lo para todo menos este chat.
     { names: ['pausa_pc', 'pausa'], run: (inbound, args) => cmdPausaPc(inbound, args) },
     {
@@ -10913,6 +10994,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
           // «baja el volumen de la tele», y navegando «abajo», «atrás»: al momento, sin modelo.
           if (inbound.text && (await tvFastPath(inbound, inbound.text))) return;
+          // 📖 «kindle» contestando a una cosa de la bandeja: al Kindle (src/bandeja/kindle.ts).
+          if (await bandejaKindleReply(inbound)) return;
           // 📥 Un enlace, PDF o captura a secas, o «libro: …»: a la bandeja (src/bandeja/captura.ts).
           if (await bandejaByCapture(inbound)) return;
 

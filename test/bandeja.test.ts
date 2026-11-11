@@ -322,6 +322,8 @@ describe('bandeja: resumen de la noche', () => {
       `✅ ${y} visto`,
       `⏭️ ${y} mañana`,
       `🗑️ ${y} fuera`,
+      // El artículo se lee: «📖 Al Kindle» detrás (el vídeo sin transcripción, no).
+      `📖 ${y} Kindle`,
       '🧹 Quitar la paja',
     ]);
     for (const b of d.buttons) expect(commandFromCallback(b.action)).toMatch(/^\/bandeja /);
@@ -792,13 +794,18 @@ describe('bandeja: /bandeja y botones', () => {
     expect(nextDay('2026-12-31')).toBe('2027-01-01');
   });
 
-  it('/bandeja lista lo de hoy y la ficha lleva sus tres botones', async () => {
+  it('/bandeja lista lo de hoy y la ficha lleva sus tres botones (y «📖 Al Kindle» si se lee)', async () => {
     const id = addDone('https://a.com/x', 'imprescindible', 9);
     expect((await bandejaCommand('', deps())).text).toContain(`🔴 #${id}`);
     const card = await bandejaCommand(`ver ${id}`, deps());
     expect(card.text).toContain('🔴 Imprescindible: léelo entero · 9/10');
     expect(card.perRow).toBe(3);
-    expect(card.buttons?.length).toBe(3);
+    expect(card.buttons?.map((b) => b.label)).toEqual([
+      '✅ visto',
+      '⏭️ mañana',
+      '🗑️ fuera',
+      '📖 Al Kindle',
+    ]);
   });
 });
 

@@ -13,6 +13,8 @@ import { crc32 } from './png.js';
 interface Entrada {
   nombre: string;
   datos: Buffer;
+  /** Sin comprimir (el `mimetype` de un EPUB tiene que ir así y el primero). */
+  store?: boolean;
 }
 
 /** Zip (deflate) con fecha fija: el mismo contenido da los mismos bytes. */
@@ -22,13 +24,14 @@ export function zip(entradas: Entrada[]): Buffer {
   let offset = 0;
   for (const e of entradas) {
     const nombre = Buffer.from(e.nombre, 'utf8');
-    const comp = deflateRawSync(e.datos);
+    const comp = e.store ? e.datos : deflateRawSync(e.datos);
+    const metodo = e.store ? 0 : 8;
     const crc = crc32(e.datos);
     const loc = Buffer.alloc(30);
     loc.writeUInt32LE(0x04034b50, 0);
     loc.writeUInt16LE(20, 4);
     loc.writeUInt16LE(0x0800, 6); // nombres en UTF-8
-    loc.writeUInt16LE(8, 8); // deflate
+    loc.writeUInt16LE(metodo, 8); // 8 = deflate, 0 = sin comprimir
     loc.writeUInt16LE(0, 10); // hora
     loc.writeUInt16LE(0x21, 12); // 1980-01-01
     loc.writeUInt32LE(crc, 14);
@@ -42,7 +45,7 @@ export function zip(entradas: Entrada[]): Buffer {
     cen.writeUInt16LE(20, 4);
     cen.writeUInt16LE(20, 6);
     cen.writeUInt16LE(0x0800, 8);
-    cen.writeUInt16LE(8, 10);
+    cen.writeUInt16LE(metodo, 10);
     cen.writeUInt16LE(0, 12);
     cen.writeUInt16LE(0x21, 14);
     cen.writeUInt32LE(crc, 16);

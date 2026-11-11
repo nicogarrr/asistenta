@@ -21,6 +21,7 @@ import {
   byVerdict,
   itemButtons,
   kindEmoji,
+  kindleButton,
   linkLines,
   scoreLabel,
   shortTitle,
@@ -185,6 +186,11 @@ export function composeDigest(items: readonly BandejaItem[], day: string): Diges
   if (rest > 0) lines.push('', `…y ${rest} más: /bandeja`);
   const buttons: Button[] = [];
   for (const it of withButtons) buttons.push(...itemButtons(it, true));
+  // «📖 N Kindle» de lo que se lee, detrás (de tres en tres: no descuadra las filas de arriba).
+  for (const it of withButtons) {
+    const kb = kindleButton(it, true);
+    if (kb) buttons.push(kb);
+  }
   if (chaff.length) {
     const b = chaffButton(day);
     if (b) buttons.push(b);

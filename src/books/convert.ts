@@ -91,6 +91,54 @@ export async function pdfToEpub(
   }
 }
 
+export type Azw3Result =
+  | { ok: true; azw3: Buffer }
+  | { ok: false; reason: 'no-converter' | 'failed'; message: string };
+
+/**
+ * EPUB -> AZW3 for a Kindle Paperwhite (11th gen and the like) over USB, with calibre's
+ * `--output-profile kindle_pw3`. Optional like pdfToEpub: without calibre the EPUB stays
+ * (Send to Kindle by email converts EPUB itself).
+ */
+export async function epubToAzw3(
+  epub: Buffer,
+  title: string,
+  run: Runner = defaultRunner,
+  converter?: string | null,
+): Promise<Azw3Result> {
+  const cmd = converter === undefined ? await findConverter(run) : converter;
+  if (!cmd)
+    return {
+      ok: false,
+      reason: 'no-converter',
+      message: 'no hay Calibre (ebook-convert) en el PC',
+    };
+  const dir = mkdtempSync(join(tmpdir(), 'pa-kindle-'));
+  try {
+    const input = join(dir, 'libro.epub');
+    const output = join(dir, 'libro.azw3');
+    writeFileSync(input, epub);
+    const r = await run(
+      cmd,
+      [input, output, '--output-profile', 'kindle_pw3', '--title', sliceSafe(title, 200)],
+      5 * 60_000,
+    );
+    if (r.code !== 0 || !existsSync(output)) {
+      log.warn('azw3 conversion failed', { detail: r.stderr.slice(-400) });
+      return {
+        ok: false,
+        reason: 'failed',
+        message: /ETIMEDOUT|timed? ?out/i.test(r.stderr)
+          ? 'Calibre tardó más de 5 minutos y lo he parado'
+          : 'Calibre no pudo convertirlo (el detalle queda en el registro del PC)',
+      };
+    }
+    return { ok: true, azw3: readFileSync(output) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Calibre's own words (a Python traceback, a Windows path) go to the log; the
  * chat gets one plain reason, and the book still goes out as PDF.
