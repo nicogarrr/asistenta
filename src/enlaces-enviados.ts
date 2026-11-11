@@ -20,14 +20,35 @@ export interface EnlaceEnviado {
   at: number;
 }
 
-const URL_RE = /https?:\/\/[^\s<>"'`)\]]+/g;
-/** Enlaces que no son «algo que te mandé»: el panel local, Tailscale, la red de casa. */
+// El «)» entra (es.wikipedia.org/wiki/Mises_(economista)); limpiaUrl quita el que sobra.
+const URL_RE = /https?:\/\/[^\s<>"'`\]]+/g;
+/**
+ * Enlaces que no son «algo que te mandé»: el panel local, Tailscale (su nombre .ts.net y sus
+ * IP 100.64–127.x), la red de casa (10.x, 172.16–31.x, 192.168.x).
+ */
 const INTERNO =
-  /^(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|\[::1\])$|\.ts\.net$|\.local$/i;
+  /^(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|\[::1\]|\[f[cd][0-9a-f:]*\])$|\.ts\.net$|\.local$/i;
 
+/**
+ * Puntuación pegada al final de la frase («…en https://x.com/a.») no es de la URL, ni el «)»
+ * que cierra un paréntesis o un enlace Markdown («[texto](https://x.com/a)»). Uno que cierra
+ * un «(» del propio enlace sí lo es: antes Mises_(economista) salía como Mises_(economista,
+ * una página que no existe (bugs-36, como captura.ts #2278).
+ */
 function limpiaUrl(raw: string): string {
-  // Puntuación pegada al final de la frase («…en https://x.com/a.») no es de la URL.
-  return raw.replace(/[.,;:!?…»”]+$/u, '');
+  let u = raw;
+  for (;;) {
+    const next = u.replace(/[.,;:!?…»”]+$/u, '');
+    if (next.endsWith(')') && cuenta(next, '(') < cuenta(next, ')')) {
+      u = next.slice(0, -1);
+      continue;
+    }
+    return next;
+  }
+}
+
+function cuenta(s: string, ch: string): number {
+  return s.split(ch).length - 1;
 }
 
 function etiquetaDe(linea: string, url: string): string {
@@ -67,7 +88,7 @@ export function enlacesDe(
         const clave = displayUrl(url).replace(/\/$/, '').toLowerCase();
         if (vistos.has(clave)) continue;
         vistos.add(clave);
-        out.push({ url, etiqueta: etiquetaDe(linea, m[0]), at: t.at });
+        out.push({ url, etiqueta: etiquetaDe(linea, url), at: t.at });
         if (out.length >= max) return out;
       }
     }
