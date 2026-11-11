@@ -82,7 +82,10 @@ export interface ProcesarDeps {
 }
 
 /** Corre `run` cuando le toca; `signal` deja de esperar el turno (y lo pasa a `run`). */
-export type TranscribeSlot = <T>(run: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
+export type TranscribeSlot = (<T>(run: () => Promise<T>, signal?: AbortSignal) => Promise<T>) & {
+  /** ¿Hay alguien dentro o esperando? (para avisar de la espera en vez de callar). */
+  busy?: () => boolean;
+};
 
 /**
  * Un turno de uno en uno. Quien se cansa de esperar (su `signal`) se va sin correr, y el
@@ -90,7 +93,8 @@ export type TranscribeSlot = <T>(run: () => Promise<T>, signal?: AbortSignal) =>
  */
 export function oneAtATime(): TranscribeSlot {
   let tail: Promise<void> = Promise.resolve();
-  return <T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
+  let pending = 0;
+  const slot = <T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
     const prev = tail;
     let release: () => void = () => {};
     tail = new Promise<void>((r) => {
@@ -103,12 +107,17 @@ export function oneAtATime(): TranscribeSlot {
       else signal.addEventListener('abort', fail, { once: true });
     });
     gaveUp.catch(() => {});
+    pending++;
     return Promise.race([prev, gaveUp])
       .then(() => run())
       .finally(() => {
-        void prev.then(release);
+        void prev.then(() => {
+          pending--;
+          release();
+        });
       });
   };
+  return Object.assign(slot, { busy: () => pending > 0 });
 }
 
 /** Veces que una cosa puede cortarse a medias (reinicio) antes de dejarla en ⚠️. */
@@ -1055,6 +1064,11 @@ export class BandejaQueue {
    * viejo se transcribía a la vez que la cola transcribía otro: dos whisper en el PC— y tiene
    * su propio tope. Si mientras esperaba la cola ya guardó el texto, se usa ese.
    */
+  /** ¿Hay una transcripción en marcha (o esperando) en el turno del whisper? */
+  transcribeBusy(): boolean {
+    return this.#deps.transcribeSlot?.busy?.() ?? false;
+  }
+
   async readable(
     item: BandejaItem,
     timeoutMs = PROCESS_TIMEOUT_MS,
