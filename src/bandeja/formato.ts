@@ -128,12 +128,18 @@ export function compraButton(item: BandejaItem): Button | undefined {
   return commandButton('🛒 A la compra', 'bandeja', String(item.id), 'compra');
 }
 
+/** «📅 Al calendario» de un evento (su página trae la ficha schema.org `Event`), o nada. */
+export function calendarioButton(item: BandejaItem): Button | undefined {
+  if (!item.extra.evento?.inicio) return undefined;
+  return commandButton('📅 Al calendario', 'bandeja', String(item.id), 'calendario');
+}
+
 /**
- * Los botones de la ficha: ✅ ⏭️ 🗑️ y, en su fila, «📖 Al Kindle» si se lee y «🛒 A la
- * compra» si es una receta (también ya vista: la receta sigue valiendo para la lista).
+ * Los botones de la ficha: ✅ ⏭️ 🗑️ y, en su fila, «📖 Al Kindle» si se lee, «🛒 A la
+ * compra» si es una receta y «📅 Al calendario» si es un evento (también ya vista).
  */
 export function cardButtons(item: BandejaItem): Button[] {
-  const extra = [kindleButton(item), compraButton(item)].filter(
+  const extra = [kindleButton(item), compraButton(item), calendarioButton(item)].filter(
     (b): b is Button => b !== undefined,
   );
   if (item.state !== 'pendiente') return extra;

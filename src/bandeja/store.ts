@@ -9,6 +9,7 @@ import { dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { openSqlite } from '../sqlite.js';
 import { type BandejaKind, type CaptureCandidate, canonicalKey } from './captura.js';
+import type { BandejaEvento } from './evento.js';
 
 export type Veredicto = 'imprescindible' | 'ideas' | 'paja';
 export type Estado = 'pendiente' | 'visto' | 'descartado';
@@ -56,6 +57,11 @@ export interface BandejaExtra {
    * lleva entonces «🛒 A la compra» (los apunta en /compra, como «/compra receta <enlace>»).
    */
   receta?: number;
+  /**
+   * Es un evento (congreso, webinar, junta, concierto): su ficha schema.org `Event`. La ficha
+   * lleva entonces «📅 Al calendario» (bandeja/evento.ts).
+   */
+  evento?: BandejaEvento;
 }
 
 export interface BandejaItem {

@@ -21,6 +21,7 @@ import {
   extractUrls,
   kindOfUrl,
 } from './captura.js';
+import { eventFromHtml } from './evento.js';
 import { type FetchRaw, goodreadsLookup, openLibraryLookup } from './goodreads.js';
 import type { BandejaExtra, BandejaItem, BandejaStore, Goodreads, ProcessResult } from './store.js';
 import { directTags, parseVerdict, verdictPrompt } from './veredicto.js';
@@ -645,6 +646,8 @@ async function linkContent(
   const pdfUrl = originalPdfUrl(url, html);
   // Una receta con su ficha (JSON-LD Recipe): la ficha ofrecerá «🛒 A la compra» (Muse).
   const receta = isHtml ? (recipeFromHtml(html)?.ingredients.length ?? 0) : 0;
+  // Un evento con su ficha (JSON-LD Event): la ficha ofrecerá «📅 Al calendario».
+  const evento = isHtml ? eventFromHtml(html) : null;
   return {
     title,
     text,
@@ -656,6 +659,7 @@ async function linkContent(
       ...(thin ? { basisReason: 'la página trae muy poco texto (¿muro de pago o portada?)' } : {}),
       ...(pdfUrl ? { pdfUrl } : {}),
       ...(receta >= 2 ? { receta } : {}),
+      ...(evento ? { evento } : {}),
     },
     describe: `Artículo o página de ${host}${thin ? ' (muy poco texto: quizá solo la portada o un muro de pago; sé prudente y dilo en el MOTIVO)' : ''}.`,
   };

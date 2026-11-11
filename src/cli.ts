@@ -259,6 +259,7 @@ import { GoalNotifier, NOTIFY_FLUSH_INTERVAL_MS } from './goals/notify.js';
 import { GoalRunner } from './goals/runner.js';
 import { GoalStore, splitGoalScope } from './goals/store.js';
 import { googleCalendarReader } from './google/calendar.js';
+import { crearEvento } from './google/workspace.js';
 import { LEARN_END_RESPUESTA, LearnRecorder } from './learn.js';
 import { assertNotRunning, installLifecycle } from './lifecycle.js';
 import { endpointKind, llmHealthCommand, providerKeyFor, providerKeySource } from './llm-health.js';
@@ -6736,6 +6737,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
               (p) => p.text,
             ),
         ),
+      // «📅 Al calendario» de un evento: tras su «✅ Sí, apúntalo», en su Google Calendar.
+      calendario: (args) =>
+        crearEvento(
+          { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
+          args,
+        ),
+      timeZone: () => localTimeZone(),
     });
     const itemId = reply.itemId;
     await say(inbound, reply.text, {
