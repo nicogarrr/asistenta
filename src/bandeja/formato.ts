@@ -148,6 +148,8 @@ export function basisLine(item: BandejaItem): string | null {
     return media
       ? `⚠️ Sin transcripción: juzgado por la descripción${why}`
       : `⚠️ Con poco texto: juzgado por la descripción${why}`;
+  if (b === 'transcripcion' && item.extra.heardMin)
+    return `⚠️ Solo oí los primeros ${item.extra.heardMin} min (la transcripción se cortó por tiempo): la nota es de esa parte`;
   if (b === 'ficha' && item.kind !== 'libro')
     return media
       ? `⚠️ Sin transcripción: juzgado solo por la ficha${why}`

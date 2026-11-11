@@ -729,6 +729,13 @@ function fetchFailReason(err: unknown): string {
 }
 
 function docNote(item: BandejaItem): string | undefined {
+  const note = baseNote(item);
+  // Una transcripción cortada por tiempo no se entrega como si fuera entera.
+  const heard = item.extra.heardMin;
+  return note && heard ? `${note} (parcial: solo los primeros ${heard} min)` : note;
+}
+
+function baseNote(item: BandejaItem): string | undefined {
   if (item.kind === 'youtube') return 'Transcripción del vídeo';
   if (isPodcast(item)) return 'Transcripción del episodio';
   if (item.kind === 'x')
