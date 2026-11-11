@@ -177,6 +177,11 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: '🔎 Investigar, precios y documentos',
     entries: [
       {
+        command: 'bandeja',
+        args: '[enlace|ver N|resumen|hora 22:00]',
+        description: 'lo que guardas a secas: cada noche 🔴 entero · 🟡 basta el resumen · ⚪ paja',
+      },
+      {
         command: 'investiga',
         args: '[amplio] <pregunta> [| a, b, c]',
         description: 'informe a fondo con fuentes; «amplio» = tabla',
@@ -329,13 +334,22 @@ const len = (s: string): number => Array.from(s).length;
  */
 export function helpPages(opts: { bold?: boolean } = {}): string[] {
   const bold = opts.bold === true;
+  // Los cortes se miden sobre el texto SIN marcas: así /help con negritas y sin ellas se
+  // parten igual (antes, una sección más hacía que las «**» movieran el corte de página).
   const pages: string[][] = [[HELP_INTRO]];
+  const plain: string[][] = [[HELP_INTRO]];
   for (const section of HELP_SECTIONS) {
     const block = sectionBlock(section, bold);
+    const plainBlock = sectionBlock(section, false);
     const page = pages[pages.length - 1] as string[];
-    if (page.length > 0 && len([...page, block].join('\n\n')) > HELP_PAGE_CHARS)
+    const plainPage = plain[plain.length - 1] as string[];
+    if (plainPage.length > 0 && len([...plainPage, plainBlock].join('\n\n')) > HELP_PAGE_CHARS) {
       pages.push([block]);
-    else page.push(block);
+      plain.push([plainBlock]);
+    } else {
+      page.push(block);
+      plainPage.push(plainBlock);
+    }
   }
   const total = pages.length;
   return pages.map((blocks, i) => {

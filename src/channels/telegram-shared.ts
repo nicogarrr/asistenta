@@ -58,6 +58,10 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['pausa_pc', new Set(['', 'confirmar', 'cancelar'])],
   // «▶️ Levantar todo» del modo pausa: vuelve a arrancar lo configurado.
   ['levantar', new Set([''])],
+  // 📥 La bandeja: «⚡ Míralo ya» (procesa y manda la ficha), ✅ visto · ⏭️ mañana · 🗑️ fuera
+  // de UNA cosa (arg = su número) y «🧹 Quitar la paja» (arg = el día, AAAAMMDD). Todo se
+  // deshace con otro toque o con /bandeja; nada sale del chat.
+  ['bandeja', new Set(['ahora', 'ver', 'visto', 'manana', 'descartar', 'paja'])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 

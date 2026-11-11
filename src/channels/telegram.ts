@@ -1715,7 +1715,7 @@ export class TelegramChannel implements ChannelAdapter {
           withReply && outbound.replyToMessageId ? Number(outbound.replyToMessageId) : undefined,
         reply_markup:
           withButtons && usableButtons(outbound.buttons ?? []).length
-            ? buildKeyboard(outbound.buttons ?? [])
+            ? buildKeyboard(outbound.buttons ?? [], outbound.buttonsPerRow)
             : undefined,
       });
       const rich = outbound.format === 'marks';
@@ -2513,12 +2513,17 @@ export function hasOpenQuickReply(buttons: Array<{ action: string }> | undefined
   );
 }
 
-export function buildKeyboard(buttons: Array<{ label: string; action: string }>): InlineKeyboard {
+export function buildKeyboard(
+  buttons: Array<{ label: string; action: string }>,
+  buttonsPerRow?: number,
+): InlineKeyboard {
   const kb = new InlineKeyboard();
   // Hasta dos botones van en una fila; con más, filas de dos. Los cuatro botones de
   // una aprobación en una sola fila se truncaban en el móvil («Esta se…», «Siem…») y
-  // era fácil pulsar el vecino. El orden y el callback_data no cambian.
-  const perRow = 2;
+  // era fácil pulsar el vecino. El orden y el callback_data no cambian. La bandeja
+  // pide 3 (los tres botones cortos de una misma cosa); nunca más de 4.
+  const perRow =
+    buttonsPerRow && Number.isInteger(buttonsPerRow) ? Math.min(4, Math.max(1, buttonsPerRow)) : 2;
   usableButtons(buttons).forEach((b, i) => {
     if (i > 0 && i % perRow === 0) kb.row();
     // «url:https://…»: botón que abre el enlace (las noticias de «Tus temas»).

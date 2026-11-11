@@ -279,7 +279,7 @@ import {
 } from './memory/carpeta.js';
 import { isConsolidationDue, runConsolidation } from './memory/consolidate.js';
 import { DecisionLedger } from './memory/decisions.js';
-import { canExtract, DocMemory } from './memory/docs.js';
+import { canExtract, DocMemory, extractText as extractDocText } from './memory/docs.js';
 import { upcomingDates } from './memory/fechas.js';
 import { imageExtension, imageNote, ocrImageBytes } from './memory/images.js';
 import {
@@ -540,6 +540,11 @@ import {
   tvStopperFromVault,
 } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
+import { detectCapture } from './bandeja/captura.js';
+import { bandejaCommand, captureAndAck, captureOn } from './bandeja/comando.js';
+import { type BandejaComplete, BandejaQueue } from './bandeja/procesar.js';
+import { type DigestDeps, startDigestTimer } from './bandeja/resumen.js';
+import { BandejaStore } from './bandeja/store.js';
 import { SecretLibrary } from './books/secret.js';
 import {
   agendaTodayLines,
@@ -724,7 +729,13 @@ import { createEntregableTool } from './tools/entregable.js';
 import { createExpertosTool, textoTemas } from './tools/expertos.js';
 import { createFactoryTool } from './tools/factory.js';
 import { createFestivosTool } from './tools/festivos.js';
-import { createFetchTool, fetchPage, isFetchableResolved } from './tools/fetch.js';
+import {
+  createFetchTool,
+  fetchPage,
+  isFetchableResolved,
+  isHostAllowed,
+  parseAllowedHosts,
+} from './tools/fetch.js';
 import { fsTools } from './tools/fs.js';
 import { createGasolinerasTool } from './tools/gasolineras.js';
 import { createGastosTool, refrescarPaginaGastos } from './tools/gastos.js';
@@ -3734,6 +3745,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       quote?: boolean;
       format?: Outbound['format'];
       buttons?: Outbound['buttons'];
+      buttonsPerRow?: number;
       /** Cada id de mensaje enviado (todos los trozos), p. ej. para apuntar su hilo. */
       onSent?: (messageId: string) => void;
     } = {},
@@ -3754,6 +3766,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           images: opts.images,
           audio: opts.audio,
           buttons: opts.buttons,
+          ...(opts.buttonsPerRow ? { buttonsPerRow: opts.buttonsPerRow } : {}),
         },
         opts.onSent,
       )
@@ -6421,6 +6434,168 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   pageWatchTimer.unref();
   // El resumen diario se comprueba cada minuto (antes, cada 2 h con las vigilancias).
   startDailyBriefingTimer(briefingDeps);
+  // 📥 La bandeja (src/bandeja): lo que Nico guarda a secas durante el día se procesa en
+  // segundo plano (transcripción real, veredicto 🔴🟡⚪ con nota, Goodreads en libros) y
+  // a las 21:30 (PA_BANDEJA_HORA o /bandeja hora) le llega un resumen con botones.
+  const bandejaStore = new BandejaStore(join(paths.state, 'bandeja.db'));
+  const bandejaComplete = async (): Promise<BandejaComplete | undefined> => {
+    const handle = await createProviderHandle(config);
+    const model = handle.modelFor('pa-bandeja');
+    return async (systemPrompt, user, opts) => {
+      const reply = await handle.models.completeSimple(
+        model,
+        {
+          systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: [{ type: 'text', text: user }, ...(opts.images ?? [])],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        { maxTokens: opts.maxTokens, sessionId: 'pa-bandeja', signal: opts.signal },
+      );
+      return reply.content
+        .map((b) => (b.type === 'text' ? b.text : ''))
+        .join('')
+        .trim();
+    };
+  };
+  const bandejaFetchRaw = async (
+    url: string,
+    opts: { userAgent?: string } = {},
+  ): Promise<string> => {
+    // Otro User-Agent (la ficha de Spotify solo trae título y duración a los lectores de
+    // enlaces): mismas comprobaciones que fetchPage y sin seguir redirecciones.
+    if (opts.userAgent) {
+      if (!(await isFetchableResolved(url)))
+        throw new Error(`refusing to fetch ${url}: not a public http(s) URL`);
+      if (
+        !isHostAllowed(new URL(url).hostname, parseAllowedHosts(process.env.PA_FETCH_ALLOWED_HOSTS))
+      )
+        throw new Error(`${url}: host fuera de PA_FETCH_ALLOWED_HOSTS`);
+      const res = await fetch(url, {
+        redirect: 'manual',
+        headers: { 'User-Agent': opts.userAgent, 'Accept-Language': 'es-ES,es;q=0.9' },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw new Error(`${res.status} for ${url}`);
+      return (await res.text()).slice(0, 3_000_000);
+    }
+    return (await fetchPage(url, { format: 'html', maxChars: 3_000_000, timeoutMs: 30_000 })).text;
+  };
+  const bandejaQueue = new BandejaQueue(
+    bandejaStore,
+    {
+      complete: () => bandejaComplete().catch(() => undefined),
+      fetchRaw: bandejaFetchRaw,
+      videoText: async (url, opts) => {
+        const { getVideoText } = await import('./media/resumen-video.js');
+        return getVideoText(url, {
+          cookiesFromBrowser: config.downloadCookiesBrowser,
+          ...(opts?.directAudio ? { directAudio: true } : {}),
+        });
+      },
+      download: (fileId) => telegram.downloadFile(fileId, 20_000_000),
+      pdfText: (bytes) => extractDocText(bytes, 'application/pdf'),
+      temas: () => temasDeNico(),
+      addChild: (parent, child) => bandejaStore.add(parent.chatId, child, new Date(), parent.day),
+    },
+    (msg, data) => log.warn(msg, data),
+  );
+  const bandejaDeps: DigestDeps = {
+    store: bandejaStore,
+    now: () => new Date(),
+    owner: briefingOwner,
+    send: (chatId, text, buttons) =>
+      telegram
+        .send({
+          channel: 'telegram',
+          account: telegram.account,
+          chatId,
+          text,
+          ...(buttons.length ? { buttons, buttonsPerRow: 3 } : {}),
+        })
+        .then(() => true),
+    // PDF original que ofrece el autor (citation_pdf_url, arXiv, enlace .pdf): se adjunta tal cual.
+    sendPdf: async (chatId, url, name) => {
+      if (!(await isFetchableResolved(url))) return;
+      const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      const len = Number(res.headers.get('content-length') ?? '0');
+      if (!res.ok || len > 20_000_000) return;
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > 20_000_000 || bytes.subarray(0, 5).toString() !== '%PDF-') return;
+      await telegram.sendDocumentBytes(Number(chatId), bytes, name, `📄 ${name}`);
+    },
+    speak:
+      envOn(process.env.PA_BANDEJA_VOZ) && desktop
+        ? briefingSpeaker({
+            synth: (text) =>
+              speakWithin(tts, trimForSpeech(text), REPLY_TTS_BUDGET_MS, (reason) =>
+                log.warn('bandeja: sin voz', { reason }),
+              ),
+            send: (chatId, spoken) =>
+              telegram.send({
+                channel: 'telegram',
+                account: telegram.account,
+                chatId,
+                text: '🔊 Tu bandeja de hoy',
+                audio: {
+                  mimeType: spoken.mimeType,
+                  data: spoken.data.toString('base64'),
+                  durationSeconds: spoken.durationSeconds,
+                },
+              }),
+          })
+        : undefined,
+    warn: (msg, data) => log.warn(msg, data),
+  };
+  startDigestTimer(bandejaDeps);
+  {
+    const resumed = bandejaQueue.resume();
+    if (resumed > 0) log.info('bandeja: retomo lo que quedó sin procesar', { n: resumed });
+  }
+  const cmdBandeja = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'La bandeja es solo para el dueño, en su chat privado.', { quote: true });
+      return;
+    }
+    // «/bandeja» como pie de una foto o un PDF: guarda ese archivo.
+    const attached = detectCapture({ ...inbound, text: '' }, { auto: true })?.[0] ?? null;
+    const reply = await bandejaCommand(args, {
+      store: bandejaStore,
+      queue: bandejaQueue,
+      chatId: inbound.chatId,
+      now: () => new Date(),
+      attached: inbound.photoFileId || inbound.documentFileId ? attached : null,
+      progress: (text) => say(inbound, text, { quote: true }),
+    });
+    await say(inbound, reply.text, {
+      quote: true,
+      ...(reply.buttons?.length ? { buttons: reply.buttons } : {}),
+      ...(reply.perRow ? { buttonsPerRow: reply.perRow } : {}),
+    });
+    if (reply.pdf)
+      await bandejaDeps
+        .sendPdf?.(inbound.chatId, reply.pdf.url, reply.pdf.name)
+        .catch((err: unknown) => log.warn('bandeja: PDF no adjuntado', { err: String(err) }));
+  };
+  /** Lo que llega a secas (enlace, PDF, captura, «libro: …»): a la bandeja, sin modelo. */
+  const bandejaByCapture = async (inbound: Inbound): Promise<boolean> => {
+    if (inbound.channel !== 'telegram' || !isOwnerDm(inbound, vigilanteOwnerId)) return false;
+    const cands = detectCapture(inbound, { auto: captureOn(bandejaStore) });
+    if (!cands?.length) return false;
+    const reply = captureAndAck(
+      { store: bandejaStore, queue: bandejaQueue, chatId: inbound.chatId, now: () => new Date() },
+      cands,
+    );
+    await say(inbound, reply.text, {
+      quote: true,
+      ...(reply.buttons?.length ? { buttons: reply.buttons } : {}),
+    });
+    return true;
+  };
   // Cerrar el círculo: algo con fecha que contaste ya pasó → una pregunta, una vez.
   const closeLoop = new CloseLoop({
     followups: () => ownerDmFollowups(followups, ownerDmFollowupKey()),
@@ -10293,6 +10468,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         });
       },
     },
+    // 📥 La bandeja: lo de hoy, guardar a mano, ficha, ✅ ⏭️ 🗑️, resumen, hora, captura.
+    { names: ['bandeja', 'guardar'], run: (inbound, args) => cmdBandeja(inbound, args) },
     // «⏸️ Parar todo en el PC»: pide confirmación con botón y lo para todo menos este chat.
     { names: ['pausa_pc', 'pausa'], run: (inbound, args) => cmdPausaPc(inbound, args) },
     {
@@ -10734,6 +10911,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           if (isOwnerDm(inbound, vigilanteOwnerId) && (await answerOwnerFacts(inbound))) return;
           // «baja el volumen de la tele», y navegando «abajo», «atrás»: al momento, sin modelo.
           if (inbound.text && (await tvFastPath(inbound, inbound.text))) return;
+          // 📥 Un enlace, PDF o captura a secas, o «libro: …»: a la bandeja (src/bandeja/captura.ts).
+          if (await bandejaByCapture(inbound)) return;
 
           // «Aprende a…», «añádete que…»: el dueño pide una función hablando (solo texto suyo).
           const plainText =

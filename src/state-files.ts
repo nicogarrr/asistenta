@@ -74,6 +74,11 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   { name: 'voice.db', what: 'estado de voz', backup: 'db' },
+  {
+    name: 'bandeja.db',
+    what: 'la bandeja: lo guardado para leer/ver, veredictos y ajustes',
+    backup: 'db',
+  },
   { name: 'approvals.db', what: 'aprobaciones guardadas', backup: 'db' },
   // Ficheros sueltos (backup.ts además copia cualquier otro *.json de la raíz).
   { name: 'mail-rules.json', what: 'tus reglas de correo', backup: 'file' },

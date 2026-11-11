@@ -1,0 +1,195 @@
+/**
+ * Textos de la bandeja para Telegram (texto plano, sin Markdown): el aviso al
+ * guardar, la ficha de una cosa, la lista de /bandeja y los botones.
+ */
+import { commandButton } from '../channels/telegram-shared.js';
+import { sliceSafe } from '../text.js';
+import type { BandejaKind } from './captura.js';
+import { goodreadsLine } from './goodreads.js';
+import type { BandejaItem } from './store.js';
+import { VERDICT_EMOJI, VERDICT_ORDER, verdictLabel } from './veredicto.js';
+
+export type Button = { label: string; action: string };
+
+const KIND_EMOJI: Record<BandejaKind, string> = {
+  youtube: '🎬',
+  x: '🐦',
+  enlace: '🔗',
+  pdf: '📄',
+  imagen: '🖼️',
+  libro: '📚',
+  texto: '📝',
+};
+
+export function kindEmoji(kind: BandejaKind): string {
+  return KIND_EMOJI[kind] ?? '🔗';
+}
+
+/** Nombre corto para listas: el título si ya lo hay; si no, el sitio o el fichero. */
+export function shortTitle(item: BandejaItem, max = 70): string {
+  let t = item.title?.trim();
+  if (!t && item.url) {
+    try {
+      const u = new URL(item.url);
+      t = `${u.hostname.replace(/^www\./, '')}${u.pathname.length > 1 ? u.pathname : ''}`;
+    } catch {
+      t = item.url;
+    }
+  }
+  if (!t) t = item.fileName ?? (item.kind === 'imagen' ? 'captura' : 'sin título');
+  return t.length > max ? `${sliceSafe(t, max - 1)}…` : t;
+}
+
+/** «📥 Guardado en la bandeja (3 hoy). Te digo esta noche a las 21:30 si merece la pena.» */
+export function ackText(
+  items: readonly { item: BandejaItem; dup: boolean }[],
+  countToday: number,
+  hora: string,
+): string {
+  const fresh = items.filter((i) => !i.dup);
+  const dups = items.length - fresh.length;
+  if (fresh.length === 0)
+    return `📥 Eso ya estaba en la bandeja (${countToday} hoy). Te lo cuento a las ${hora}.`;
+  const what =
+    fresh.length === 1
+      ? `${kindEmoji(fresh[0]?.item.kind ?? 'enlace')} guardado`
+      : `${fresh.length} cosas guardadas`;
+  const dupNote = dups > 0 ? ` (${dups} ya estaba${dups === 1 ? '' : 'n'})` : '';
+  return `📥 ${what} en la bandeja${dupNote} · ${countToday} hoy. Te digo a las ${hora} si merece la pena.`;
+}
+
+/** Botones del aviso de guardado: «⚡ Míralo ya» y «🗑️ Quitar» (solo con una cosa). */
+export function ackButtons(items: readonly { item: BandejaItem; dup: boolean }[]): Button[] {
+  if (items.length !== 1) return [];
+  const id = String(items[0]?.item.id);
+  return [
+    commandButton('⚡ Míralo ya', 'bandeja', id, 'ahora'),
+    commandButton('🗑️ Quitar', 'bandeja', id, 'descartar'),
+  ].filter((b): b is Button => b !== undefined);
+}
+
+/** Los tres botones de una cosa: ✅ visto · ⏭️ mañana · 🗑️ descartar (con su número). */
+export function itemButtons(item: BandejaItem, numbered = false): Button[] {
+  const id = String(item.id);
+  const n = numbered ? ` ${item.id}` : '';
+  return [
+    commandButton(`✅${n} visto`, 'bandeja', id, 'visto'),
+    commandButton(`⏭️${n} mañana`, 'bandeja', id, 'manana'),
+    commandButton(`🗑️${n} fuera`, 'bandeja', id, 'descartar'),
+  ].filter((b): b is Button => b !== undefined);
+}
+
+/**
+ * Dónde está la cosa entera (Nico, 10:58: «donde dices mejor leerlo, debes darme el
+ * texto a poder ser en PDF y si no el enlace directo»): siempre hay al menos una línea.
+ */
+export function linkLines(item: BandejaItem, indent = ''): string[] {
+  const out: string[] = [];
+  const main = item.url ?? item.extra.goodreads?.url ?? item.extra.altUrl;
+  if (main) out.push(`${indent}🔗 ${main}`);
+  if (item.extra.altUrl && item.extra.altUrl !== main)
+    out.push(`${indent}${item.kind === 'libro' ? '📖' : '▶️'} También: ${item.extra.altUrl}`);
+  if (item.extra.pdfUrl && item.extra.pdfUrl !== main)
+    out.push(`${indent}📄 PDF original: ${item.extra.pdfUrl}`);
+  if (!main && item.fileId)
+    out.push(
+      `${indent}📎 Es ${item.kind === 'imagen' ? 'la captura' : 'el archivo'} que me mandaste${item.fileName ? ` («${item.fileName}»)` : ''}: búscalo en este chat por la hora.`,
+    );
+  if (out.length === 0) out.push(`${indent}🔎 Sin enlace: ${shortTitle(item, 80)}`);
+  return out;
+}
+
+/** «⚠️ Sin transcripción: juzgado por la descripción (motivo)». */
+export function basisLine(item: BandejaItem): string | null {
+  const b = item.extra.basis;
+  const why = item.extra.basisReason ? ` (${item.extra.basisReason})` : '';
+  if (b === 'descripcion') return `⚠️ Sin transcripción: juzgado por la descripción${why}`;
+  if (b === 'ficha' && item.kind !== 'libro')
+    return `⚠️ Sin transcripción: juzgado solo por la ficha${why}`;
+  return null;
+}
+
+function metaLine(item: BandejaItem): string {
+  const parts: string[] = [];
+  if (item.extra.author) parts.push(`👤 ${item.extra.author}`);
+  if (item.costLabel) parts.push(item.costLabel);
+  if (item.extra.source && !['captura', 'nota'].includes(item.extra.source))
+    parts.push(item.extra.source);
+  return parts.join(' · ');
+}
+
+/** La ficha completa de una cosa ya procesada (o por qué no lo está). */
+export function cardText(item: BandejaItem): string {
+  const head = `#${item.id} ${kindEmoji(item.kind)} ${shortTitle(item, 120)}`;
+  if (item.state === 'descartado' && item.status === 'listo' && !item.verdict)
+    return [head, `ℹ️ ${item.error ?? 'quitada'}.`].join('\n');
+  if (item.status === 'error')
+    return [head, `⚠️ No pude juzgarlo: ${item.error ?? 'error'}.`, ...linkLines(item)].join('\n');
+  if (item.status !== 'listo' || !item.verdict)
+    return `${head}\n⏳ Aún lo estoy procesando. Te lo digo en cuanto lo tenga.`;
+  const lines = [
+    `${verdictLabel(item.verdict, item.kind, item.extra.source)} · ${item.score ?? '?'}/10`,
+    head,
+  ];
+  const meta = metaLine(item);
+  if (meta) lines.push(meta);
+  const gr = goodreadsLine(item.extra.goodreads);
+  if (gr) lines.push(gr);
+  if (item.extra.publicRating) lines.push(item.extra.publicRating);
+  const basis = basisLine(item);
+  if (basis) lines.push(basis);
+  if (item.reason) lines.push(`Por qué: ${item.reason}`);
+  if (item.ideas.length) {
+    lines.push('', '💡 Ideas clave:');
+    for (const idea of item.ideas) lines.push(`• ${idea}`);
+  }
+  if (item.extra.tags?.length) lines.push(`🏷️ ${item.extra.tags.join(', ')}`);
+  if (item.carried > 0)
+    lines.push(`⏰ Pendiente desde hace ${item.carried} día${item.carried === 1 ? '' : 's'}`);
+  lines.push(...linkLines(item));
+  return lines.join('\n');
+}
+
+function statusMark(item: BandejaItem): string {
+  if (item.state === 'visto') return '✅';
+  if (item.status === 'error') return '⚠️';
+  if (item.status !== 'listo' || !item.verdict) return '⏳';
+  return VERDICT_EMOJI[item.verdict];
+}
+
+/** Ordena 🔴 → 🟡 → ⚪ → sin veredicto; dentro, por nota y luego por llegada. */
+export function byVerdict(a: BandejaItem, b: BandejaItem): number {
+  const rank = (i: BandejaItem) => (i.verdict ? VERDICT_ORDER.indexOf(i.verdict) : 3);
+  return rank(a) - rank(b) || (b.score ?? 0) - (a.score ?? 0) || a.id - b.id;
+}
+
+/** /bandeja: lo de hoy (y lo imprescindible que se arrastra), una línea por cosa. */
+export function listText(
+  today: readonly BandejaItem[],
+  carried: readonly BandejaItem[],
+  hora: string,
+): string {
+  if (today.length === 0 && carried.length === 0)
+    return [
+      '📥 La bandeja de hoy está vacía.',
+      'Mándame enlaces (YouTube, X, artículos), PDFs, capturas o «libro: título» sin más texto y los guardo. A las ' +
+        `${hora} te digo qué merece la pena.`,
+    ].join('\n');
+  const lines = [`📥 Bandeja de hoy: ${today.length} cosa${today.length === 1 ? '' : 's'}`];
+  for (const it of [...today].sort(byVerdict)) {
+    const score = it.score ? ` ${it.score}/10` : '';
+    lines.push(
+      `${statusMark(it)} #${it.id} ${kindEmoji(it.kind)} ${shortTitle(it, 60)}${score}${it.costLabel ? ` · ${it.costLabel.replace(/^\S+\s/, '')}` : ''}`,
+    );
+  }
+  if (carried.length) {
+    lines.push('', `⏰ Imprescindibles pendientes de otros días: ${carried.length}`);
+    for (const it of carried.slice(0, 8))
+      lines.push(`🔴 #${it.id} ${kindEmoji(it.kind)} ${shortTitle(it, 60)}`);
+  }
+  lines.push(
+    '',
+    `Ficha de una: /bandeja ver N · resumen ahora: /bandeja resumen · a las ${hora} te llega solo.`,
+  );
+  return lines.join('\n');
+}

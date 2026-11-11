@@ -12,7 +12,7 @@ describe('menú, mando de la tele y pa doctor sin sintaxis de comandos', () => {
   it('el menú de /tv y /learn dice qué decir, sin ejemplos con barra', () => {
     expect(desc('tv')).not.toContain('/tv apaga');
     expect(desc('learn')).toBe('Aprender una rutina mirándote; al acabar dime «ya está»');
-    expect(TELEGRAM_COMMANDS).toHaveLength(63);
+    expect(TELEGRAM_COMMANDS).toHaveLength(64);
   });
 
   it('el mando de la tele no lleva <marcadores>', () => {

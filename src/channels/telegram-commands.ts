@@ -62,6 +62,10 @@ export const TELEGRAM_COMMANDS = [
   },
   // Encargos: investigar, vigilar precios, rutinas.
   {
+    command: 'bandeja',
+    description: 'Bandeja: lo que guardas hoy y qué merece la pena',
+  },
+  {
     command: 'investiga',
     description: 'Informe a fondo con citas; /investiga amplio compara varios elementos',
   },

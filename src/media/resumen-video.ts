@@ -162,6 +162,11 @@ export interface VideoTextDeps {
   /** Aviso de progreso («🎧 Transcribiendo 12 min…»). */
   progress?: (text: string) => void | Promise<void>;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Acepta también un enlace directo a un audio (el mp3 de un episodio de podcast, del
+   * RSS del programa): sin subtítulos, se baja y se transcribe igual. Solo la bandeja.
+   */
+  directAudio?: boolean;
 }
 
 /** Reintento de un trozo fallido: piezas de 30 s (whisper las lee de una pasada). */
@@ -252,7 +257,11 @@ async function defaultTranscribe(audio: Buffer, mimeType: string): Promise<strin
 
 /** El texto del vídeo: subtítulos de YouTube primero; si no hay, el audio transcrito. */
 export async function getVideoText(rawUrl: string, deps: VideoTextDeps = {}): Promise<VideoText> {
-  const target = resumibleVideoUrl(rawUrl);
+  const target: { url: string; site: 'youtube' | 'x' | 'audio' } | null =
+    resumibleVideoUrl(rawUrl) ??
+    (deps.directAudio && /^https:\/\/\S+$/i.test(rawUrl.trim())
+      ? { url: rawUrl.trim(), site: 'audio' }
+      : null);
   if (!target) return { ok: false, reason: 'no es un vídeo de YouTube ni de X' };
   const env = deps.env ?? process.env;
   const runner = deps.runImpl ?? run;
