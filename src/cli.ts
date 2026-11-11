@@ -444,7 +444,7 @@ import {
   textoEstado,
   VigilantePrecios,
 } from './precios/vigilante.js';
-import { AskFirstStore, areasOf, askFirstRequest, runAskFirstCommand } from './preguntar-antes.js';
+import { AskFirstStore, askFirstFromText, runAskFirstCommand } from './preguntar-antes.js';
 import { migrateLocalPresetPin } from './preset-migration.js';
 import { deepResearch, renderReport } from './research/deep-research.js';
 import {
@@ -7201,9 +7201,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     // «pregúntame antes de usar el navegador» (Grok Bot, reglas «Ask first»): se apunta al
     // momento. Si no nombra nada que sepa vigilar, lo lleva el modelo como siempre.
-    const askFirstWhat = askFirstRequest(text);
-    if (askFirstWhat !== null && areasOf(askFirstWhat).length > 0) {
-      await say(inbound, runAskFirstCommand(askFirst, askFirstWhat), { quote: true });
+    // Hablando siempre es AÑADIR («antes de borrar archivos» no es «/permisos … borrar»).
+    const askFirstReply = askFirstFromText(askFirst, text);
+    if (askFirstReply !== null) {
+      await say(inbound, askFirstReply, { quote: true });
       return true;
     }
     // «deja de vigilar»: para lo que se vigila en este chat al momento (latido.ts). Si no hay
