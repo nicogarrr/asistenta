@@ -7763,11 +7763,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (orden.kind === 'lista') {
       const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados, orden.busca);
-      bibliotecaUltimaVista.set(inbound.chatId, {
-        filtro: orden.filtro,
-        ...(orden.busca ? { busca: orden.busca } : {}),
-        at: Date.now(),
-      });
+      const queda = bib.vistaQueQueda(orden.filtro, orden.busca, v.sends.length, Date.now());
+      if (queda) bibliotecaUltimaVista.set(inbound.chatId, queda);
+      else bibliotecaUltimaVista.delete(inbound.chatId);
       // Por fila: «📤 N» y su «📌 Fijar N»/«Soltar N» (dos por fila, la misma clave).
       const pinDe = new Map(v.pins.map((p) => [p.clave, p]));
       const buttons = v.sends
