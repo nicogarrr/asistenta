@@ -112,6 +112,11 @@ export interface Inbound {
   replyQuotePart?: string;
   /** Chat metadata the adapter can supply: is this a group? */
   isGroup?: boolean;
+  /**
+   * Nombre del grupo («Familia»), si el canal lo da. Sirve para decir a qué grupo se
+   * refiere una regla «… en este grupo» cuando se lista desde el privado (chat-titulos.ts).
+   */
+  chatTitle?: string;
   messageId: string;
   receivedAt: string;
   /** Cuándo se envió el mensaje según el canal (Telegram: msg.date). Ausente = en vivo. */

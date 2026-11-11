@@ -148,6 +148,7 @@ import type {
   Outbound,
 } from './channels/types.js';
 import { chatIdOf, chatKey, chatNumberOf, parseChatKey } from './channels/types.js';
+import { ChatTitulos } from './chat-titulos.js';
 import { aplicarClaveGo } from './clave-panel.js';
 import { type Config, loadConfig, resetConfigForTests } from './config.js';
 import { type ControlStartup, controlledDaemon } from './controlled-daemon.js';
@@ -2303,6 +2304,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const modelChoices = new ModelChoiceStore(join(paths.state, 'modelos.json'));
   /** Reglas «pregúntame antes de …» del dueño (Grok Bot «Ask first»): valen en todos sus hilos. */
   const askFirst = new AskFirstStore(join(paths.state, 'preguntar-antes.json'));
+  // Nombres de los grupos de Telegram (chat-titulos.ts): «(solo en el grupo «Familia»)».
+  const chatTitulos = new ChatTitulos(join(paths.state, 'chat-titulos.json'));
+  const nombreDeChat = (chat: string): string | undefined => chatTitulos.nombre(chat);
   // /ordenador off guardado: el PC sigue sin control tras reiniciar (solo más estricto;
   // PA_COMPUTER_USE=0 en el .env manda siempre).
   if (applySavedComputerOff(config, paths.state)) {
@@ -7216,6 +7220,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const askFirstReply = askFirstFromText(askFirst, text, {
       chat: chatKey(inbound),
       group: false,
+      nombreDe: nombreDeChat,
     });
     if (askFirstReply !== null) {
       await say(inbound, askFirstReply, { quote: true });
@@ -10609,7 +10614,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       const rest = args.trim().slice(permisosSub.length).trim();
       await say(
         inbound,
-        runAskFirstCommand(askFirst, rest, { chat: chatKey(inbound), group: false }),
+        runAskFirstCommand(askFirst, rest, {
+          chat: chatKey(inbound),
+          group: false,
+          nombreDe: nombreDeChat,
+        }),
         { quote: true },
       );
       return;
@@ -11070,6 +11079,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await withInboundFailureReply(
         async () => {
           const chatKey_ = chatKey(inbound);
+          // El nombre del grupo, para decir cuál en las reglas «… en este grupo».
+          if (inbound.isGroup && inbound.chatTitle)
+            chatTitulos.recordar(chatKey_, inbound.chatTitle);
           const started = beginInbound(inbound, chatKey_, {
             seen: seenMessages,
             log,
@@ -11308,6 +11320,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             const reply = askFirstFromText(askFirst, inbound.text, {
               chat: chatKey_,
               group: true,
+              nombreDe: nombreDeChat,
             });
             if (reply !== null) {
               await say(inbound, reply, { quote: true });
