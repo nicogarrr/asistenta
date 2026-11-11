@@ -88,7 +88,13 @@ export function captureAndAck(
   const saved = cands.map((c) => deps.store.add(deps.chatId, c, now, day));
   for (const s of saved) if (!s.dup) void deps.queue.enqueue(s.item.id);
   return {
-    text: ackText(saved, deps.store.countDay(deps.chatId, day), digestHora(deps.store, deps.env)),
+    text: ackText(
+      saved,
+      deps.store.countDay(deps.chatId, day),
+      digestHora(deps.store, deps.env),
+      // Guardado tras el resumen de esta noche: sale en el de mañana (antes decía «a las 21:30»).
+      deps.store.getMeta('last_digest_day') === day,
+    ),
     buttons: ackButtons(saved),
     ...(saved.length === 1 && saved[0] ? { itemId: saved[0].item.id } : {}),
   };
