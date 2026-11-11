@@ -12,6 +12,12 @@ import { extname, join } from 'node:path';
 
 export const CREADOS_MAX_FICHEROS = 40;
 export const CREADOS_MAX_BYTES = 50 * 1024 * 1024;
+/**
+ * Fijados con «/biblioteca fijar N» (Grok Bot, «Pin» en su Library): no se podan ni
+ * cuentan para los 40 / 50 MB. Como mucho 10, para que la carpeta siga acotada.
+ */
+export const CREADOS_MAX_FIJADOS = 10;
+const FIJADOS = 'fijados.json';
 
 const ID = /^\d{8}-\d{6}(?:-\d+)?-[A-Za-z0-9._-]{1,80}$/;
 
@@ -122,6 +128,44 @@ export class CreadosStore {
     );
   }
 
+  /** Los ids fijados que siguen existiendo (los de un archivo ya borrado no cuentan). */
+  fijados(): Set<string> {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(join(this.#dir, FIJADOS), 'utf8'));
+    } catch {
+      return new Set();
+    }
+    if (!Array.isArray(raw)) return new Set();
+    return new Set(
+      raw.filter((id): id is string => typeof id === 'string' && ID.test(id) && this.#existe(id)),
+    );
+  }
+
+  #guardarFijados(ids: Set<string>): void {
+    mkdirSync(this.#dir, { recursive: true });
+    writeFileSync(join(this.#dir, FIJADOS), `${JSON.stringify([...ids])}\n`);
+  }
+
+  /** Fija un archivo: no se poda. 'lleno' si ya hay CREADOS_MAX_FIJADOS. */
+  fijar(id: string): 'ok' | 'ya' | 'lleno' | 'no' {
+    if (!ID.test(id) || !this.#existe(id)) return 'no';
+    const ids = this.fijados();
+    if (ids.has(id)) return 'ya';
+    if (ids.size >= CREADOS_MAX_FIJADOS) return 'lleno';
+    ids.add(id);
+    this.#guardarFijados(ids);
+    return 'ok';
+  }
+
+  /** Lo suelta: vuelve a podarse como los demás. false si no estaba fijado. */
+  soltar(id: string): boolean {
+    const ids = this.fijados();
+    if (!ids.delete(id)) return false;
+    this.#guardarFijados(ids);
+    return true;
+  }
+
   /** Bytes y tipo de un archivo para el panel; null si el id no vale o no existe. */
   leer(id: string): { bytes: Buffer; mime: string; nombre: string } | null {
     if (!ID.test(id)) return null;
@@ -139,7 +183,9 @@ export class CreadosStore {
   }
 
   #podar(): void {
-    const all = this.lista();
+    // Lo fijado no se poda ni cuenta para el tope (Grok «Pin»).
+    const fijados = this.fijados();
+    const all = this.lista().filter((f) => !fijados.has(f.id));
     let total = 0;
     all.forEach((f, i) => {
       total += f.bytes;

@@ -12,7 +12,7 @@ import { alCaerConexion, entregarAvisosPendientes } from './conexion-caida.js';
 import { doneCheckLine } from './core/hecho.js';
 import { resolveModelCaps } from './core/models.js';
 import { RouteStore, routeAfterTurn, routesOn } from './core/rutas.js';
-import { CreadosStore } from './creados.js';
+import { CREADOS_MAX_FIJADOS, CreadosStore } from './creados.js';
 import {
   learnNameAnswer,
   PreguntasPendientes,
@@ -7613,15 +7613,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, bib.BIBLIOTECA_AYUDA, { quote: true });
       return;
     }
+    const fijados = creados.fijados();
+    // 📌 «/biblioteca fijar N»: no se poda (Grok Bot «Pin»); «soltar N» lo devuelve a la poda.
+    if (orden.kind === 'fijar' || orden.kind === 'soltar') {
+      const c = bib.bibliotecaElegir(lista, orden, fijados);
+      const r = !c ? 'no' : orden.kind === 'fijar' ? creados.fijar(c.id) : creados.soltar(c.id);
+      await say(inbound, bib.textoFijar(orden.kind, c, r, CREADOS_MAX_FIJADOS), { quote: true });
+      return;
+    }
     if (orden.kind === 'lista') {
-      const v = bib.bibliotecaVista(lista, orden.filtro);
+      const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados);
       const buttons = v.sends
         .map((s) => commandButton(s.label, 'biblioteca', s.clave, 'enviar'))
         .filter((b): b is { label: string; action: string } => b !== undefined);
       await say(inbound, v.text, { quote: true, ...(buttons.length ? { buttons } : {}) });
       return;
     }
-    const elegido = bib.bibliotecaElegir(lista, orden);
+    const elegido = bib.bibliotecaElegir(lista, orden, fijados);
     const file = elegido ? creados.leer(elegido.id) : null;
     if (!elegido || !file) {
       await say(
