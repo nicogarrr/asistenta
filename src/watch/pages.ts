@@ -681,12 +681,15 @@ export class PageWatchStore {
       }
       // Vuelve a haber stock: la ficha decía agotado y ahora no. Antes solo se avisaba si
       // además cambiaba el precio, y el «ojo: consta agotado» se quedaba sin su «ya hay».
-      if (prev && prev.inStock === false && ext.inStock === true) {
-        return { kind: 'restock', cents, prevCents: prev.cents };
+      // Contra la última lectura que SÍ decía el stock: una lectura sin disponibilidad (la
+      // ficha a veces no la trae) en medio se tragaba el «vuelve» o el «se ha agotado».
+      const known = [...prevReadings].reverse().find((r) => r.inStock !== null);
+      if (known && known.inStock === false && ext.inStock === true) {
+        return { kind: 'restock', cents, prevCents: known.cents };
       }
       // «avísame si se agota» (opt-in): de en stock a agotado, aunque el precio no cambie.
-      if (w.notifySoldOut && prev && prev.inStock === true && ext.inStock === false) {
-        return { kind: 'soldout', cents: prev.cents };
+      if (w.notifySoldOut && known && known.inStock === true && ext.inStock === false) {
+        return { kind: 'soldout', cents: known.cents };
       }
       // Sin histórico estructurado previo: primera lectura, nueva referencia silenciosa.
       // (Si la vigilancia viene de la heurística de texto, comparar métodos distintos
