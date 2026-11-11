@@ -167,6 +167,12 @@ export interface VideoTextDeps {
    * RSS del programa): sin subtítulos, se baja y se transcribe igual. Solo la bandeja.
    */
   directAudio?: boolean;
+  /**
+   * Corta la transcripción (la bandeja tiene un tope de tiempo por cosa). Con algo ya
+   * transcrito se devuelve eso, marcado «solo los primeros N min»; antes el whisper seguía
+   * en segundo plano gastando CPU aunque nadie fuera a leer el resultado.
+   */
+  signal?: AbortSignal;
 }
 
 /** Reintento de un trozo fallido: piezas de 30 s (whisper las lee de una pasada). */
@@ -355,6 +361,8 @@ export async function getVideoText(rawUrl: string, deps: VideoTextDeps = {}): Pr
     await deps.progress?.(label);
     const parts: string[] = [];
     let lastError = '';
+    /** Segundos de audio ya pasados por whisper cuando llegó el corte (null = sin corte). */
+    let stoppedAt: number | null = null;
     /** Corta [start, start+len) a wav 16 kHz mono. null = ffmpeg falló; vacío = fin del audio. */
     const cutWav = async (start: number, len: number, tag: string): Promise<Buffer | null> => {
       const out = join(dir, `trozo-${tag}.wav`);
@@ -401,6 +409,10 @@ export async function getVideoText(rawUrl: string, deps: VideoTextDeps = {}): Pr
       const start = i * chunkSec;
       const len = Math.min(chunkSec, span - start);
       if (len <= 0) break;
+      if (deps.signal?.aborted) {
+        stoppedAt = start;
+        break;
+      }
       if (pieces > 1 && i > 0) await deps.progress?.(`${label} (${i + 1}/${pieces})`);
       const wav = await cutWav(start, len, String(i));
       if (!wav) return { ok: false, reason: 'ffmpeg no pudo leer el audio del vídeo' };
@@ -416,6 +428,7 @@ export async function getVideoText(rawUrl: string, deps: VideoTextDeps = {}): Pr
       // El trozo entero falló (whisper se atasca con un tramo de música o ruido): se
       // reintenta en piezas de 30 s y se salta solo la que vuelva a fallar.
       for (let sub = 0; sub < len; sub += SUB_SECONDS) {
+        if (deps.signal?.aborted) break;
         const small = await cutWav(start + sub, Math.min(SUB_SECONDS, len - sub), `${i}-${sub}`);
         if (!small || small.length < 16_000) continue;
         try {
@@ -426,10 +439,21 @@ export async function getVideoText(rawUrl: string, deps: VideoTextDeps = {}): Pr
         }
       }
     }
+    if (stoppedAt !== null && !parts.length)
+      return { ok: false, reason: 'se acabó el tiempo antes de transcribir nada' };
     if (!parts.length && lastError) {
       return { ok: false, reason: `no pude transcribir el audio: ${lastError}` };
     }
     if (!parts.length) return { ok: false, reason: 'el audio no tiene voz que transcribir' };
+    // Cortado a tiempo: lo transcrito vale, pero se dice hasta dónde se oyó.
+    if (stoppedAt !== null && (total === null || stoppedAt < Math.min(total, limitSec)))
+      return {
+        ok: true,
+        meta,
+        text: parts.join('\n'),
+        source: 'audio',
+        cappedAtMin: Math.max(1, Math.round(stoppedAt / 60)),
+      };
     const capped = total !== null ? total > limitSec : false;
     return {
       ok: true,

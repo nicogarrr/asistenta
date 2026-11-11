@@ -63,6 +63,8 @@ export interface ProcesarDeps {
   /** Una cosa recién juzgada (para mandar solo lo 🔴 al Kindle con «kindle auto»). */
   onDone?: (item: BandejaItem) => void | Promise<void>;
   now?: () => Date;
+  /** Tope de la transcripción de una cosa (por defecto TRANSCRIBE_BUDGET_MS; tests). */
+  transcribeBudgetMs?: number;
 }
 
 /** Lo que entra al modelo: no más (un vídeo de 3 h son ~150 000 caracteres). */
@@ -235,8 +237,12 @@ async function safeVideoText(
   url: string,
   opts: { signal?: AbortSignal; directAudio?: boolean },
 ): ReturnType<ProcesarDeps['videoText']> {
+  // La transcripción tiene su propio tope, por debajo del de la cosa entera: lo que dé
+  // tiempo a oír se juzga («solo los primeros N min») y queda margen para el modelo.
+  const budget = AbortSignal.timeout(deps.transcribeBudgetMs ?? TRANSCRIBE_BUDGET_MS);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, budget]) : budget;
   try {
-    return await deps.videoText(url, opts);
+    return await deps.videoText(url, { ...opts, signal });
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return {
@@ -918,8 +924,15 @@ export async function readableText(
   return { title: c.title, text: c.text, extra: c.extra };
 }
 
-/** Tope de tiempo por cosa (un vídeo largo transcrito en el PC tarda). */
-export const PROCESS_TIMEOUT_MS = 15 * 60_000;
+/**
+ * Tope de tiempo por cosa. El whisper del PC tarda (en CPU, a menudo la mitad de lo que
+ * dura el audio o más): con 15 min y «transcribe hasta 3 h», un podcast de 1 h acababa en
+ * «tardaba demasiado» sin veredicto. Ahora la transcripción para a los 35 min con lo que
+ * lleve y la cosa se juzga con eso; los 45 min son solo la red de seguridad.
+ */
+export const PROCESS_TIMEOUT_MS = 45 * 60_000;
+/** Tope de la transcripción dentro de una cosa (deja margen para el modelo). */
+export const TRANSCRIBE_BUDGET_MS = 35 * 60_000;
 
 /**
  * Cola de procesado: de una en una, en segundo plano, sin reintentos. Al arrancar se
@@ -1032,7 +1045,11 @@ export class BandejaQueue {
         processItem(item, this.#deps, ctl.signal),
         new Promise<never>((_, reject) => {
           ctl.signal.addEventListener('abort', () =>
-            reject(new BandejaError('tardaba demasiado (más de 15 min)')),
+            reject(
+              new BandejaError(
+                `tardaba demasiado (más de ${Math.round(PROCESS_TIMEOUT_MS / 60_000)} min)`,
+              ),
+            ),
           );
         }),
       ]);
