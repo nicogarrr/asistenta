@@ -321,14 +321,102 @@ function minutesOfDay(hora: string): number {
   return (h ?? 0) * 60 + (m ?? 0);
 }
 
+/**
+ * Días después del domingo en que aún se manda el repaso de la semana que no salió (PC
+ * apagado el domingo a la hora del resumen, o Telegram fallando con ese mensaje). Más tarde
+ * ya es una semana vieja y no se manda.
+ */
+export const WEEKLY_CATCHUP_DAYS = 2;
+
+/** El domingo de la semana de `day` (el mismo día si ya es domingo). */
+function sundayOf(day: string, weekday: number): string {
+  // Aritmética de calendario sobre el mediodía UTC del día local (sin zona ni horario de
+  // verano de por medio); se formatea a mano.
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - weekday);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+}
+
+function weeklyFail(store: BandejaStore, sunday: string): { n: number; at: number } | null {
+  try {
+    const v = JSON.parse(store.getMeta('weekly_fail') ?? 'null') as {
+      sunday?: unknown;
+      n?: unknown;
+      at?: unknown;
+    } | null;
+    if (!v || v.sunday !== sunday || typeof v.n !== 'number' || typeof v.at !== 'number')
+      return null;
+    return { n: v.n, at: v.at };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * «🏆 Tu semana en la bandeja», una vez por semana, ya pasada la hora del resumen. Antes solo
+ * salía si el resumen corría EN domingo y se daba por enviado aunque Telegram fallara: con el
+ * PC apagado el domingo a las 21:30 la semana se perdía. Ahora sale con el primer resumen
+ * desde ese domingo (hasta WEEKLY_CATCHUP_DAYS después) y, si falla, se reintenta como el
+ * resumen (cada 10 min, 3 veces).
+ */
+async function sendWeeklyIfDue(
+  deps: DigestDeps,
+  chatId: string,
+  day: string,
+  weekday: number,
+  now: Date,
+): Promise<void> {
+  const sunday = sundayOf(day, weekday);
+  if ((deps.store.getMeta('last_weekly_day') ?? '') >= sunday) return;
+  const late = Math.round(
+    (Date.parse(`${day}T12:00:00Z`) - Date.parse(`${sunday}T12:00:00Z`)) / 86_400_000,
+  );
+  if (late > WEEKLY_CATCHUP_DAYS) return;
+  const fail = weeklyFail(deps.store, sunday);
+  if (fail && now.getTime() - fail.at < DIGEST_RETRY_MS) return;
+  const weekly = composeWeekly(
+    deps.store.processedBetween(
+      chatId,
+      new Date(now.getTime() - (7 + late) * 86_400_000).toISOString(),
+      now.toISOString(),
+    ),
+  );
+  const ok = weekly
+    ? await deps.send(chatId, weekly, []).catch((err: unknown) => {
+        deps.warn?.('bandeja: repaso de la semana no enviado', { err: String(err) });
+        return false;
+      })
+    : true;
+  const n = (fail?.n ?? 0) + 1;
+  if (ok || n >= DIGEST_MAX_TRIES) {
+    deps.store.setMeta('last_weekly_day', sunday);
+    deps.store.setMeta('weekly_fail', null);
+  } else deps.store.setMeta('weekly_fail', JSON.stringify({ sunday, n, at: now.getTime() }));
+}
+
 /** Manda el resumen si ya es la hora y hoy no ha salido. */
 export async function runDigestIfDue(deps: DigestDeps): Promise<DigestStatus> {
   const now = deps.now();
   const day = localDay(now);
   const clock = wallClock(now);
-  if (deps.store.getMeta('last_digest_day') === day) return 'not-due';
-  if (clock.hour * 60 + clock.minute < minutesOfDay(digestHora(deps.store, deps.env)))
+  const pastHora = clock.hour * 60 + clock.minute >= minutesOfDay(digestHora(deps.store, deps.env));
+  if (deps.store.getMeta('last_digest_day') === day) {
+    // El resumen de hoy ya salió; el de la semana quizá no (falló y toca reintentar).
+    if (pastHora && !inFlight) {
+      const chatId = deps.owner();
+      if (chatId) {
+        inFlight = true;
+        try {
+          await sendWeeklyIfDue(deps, chatId, day, clock.weekday, now);
+        } finally {
+          inFlight = false;
+        }
+      }
+    }
     return 'not-due';
+  }
+  if (!pastHora) return 'not-due';
   // Tras un fallo, no cada minuto: un resumen largo sale en 2–3 mensajes y, si el último
   // falla, repetir cada minuto mandaba los primeros otra vez (decenas de copias a la noche).
   const fail = digestFail(deps.store, day);
@@ -350,22 +438,8 @@ export async function runDigestIfDue(deps: DigestDeps): Promise<DigestStatus> {
         });
       } else deps.store.setMeta('digest_fail', JSON.stringify({ day, n, at: now.getTime() }));
     } else deps.store.setMeta('digest_fail', null);
-    // Domingo: detrás, lo mejor de la semana (una vez por semana).
-    if (
-      status !== 'send-failed' &&
-      clock.weekday === 0 &&
-      deps.store.getMeta('last_weekly_day') !== day
-    ) {
-      const weekly = composeWeekly(
-        deps.store.processedBetween(
-          chatId,
-          new Date(now.getTime() - 7 * 86_400_000).toISOString(),
-          now.toISOString(),
-        ),
-      );
-      deps.store.setMeta('last_weekly_day', day);
-      if (weekly) await deps.send(chatId, weekly, []).catch(() => false);
-    }
+    // Detrás, lo mejor de la semana (el domingo, o el primer día después si no salió).
+    if (status !== 'send-failed') await sendWeeklyIfDue(deps, chatId, day, clock.weekday, now);
     return status;
   } finally {
     inFlight = false;
