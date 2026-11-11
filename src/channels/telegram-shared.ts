@@ -82,6 +82,8 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'compra',
       'calendario',
       'apuntar',
+      // «📲 .ics (iPhone)»: el mismo evento en un fichero .ics a este chat (sin Google).
+      'ics',
       // «🔄 Releer la página»: vuelve a leer su receta o su evento (solo esas fichas).
       'releer',
     ]),

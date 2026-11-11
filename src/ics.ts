@@ -292,3 +292,111 @@ export function invitacionLineas(
   }
   return out.slice(0, ICS_MAX_EVENTOS);
 }
+
+/** Escapa un TEXT de iCalendar (\, ; , y saltos). */
+function escIcs(v: string): string {
+  return v
+    .replace(/\\/g, '\\\\')
+    .replace(/[;,]/g, (c) => `\\${c}`)
+    .replace(/\r?\n/g, '\\n');
+}
+
+/** Pliega una línea a 75 octetos (RFC 5545 §3.1) sin partir un carácter UTF-8. */
+function plegar(line: string): string {
+  const out: string[] = [];
+  let cur = '';
+  let bytes = 0;
+  for (const ch of line) {
+    const n = Buffer.byteLength(ch, 'utf8');
+    if (bytes + n > (out.length ? 74 : 75)) {
+      out.push(cur);
+      cur = '';
+      bytes = 0;
+    }
+    cur += ch;
+    bytes += n;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+}
+
+const utcStamp = (ms: number) =>
+  new Date(ms)
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
+
+/** Una hora de reloj «2026-11-20T09:30» en `tz` → instante (ms). */
+function localAInstante(v: string, tz: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v);
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1, 6).map(Number) as [number, number, number, number, number];
+  return instanteEn(y, mo, d, h, mi, 0, tz);
+}
+
+function diaSiguiente(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  // Fecha de calendario pura (sin zona): se arma a mano, no con toISOString (test local-day).
+  const dos = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${dos(d.getUTCMonth() + 1)}-${dos(d.getUTCDate())}`;
+}
+
+/**
+ * Un .ics de un evento (los datos de «📅 Al calendario», en hora de Nico) para abrirlo en el
+ * iPhone o el Mac y añadirlo a su calendario sin Google. Horas en UTC (sin VTIMEZONE: vale en
+ * cualquier calendario); día entero con VALUE=DATE y fin exclusivo. Sin fin: 1 h (o el día).
+ */
+export function icsDeEvento(
+  args: { titulo?: string; inicio?: string; fin?: string; lugar?: string; descripcion?: string },
+  tz: string,
+  opts: { uid: string; now?: Date },
+): string | null {
+  const ini = args.inicio ?? '';
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Asistenta//Bandeja//ES',
+    'METHOD:PUBLISH',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:${opts.uid}`,
+    `DTSTAMP:${utcStamp((opts.now ?? new Date()).getTime())}`,
+  ];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ini)) {
+    const fin =
+      args.fin && /^\d{4}-\d{2}-\d{2}$/.test(args.fin) && args.fin > ini
+        ? args.fin
+        : diaSiguiente(ini);
+    lines.push(
+      `DTSTART;VALUE=DATE:${ini.replace(/-/g, '')}`,
+      `DTEND;VALUE=DATE:${fin.replace(/-/g, '')}`,
+    );
+  } else {
+    const t0 = localAInstante(ini, tz);
+    if (t0 === null) return null;
+    const t1 = args.fin ? localAInstante(args.fin, tz) : null;
+    lines.push(
+      `DTSTART:${utcStamp(t0)}`,
+      `DTEND:${utcStamp(t1 !== null && t1 > t0 ? t1 : t0 + 3_600_000)}`,
+    );
+  }
+  lines.push(`SUMMARY:${escIcs(args.titulo?.trim() || 'Evento')}`);
+  if (args.lugar) lines.push(`LOCATION:${escIcs(args.lugar)}`);
+  if (args.descripcion) lines.push(`DESCRIPTION:${escIcs(args.descripcion)}`);
+  lines.push('END:VEVENT', 'END:VCALENDAR');
+  return `${lines.map(plegar).join('\r\n')}\r\n`;
+}
+
+/** Un nombre de fichero .ics legible y seguro («Junta de accionistas.ics»). */
+export function icsNombre(titulo: string | undefined): string {
+  const base = (titulo ?? '')
+    .normalize('NFC')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: los de control no valen en un nombre de fichero.
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+    .trim();
+  return `${base || 'evento'}.ics`;
+}
