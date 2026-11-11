@@ -26,7 +26,7 @@ import { commandButton } from '../channels/telegram-shared.js';
 import { localDay } from '../datecontext.js';
 import type { EventoArgs } from '../google/workspace.js';
 import { ICS_SOURCE, icsDeEvento, icsNombre } from '../ics.js';
-import { addedKey, cancelKey, gidKey, mismaCita, uidKey } from './calendario-marcas.js';
+import { addedKey, cancelKey, gidKey, mismaCita, mismaHora, uidKey } from './calendario-marcas.js';
 import { type CaptureCandidate, explicitCapture } from './captura.js';
 import { cuandoTexto, eventoArgs, localWallTime, yaPaso } from './evento.js';
 import {
@@ -339,8 +339,16 @@ async function calendarioSub(
     if (sub === 'cambiar') return cambiarSub(item, previa, args, cuando, deps);
     const antes = viejo ? cuandoTexto(eventoArgs(viejo, tz, previa.item.url)) : 'otra fecha';
     const b = commandButton('✅ Sí, cámbialo', 'bandeja', String(item.id), 'cambiar');
+    // Otro sitio (Outlook reenvía la invitación si cambia la sala): antes, a la misma hora,
+    // decía «Ya está en tu calendario» y el sitio viejo seguía (bugs-38).
+    const otroSitio =
+      ev.lugar && viejo?.lugar !== ev.lugar
+        ? `ahora en ${ev.lugar} (antes, ${viejo?.lugar ?? 'sin sitio'})`
+        : '';
     return {
-      text: `📅 «${ev.nombre}» cambia: ahora es ${cuando}. Lo apunté con la #${previa.item.id} para ${antes}. ¿Lo cambio en tu Google Calendar?`,
+      text: mismaHora(viejo, ev)
+        ? `📅 «${ev.nombre}» cambia de sitio: ${otroSitio}. Lo apunté con la #${previa.item.id} (${cuando}). ¿Lo cambio en tu Google Calendar?`
+        : `📅 «${ev.nombre}» cambia: ahora es ${cuando}${otroSitio ? `, ${otroSitio}` : ''}. Lo apunté con la #${previa.item.id} para ${antes}. ¿Lo cambio en tu Google Calendar?`,
       ...(b ? { buttons: [b] } : {}),
       itemId: item.id,
     };
@@ -464,7 +472,9 @@ async function cambiarSub(
     deps.store.setMeta(gidKey(item.id), previa.gid);
     if (item.extra.icsUid)
       deps.store.setMeta(uidKey(item.chatId, item.extra.icsUid), String(item.id));
-    return { text: `📅 Cambiado en tu Google Calendar: «${nombre}», ahora ${cuando}.` };
+    return {
+      text: `📅 Cambiado en tu Google Calendar: «${nombre}», ahora ${cuando}${args.lugar ? ` · ${args.lugar}` : ''}.`,
+    };
   } finally {
     calendarioEnCurso.delete(busy);
   }

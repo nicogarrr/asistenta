@@ -171,7 +171,8 @@ export function moverEvento(deps: WorkspaceDeps, a: EventoArgs): Promise<string>
     const end = a.fin ? calTime(a.fin, tz) : addHour(start);
     const res = await call(deps, 'calendarWrite', `${CAL_API}/${encodeURIComponent(a.id)}`, {
       method: 'PATCH',
-      body: JSON.stringify({ start, end }),
+      // Con el sitio si lo trae (una invitación que cambia de sala; bugs-38): si no, se queda.
+      body: JSON.stringify({ start, end, ...(a.lugar ? { location: a.lugar } : {}) }),
     });
     const e = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     return `📅 Movido: «${String(e.summary ?? 'el evento')}» ahora es ${cuando(e.start ? e : { start }, tz)}.`;

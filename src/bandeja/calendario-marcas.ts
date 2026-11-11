@@ -17,15 +17,23 @@ export const cancelKey = (chatId: string, uid: string) => `cal_cancel_${chatId}_
 
 type Evento = NonNullable<BandejaItem['extra']['evento']>;
 
-/** ¿Es la misma cita (mismo inicio y fin)? Entonces no hay nada que cambiar. */
+/**
+ * ¿Es la misma cita (mismo inicio y fin, y el mismo sitio si la nueva trae uno)? Entonces no
+ * hay nada que cambiar. Una versión nueva sin sitio no borra el de antes.
+ */
 export function mismaCita(a: Evento | undefined, b: Evento): boolean {
+  return mismaHora(a, b) && (!b.lugar || a?.lugar === b.lugar);
+}
+
+/** Mismo inicio y fin. */
+export function mismaHora(a: Evento | undefined, b: Evento): boolean {
   return !!a && a.inicio === b.inicio && (a.fin ?? '') === (b.fin ?? '');
 }
 
 /**
  * ¿Tocar «📅 Al calendario» de esta cosa ya no apuntaría nada? Lo apuntado (con la misma
  * fecha), lo cancelado y la misma invitación ya apuntada con otra cosa a la misma hora. Lo que
- * cambió de fecha no: tocarlo ofrece «✅ Sí, cámbialo».
+ * cambió de fecha (o de sitio) no: tocarlo ofrece «✅ Sí, cámbialo».
  */
 export function calendarioResuelto(
   store: Pick<BandejaStore, 'get' | 'getMeta'>,
