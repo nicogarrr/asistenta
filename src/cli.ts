@@ -4293,11 +4293,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /**
    * Recordatorios por tema con el correo nuevo: quién lo manda, el asunto y el principio del
    * cuerpo. Un aviso por recordatorio (los mismos topes que al escribir: 3 veces, 24 h), con su
-   * «🔕», al privado del dueño. Los ya leídos no cuentan.
+   * «🔕», al privado del dueño. Los ya leídos no cuentan, ni los boletines y listas
+   * (List-Unsubscribe, List-Id, Precedence: bulk; mail/masivo.ts).
    */
   const intencionesCorreo = async (messages: MailMessage[]): Promise<void> => {
     const owner = briefingOwner();
-    const nuevos = messages.filter((m) => !m.seen);
+    // Un boletín o una lista (List-Unsubscribe…) no cuenta: gastaría los 3 avisos en un día.
+    const nuevos = messages.filter((m) => !m.seen && !m.masivo);
     if (!owner || !nuevos.length) return;
     const it = await import('./intenciones.js');
     const store = new it.IntencionesStore(join(paths.state, 'intenciones.json'));

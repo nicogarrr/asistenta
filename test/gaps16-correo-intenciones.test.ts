@@ -63,7 +63,8 @@ describe('gaps-16: un correo nuevo también «habla de» un tema', () => {
     expect(src.slice(d, d + 900)).toContain('await intencionesCorreo(messages)');
     const f = src.indexOf('const intencionesCorreo = async');
     const body = src.slice(f, f + 1500);
-    expect(body).toContain('messages.filter((m) => !m.seen)');
+    // gaps-17: además sin boletines ni listas (`!m.masivo`).
+    expect(body).toContain('messages.filter((m) => !m.seen && !m.masivo)');
     expect(body).toContain('it.OLVIDAR_LABEL');
   });
 });

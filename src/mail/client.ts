@@ -20,6 +20,7 @@ import { invitacionLineas } from '../ics.js';
 import { log } from '../log.js';
 import { foldAccents } from '../text.js';
 import { vaultGet } from '../vault.js';
+import { esMasivo } from './masivo.js';
 import { calendarPartsOf, extractBodyText } from './mime.js';
 import {
   GMAIL_IMAP_HOST,
@@ -132,6 +133,7 @@ export function toMessage(
     at: envelope.date && Number.isFinite(envelope.date.getTime()) ? envelope.date.getTime() : 0,
     seen: raw.flags?.has('\\Seen') ?? false,
     folder,
+    ...(esMasivo(raw.source) ? { masivo: true } : {}),
   };
 }
 

@@ -34,6 +34,11 @@ export interface MailMessage {
    * (IDLE): de ahí sale «📅 ¿La apunto?» (mail/invitacion-aviso.ts). No se guarda.
    */
   calendarios?: string[];
+  /**
+   * Boletín, lista o aviso automático (List-Unsubscribe, List-Id, Precedence: bulk,
+   * Auto-Submitted), visto en las cabeceras al leerlo (mail/masivo.ts). Solo el sí/no.
+   */
+  masivo?: boolean;
 }
 
 export interface MailSearchQuery {
