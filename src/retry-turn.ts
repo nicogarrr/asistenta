@@ -67,6 +67,14 @@ export function retryTarget(text: string): string | undefined {
 }
 
 /**
+ * «/compactar reintentar <id>» (botón «🗜️ Resumir y reintentar» de la tarjeta de error): el
+ * id del mensaje que repetir tras resumir; undefined si es un /compactar normal.
+ */
+export function compactarRetryTarget(args: string): string | undefined {
+  return /^reintentar\s+(\d{1,20})\s*$/i.exec(args.trim())?.[1];
+}
+
+/**
  * ¿Repite el botón el último mensaje? Un botón viejo (ya se escribió otra cosa después)
  * no debe repetir un mensaje distinto del que falló.
  */

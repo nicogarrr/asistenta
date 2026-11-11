@@ -51,6 +51,7 @@ import {
   projectStateReply,
 } from './project-context.js';
 import {
+  compactarRetryTarget,
   formatTokens,
   LastTurns,
   RETRY_BUTTON_LABEL,
@@ -155,8 +156,12 @@ import { attentionFreeConfig, createAttentionJudge } from './core/attention-mode
 import {
   chatReplyText,
   isOutageError,
+  MODEL_ERROR_ACTION_LABEL,
   MODEL_ERROR_QUESTION,
+  type ModelErrorAction,
+  modelErrorCard,
   modelErrorFollowUp,
+  modelErrorMark,
 } from './core/friendly-error.js';
 import { dedupeNewFacts, splitCaducidad } from './core/history.js';
 import {
@@ -2280,6 +2285,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const voiceAsked = new Set<string>();
   /** Turnos que fallaron sin reintento automático: su respuesta lleva «🔄 Reintentar». */
   const retryOffered = new Set<string>();
+  /** La acción de la tarjeta de error de ese mensaje (Hermes): compactar, estado o reintentar. */
+  const errorActions = new Map<string, ModelErrorAction>();
 
   // Originals are kept in private state/media for the recall TTL and chat cap.
   // Handles and originals survive restart; no other chat can resolve them.
@@ -7334,9 +7341,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
     });
 
-  /** «🔄 Reintentar» para el último mensaje del dueño en este hilo, si se sabe cuál es. */
+  /**
+   * «🔄 Reintentar» para el último mensaje del dueño en este hilo, si se sabe cuál es. Con
+   * tarjeta de error (Hermes), la UNA acción que lo arregla: «🗜️ Resumir y reintentar» si la
+   * conversación se hizo demasiado larga (reintentar sin más volvería a fallar) y «🩺 Ver el
+   * estado» si es la clave o el saldo.
+   */
   const retryButtons = (thread: Thread): Outbound['buttons'] => {
     const id = lastTurns.get(thread.key)?.messageId;
+    const action = id ? errorActions.get(id) : undefined;
+    if (id) errorActions.delete(id);
+    const fix =
+      action === 'compactar' && id
+        ? commandButton(MODEL_ERROR_ACTION_LABEL.compactar, 'compactar', id, 'reintentar')
+        : action === 'estado'
+          ? commandButton(MODEL_ERROR_ACTION_LABEL.estado, 'estado', 'ver')
+          : undefined;
+    if (fix) return [fix];
     const button = id ? commandButton(RETRY_BUTTON_LABEL, 'reintentar', id) : undefined;
     return button ? [button] : undefined;
   };
@@ -7384,11 +7405,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   };
 
   // F7: /compactar resume el historial ya, sin esperar al umbral.
-  const cmdCompactar = async (inbound: Inbound): Promise<void> => {
+  const cmdCompactar = async (inbound: Inbound, args = ''): Promise<void> => {
     const thread = await resolveThread(inbound);
+    // «🗜️ Resumir y reintentar» de la tarjeta de error: resume y repite ESE mensaje.
+    const retryId = compactarRetryTarget(args);
+    let compacted = false;
     const next = queueThreadTurn(thread, async () => {
       try {
         const r = await thread.agent.compactNow();
+        compacted = r.compacted;
         // Los índices del historial ya no valen: /reintentar no rebobina.
         await say(
           inbound,
@@ -7404,6 +7429,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     });
     await next;
+    if (retryId && compacted) await cmdReintentar({ ...inbound, text: `/reintentar ${retryId}` });
   };
 
   // /modelo: avisa si el modelo nuevo tiene mucha menos ventana o no ve imágenes.
@@ -9782,7 +9808,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
 
       // El error crudo («fetch failed») se queda en el log; el chat lo oye en claro.
-      let text2 = chatReplyText(result) + modelErrorAsk(inbound, result, !out);
+      // Tarjeta de error (Hermes): «⛔» si esperar no lo arregla, «⚠️» si es pasajero.
+      let text2 =
+        modelErrorMark(result) + chatReplyText(result) + modelErrorAsk(inbound, result, !out);
       // Sin red o con el servicio del modelo caído: se reintenta solo, sin que el dueño
       // vuelva a escribirlo. Los reintentos que fallan otra vez no escriben nada.
       const retrying = opts.autoRetry !== undefined;
@@ -9812,6 +9840,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       // /reintentar o copiar el mensaje otra vez).
       if (!out && result.error !== null && !autoRetryLater && !opts.external)
         retryOffered.add(inbound.messageId);
+      // Tarjeta de error (Hermes): la UNA acción que lo arregla, no siempre «Reintentar».
+      const card = retryOffered.has(inbound.messageId) ? modelErrorCard(result.error) : null;
+      if (card) errorActions.set(inbound.messageId, card.action);
+      else errorActions.delete(inbound.messageId);
       if (out) out.answer(text2);
       else if (text2) await answer(thread, inbound, text2);
       // Spoken sessions (capability 6) read the answer out loud on this machine. After
@@ -10720,7 +10752,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       },
     },
     { names: ['reintentar'], run: (inbound) => cmdReintentar(inbound) },
-    { names: ['compactar'], run: (inbound) => cmdCompactar(inbound) },
+    { names: ['compactar'], run: (inbound, args) => cmdCompactar(inbound, args) },
     { names: ['modelo'], run: (inbound, args) => cmdModelo(inbound, args) },
     { names: ['proyecto'], run: (inbound, args) => cmdProyecto(inbound, args) },
     { names: ['altavoz'], run: (inbound, args) => cmdAltavoz(inbound, args) },
