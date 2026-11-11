@@ -298,14 +298,25 @@ export function panelPaginas(
   salidasDir: string,
   timeZone?: string,
   /** Archivos generados (gráficas, Excel, PDF…): creados.ts. */
-  creados?: { lista(): Array<{ id: string; nombre: string; bytes: number; creado: number }> },
+  creados?: {
+    lista(): Array<{ id: string; nombre: string; bytes: number; creado: number }>;
+    /** Los fijados con 📌 (creados.ts): salen arriba, como en /biblioteca. */
+    fijados?(): ReadonlySet<string>;
+  },
 ) {
+  const fijados = creados?.fijados?.() ?? new Set<string>();
+  const todos = creados?.lista() ?? [];
+  const ordenados = [
+    ...todos.filter((f) => fijados.has(f.id)),
+    ...todos.filter((f) => !fijados.has(f.id)),
+  ];
   return {
-    archivos: (creados?.lista() ?? []).slice(0, 20).map((f) => ({
+    archivos: ordenados.slice(0, 20).map((f) => ({
       id: f.id,
       nombre: f.nombre,
       bytes: f.bytes,
       creado: fecha(f.creado, timeZone),
+      fijado: fijados.has(f.id),
     })),
     paginas: store.lista().map((p) => ({
       id: p.slug,
