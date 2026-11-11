@@ -92,6 +92,16 @@ export type CheckOutcome =
       dropPct: number;
       inStock: boolean | null;
     }
+  | {
+      /**
+       * La ficha decía agotado en la lectura anterior y ahora dice en stock (Grok Bot:
+       * «Notify me» cuando vuelve). Se avisa aunque el precio no cambie.
+       */
+      kind: 'restock';
+      cents: number;
+      /** Precio de la última lectura en que constaba agotado. */
+      prevCents: number;
+    }
   | { kind: 'error'; message: string; failures: number; notify: boolean };
 
 // Miles con espacio tipográfico (duro, estrecho o fino: lo que sale de `&nbsp;` o de
@@ -638,6 +648,11 @@ export class PageWatchStore {
           }
         }
       }
+      // Vuelve a haber stock: la ficha decía agotado y ahora no. Antes solo se avisaba si
+      // además cambiaba el precio, y el «ojo: consta agotado» se quedaba sin su «ya hay».
+      if (prev && prev.inStock === false && ext.inStock === true) {
+        return { kind: 'restock', cents, prevCents: prev.cents };
+      }
       // Sin histórico estructurado previo: primera lectura, nueva referencia silenciosa.
       // (Si la vigilancia viene de la heurística de texto, comparar métodos distintos
       // daría un "cambio" falso.)
@@ -755,6 +770,13 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
         ? `la mediana de tu histórico (${eur(o.referenceCents)})`
         : `la última lectura (${eur(o.referenceCents)})`;
     return `Bajada del ${o.dropPct} % en ${name}: ${eur(o.cents)} frente a ${ref}${stockText(o.inStock)}\n${w.url}`;
+  }
+  if (o.kind === 'restock') {
+    const precio =
+      o.prevCents === o.cents
+        ? `al mismo precio, ${eur(o.cents)}`
+        : `a ${eur(o.cents)} (cuando se agotó estaba a ${eur(o.prevCents)})`;
+    return `🟢 Vuelve a haber stock en ${name}, ${precio}. Si lo quieres, mejor no esperar.\n${w.url}`;
   }
   if (o.kind === 'error' && o.notify) {
     return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${readFailureCause(o.message)}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;

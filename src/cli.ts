@@ -11883,7 +11883,12 @@ export function backupFailedNotice(err: unknown): string {
   return `${base}: algo ha fallado por mi parte. ${retry}`;
 }
 
-const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set(['changed', 'target', 'drop']);
+const PAGE_ALERT_KINDS: ReadonlySet<CheckOutcome['kind']> = new Set([
+  'changed',
+  'target',
+  'drop',
+  'restock',
+]);
 
 /**
  * Aviso de una página vigilada, o null si no hay nada que decir o está silenciada
