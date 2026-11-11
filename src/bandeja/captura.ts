@@ -125,6 +125,40 @@ export function canonicalKey(url: string): string {
   return `${host}${u.pathname.replace(/\/+$/, '')}${q}`;
 }
 
+/** Lo que sobra al enseñar un enlace en cualquier sitio: rastreo puro. */
+const SHOWN_TRACKING =
+  /^(utm_\w+|fbclid|gclid|dclid|msclkid|igsh|igshid|mc_cid|mc_eid|_hsenc|_hsmi|si)$/i;
+/** Y lo que sobra según el sitio (en otro sitio `s` o `a` pueden ser la búsqueda o la página). */
+const SHOWN_TRACKING_BY_HOST: Array<[RegExp, RegExp]> = [
+  [/(^|\.)(x|twitter)\.com$/, /^(s|t|a|ref_src|ref_url)$/i],
+  [/(^|\.)(youtube\.com|youtu\.be)$/, /^(is|feature|pp|ab_channel)$/i],
+  [/(^|\.)spotify\.com$/, /^(context|nd|dlsi)$/i],
+  [/(^|\.)instagram\.com$/, /^(img_index)$/i],
+];
+
+/**
+ * El enlace para enseñarlo: sin los parámetros de seguimiento que traen los «compartir»
+ * (`?si=`, `?is=`, `utm_…`, y en X `?s=`, `?t=`, `?a=`). Se guarda tal cual llegó; solo
+ * cambia lo que se ve. El minuto de un vídeo (`t=`) y todo lo demás se quedan.
+ */
+export function displayUrl(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return url;
+  }
+  if (!u.search) return url;
+  const host = u.hostname.toLowerCase();
+  const extra = SHOWN_TRACKING_BY_HOST.filter(([h]) => h.test(host)).map(([, re]) => re);
+  const keep = [...u.searchParams.entries()].filter(
+    ([k]) => !SHOWN_TRACKING.test(k) && !extra.some((re) => re.test(k)),
+  );
+  if (keep.length === [...u.searchParams.keys()].length) return url;
+  u.search = keep.length ? new URLSearchParams(keep).toString() : '';
+  return u.toString();
+}
+
 /** El id de un vídeo de YouTube, o null. */
 export function youtubeId(url: string): string | null {
   const k = canonicalKey(url);

@@ -22,7 +22,7 @@ import { xml, zip } from '../entregables/xlsx.js';
 import type { MailAccount, SendRequest, SendResult } from '../mail/types.js';
 import { sliceSafe } from '../text.js';
 import { decodeEntities, extractText } from '../tools/fetch.js';
-import { canonicalKey, kindOfUrl } from './captura.js';
+import { canonicalKey, displayUrl, kindOfUrl } from './captura.js';
 import type { FetchRaw } from './goodreads.js';
 import type { BandejaExtra, BandejaItem, BandejaStore } from './store.js';
 
@@ -750,7 +750,7 @@ function itemDoc(item: BandejaItem, text: string, title: string | null): KindleD
   };
   if (item.extra.author) doc.author = item.extra.author;
   if (item.extra.source) doc.source = item.extra.source;
-  if (item.url) doc.url = item.url;
+  if (item.url) doc.url = displayUrl(item.url);
   const note = docNote(item);
   if (note) doc.note = note;
   return doc;
@@ -788,7 +788,7 @@ async function buildFor(item: BandejaItem, deps: KindleDeliverDeps): Promise<Bui
       return { kind: 'link', url: item.url, title, reason: fetchFailReason(err) };
     }
     try {
-      const { doc } = await readArticle(html, item.url);
+      const { doc } = await readArticle(html, displayUrl(item.url));
       return { kind: 'doc', doc };
     } catch (err) {
       if (err instanceof KindleWall)
@@ -849,7 +849,7 @@ export async function deliverToKindle(
   if (built.kind === 'link') {
     return [
       `📖 «${built.title}» no va al Kindle: ${built.reason}.`,
-      built.url ? `🔗 Aquí lo tienes para leerlo directamente: ${built.url}` : '',
+      built.url ? `🔗 Aquí lo tienes para leerlo directamente: ${displayUrl(built.url)}` : '',
     ]
       .filter(Boolean)
       .join('\n');
