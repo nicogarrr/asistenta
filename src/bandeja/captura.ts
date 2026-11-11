@@ -41,6 +41,8 @@ export interface CaptureInput {
   text: string;
   photoFileId?: string;
   albumPhotoFileIds?: string[];
+  /** El resto de documentos de un envío de varios a la vez (álbum de Telegram). */
+  albumDocuments?: Array<{ fileId: string; mimeType?: string; name?: string }>;
   documentFileId?: string;
   documentMimeType?: string;
   documentName?: string;
@@ -195,7 +197,7 @@ export function bookTitleFrom(text: string): string | null {
   return title;
 }
 
-function isPdfDoc(m: CaptureInput): boolean {
+function isPdfDoc(m: Pick<CaptureInput, 'documentMimeType' | 'documentName'>): boolean {
   const mime = m.documentMimeType?.toLowerCase() ?? '';
   return mime === 'application/pdf' || /\.pdf$/i.test(m.documentName?.trim() ?? '');
 }
@@ -230,16 +232,19 @@ export function detectCapture(
   const othersCaption = m.forwardedFrom && text ? { note: text.slice(0, 2000) } : {};
   if (m.documentFileId) {
     if (text && !m.forwardedFrom) return null;
-    return [
-      {
-        kind: isPdfDoc(m) ? 'pdf' : 'texto',
-        title: m.documentName?.trim() || undefined,
-        fileId: m.documentFileId,
-        fileName: m.documentName?.trim() || undefined,
-        mimeType: m.documentMimeType,
-        ...othersCaption,
-      },
+    // Varios PDFs de una vez llegan como un álbum: antes solo se guardaba el primero.
+    const docs = [
+      { fileId: m.documentFileId, mimeType: m.documentMimeType, name: m.documentName },
+      ...(m.albumDocuments ?? []),
     ];
+    return docs.slice(0, MAX_PER_MESSAGE).map((d) => ({
+      kind: isPdfDoc({ documentMimeType: d.mimeType, documentName: d.name }) ? 'pdf' : 'texto',
+      title: d.name?.trim() || undefined,
+      fileId: d.fileId,
+      fileName: d.name?.trim() || undefined,
+      mimeType: d.mimeType,
+      ...othersCaption,
+    }));
   }
   const urls = extractUrls(text);
   for (const u of m.linkUrls ?? []) if (!urls.includes(u)) urls.push(u);
@@ -252,7 +257,15 @@ export function detectCapture(
         url,
         ...othersCaption,
       }));
-    return [{ kind: 'imagen', fileId: m.photoFileId, mimeType: 'image/jpeg', ...othersCaption }];
+    // Varias capturas de una vez (álbum): una cosa por captura; antes solo la primera.
+    return [m.photoFileId, ...(m.albumPhotoFileIds ?? [])]
+      .slice(0, MAX_PER_MESSAGE)
+      .map((fileId) => ({
+        kind: 'imagen' as const,
+        fileId,
+        mimeType: 'image/jpeg',
+        ...othersCaption,
+      }));
   }
   if (urls.length === 0) return null;
   let rest = text;
