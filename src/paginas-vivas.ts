@@ -303,6 +303,8 @@ export function panelPaginas(
     /** Los fijados con 📌 (creados.ts): salen arriba, como en /biblioteca. */
     fijados?(): ReadonlySet<string>;
   },
+  /** 📌 Enlaces fijados en «/biblioteca enlaces» (enlaces-enviados.ts EnlacesFijados.todos). */
+  enlacesFijados?: () => ReadonlyArray<{ url: string; etiqueta: string; at: number }>,
 ) {
   const fijados = creados?.fijados?.() ?? new Set<string>();
   const todos = creados?.lista() ?? [];
@@ -330,7 +332,25 @@ export function panelPaginas(
       titulo: `${s.rutina} · ${s.dia}`,
       bytes: s.bytes,
     })),
+    // Solo https (lo que se abre con un clic sin sorpresas), como el «🔗 N» de Telegram.
+    enlaces: (enlacesFijados?.() ?? [])
+      .filter((e) => /^https:\/\/[^\s"'<>]+$/i.test(e.url) && e.url.length <= 2048)
+      .slice(0, 10)
+      .map((e) => ({
+        url: e.url,
+        etiqueta: e.etiqueta.slice(0, 120),
+        dominio: dominioDe(e.url),
+        fijado: fecha(e.at, timeZone),
+      })),
   };
+}
+
+function dominioDe(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '');
+  } catch {
+    return url.slice(0, 60);
+  }
 }
 
 /** Una página (o salida de rutina) en bloques para el panel; null si no existe. */

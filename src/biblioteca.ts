@@ -287,8 +287,11 @@ export type BibliotecaOrden =
    */
   | { kind: 'enviar'; n: number; filtro: Tipo | null; busca?: string }
   | { kind: 'clave'; clave: string }
-  /** «/biblioteca enlaces»: los enlaces que te he mandado (enlaces-enviados.ts). */
-  | { kind: 'enlaces' }
+  /**
+   * «/biblioteca enlaces»: los enlaces que te he mandado (enlaces-enviados.ts). Con texto
+   * («/biblioteca enlaces idealista»), los que lo llevan en la etiqueta o en la dirección.
+   */
+  | { kind: 'enlaces'; busca?: string }
   /**
    * «/biblioteca enlaces fijar N» / «… soltar N» (N de «/biblioteca enlaces»), o el botón
    * «📌 N» / «Soltar N» con la clave corta del enlace (enlaces-enviados.ts claveEnlace).
@@ -362,6 +365,14 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
   const filtro = filtroDe(a);
   if (filtro) return { kind: 'lista', filtro };
   if (/^(?:los\s+|mis\s+)?(?:enlaces?|links?|urls?)$/i.test(a)) return { kind: 'enlaces' };
+  // «/biblioteca enlaces idealista», «enlaces del piso de Gijón»: buscar entre los enlaces (en
+  // plural: «enlace raro» sigue siendo buscar un archivo con ese nombre).
+  const enBusca =
+    /^(?:los\s+|mis\s+)?(?:enlaces|links|urls)\s+(?:de\s+|del\s+|con\s+|sobre\s+)?(.{2,60})$/i
+      .exec(a)?.[1]
+      ?.trim();
+  if (enBusca && !/^\d{1,2}$/.test(enBusca) && palabras(enBusca).length)
+    return { kind: 'enlaces', busca: enBusca };
   // «/biblioteca factura», «buscar gastos octubre», «pdf factura»: por nombre. Una orden mal
   // escrita («fijar abc») no es una búsqueda: la ayuda.
   if (/^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar|enviar)\b/i.test(a))
