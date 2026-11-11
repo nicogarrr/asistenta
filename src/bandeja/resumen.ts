@@ -375,11 +375,14 @@ async function sendWeeklyIfDue(
   if (late > WEEKLY_CATCHUP_DAYS) return;
   const fail = weeklyFail(deps.store, sunday);
   if (fail && now.getTime() - fail.at < DIGEST_RETRY_MS) return;
+  // La semana que acabó el domingo, no hasta hoy: lo del lunes ya entra en el repaso del
+  // domingo que viene (antes, el repaso atrasado del lunes lo contaba y salía dos veces).
+  const end = now.getTime() - late * 86_400_000;
   const weekly = composeWeekly(
     deps.store.processedBetween(
       chatId,
-      new Date(now.getTime() - (7 + late) * 86_400_000).toISOString(),
-      now.toISOString(),
+      new Date(end - 7 * 86_400_000).toISOString(),
+      new Date(end).toISOString(),
     ),
   );
   const ok = weekly
