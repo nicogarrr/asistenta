@@ -196,11 +196,13 @@ const kb = (n: number) =>
 /** Las líneas «Adjuntos:» de la pregunta de aprobación; recuerda lo que se enseñó. */
 export function lineasAdjuntos(refs: string[], now: number = Date.now()): string {
   if (!refs.length) return '';
+  let malos = 0;
   const lines = refs.map((ref) => {
     const a = mirarAdjunto(ref);
     if (!a.ok) {
       vistos.delete(ref.trim());
-      return `  ✗ ${a.ref}: ${a.why} (no saldría)`;
+      malos++;
+      return `  ✗ ${a.ref}: ${a.why}`;
     }
     // La pregunta puede volver a pintarse (registro, reintento de la tarjeta): la foto
     // que vale es la primera, la que viste al aprobar; un cambio luego no la pisa.
@@ -209,7 +211,12 @@ export function lineasAdjuntos(refs: string[], now: number = Date.now()): string
       vistos.set(ref.trim(), { size: a.size, mtimeMs: a.mtimeMs, at: now });
     return `  📎 ${a.name} (${kb(a.size)}) — ${a.path}`;
   });
-  return `Adjuntos (${refs.length}):\n${lines.join('\n')}`;
+  // cargarAdjuntos falla entero: con un ✗ no sale NADA. Antes ponía «(no saldría)» junto a
+  // ese adjunto y parecía que el correo se iba sin él; aprobabas y llegaba «No enviado».
+  const aviso = malos
+    ? `\n⚠️ Con ${malos === 1 ? 'ese adjunto' : 'esos adjuntos'} el correo no se envía aunque digas que sí: pídemelo sin ${malos === 1 ? 'él' : 'ellos'} o dime dónde está${malos === 1 ? '' : 'n'}.`
+    : '';
+  return `Adjuntos (${refs.length}):\n${lines.join('\n')}${aviso}`;
 }
 
 /**
