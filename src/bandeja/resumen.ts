@@ -162,6 +162,10 @@ export function composeDigest(
       // La fecha del evento (congreso, webinar, junta): se ve sin abrir la ficha.
       const cuando = eventLine(it, now);
       if (cuando) lines.push(`   ${cuando}`);
+      if (it.url && it.extra.receta && it.extra.receta >= 2)
+        lines.push(
+          `   🛒 Receta: ${it.extra.receta} ingredientes (🛒 ${it.id} compra los apunta en /compra)`,
+        );
       if (it.reason) lines.push(`   ${oneLine(it.reason, 200)}`);
       for (const idea of it.ideas.slice(0, ideas)) lines.push(`   • ${oneLine(idea, 160)}`);
       const gr = goodreadsLine(it.extra.goodreads);
@@ -215,6 +219,13 @@ export function composeDigest(
     const cuando = eventLine(it, now);
     if (!cuando || cuando.endsWith('(ya pasó)')) continue;
     const b = commandButton(`📅 ${it.id} calendario`, 'bandeja', String(it.id), 'calendario');
+    if (b) buttons.push(b);
+  }
+  // «🛒 N compra» de lo que es una receta (con su ficha Recipe): sus ingredientes a /compra,
+  // como el «🛒 A la compra» de la ficha, sin tener que abrirla.
+  for (const it of withButtons) {
+    if (!it.url || !it.extra.receta || it.extra.receta < 2) continue;
+    const b = commandButton(`🛒 ${it.id} compra`, 'bandeja', String(it.id), 'compra');
     if (b) buttons.push(b);
   }
   if (chaff.length) {
