@@ -253,6 +253,16 @@ function evento(p: Map<string, Linea>, metodo?: string): IcsEvento | null {
       }
     }
   }
+  // Día entero: en iCalendar DTEND es EXCLUSIVO (un evento del 20 trae DTEND 21), pero el fin
+  // de la bandeja es el último día, como el endDate de schema.org (eventoArgs suma el día que
+  // pide Google). Sin restarlo, «el 20» salía «del viernes 20 nov al 21/11» y se apuntaba de
+  // dos días (bugs-36).
+  if (fin && /^\d{4}-\d{2}-\d{2}$/.test(fin) && /^\d{4}-\d{2}-\d{2}$/.test(inicio)) {
+    const d = new Date(`${fin}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    const ultimo = d.toISOString().slice(0, 10);
+    fin = ultimo > inicio ? ultimo : null;
+  }
   const nombre = texto(p.get('SUMMARY')?.value ?? '') || 'Evento';
   const lugar = texto(p.get('LOCATION')?.value ?? '');
   const cancelado =
