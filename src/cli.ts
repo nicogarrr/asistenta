@@ -7657,6 +7657,45 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     await say(inbound, r.text, { quote: true, buttons: r.buttons });
   };
   /** /biblioteca: lo que te he hecho (src/biblioteca.ts), con «📤 N» para que te lo mande. */
+  /** «/biblioteca enlaces» y su «📌 N» / «Soltar N» (enlaces-enviados.ts). */
+  const cmdBibliotecaEnlaces = async (
+    inbound: Inbound,
+    orden: { kind: 'enlaces' } | { kind: 'enlace-pin'; fijar: boolean; n: number; clave?: string },
+  ): Promise<void> => {
+    const { commandButton } = await import('./channels/telegram-shared.js');
+    const en = await import('./enlaces-enviados.js');
+    const key = (await resolveThread(inbound)).key;
+    const recientes = en.enlacesDe(sessions.recentAssistantTurns(key, 300));
+    // 📌 enlaces fijados de este chat (Grok Bot «Pin»): salen arriba aunque pasen los 10 últimos.
+    const fijos = new en.EnlacesFijados(join(paths.state, 'enlaces-fijados.json'));
+    const chat = chatKey(inbound);
+    if (orden.kind === 'enlace-pin') {
+      const todos = en.enlacesConFijados(recientes, fijos.lista(chat));
+      const e = orden.clave
+        ? (todos.find((x) => en.claveEnlace(x.url) === orden.clave) ?? null)
+        : (todos[orden.n - 1] ?? null);
+      const r = !e
+        ? false
+        : orden.fijar
+          ? fijos.fijar(chat, e)
+          : fijos.soltar(chat, en.claveEnlace(e.url)) !== null;
+      await say(inbound, en.textoFijarEnlace(orden.fijar, e, r), { quote: true });
+      return;
+    }
+    const v = en.enlacesVista(recientes, Date.now(), localTimeZone(), fijos.lista(chat));
+    // Por fila: «🔗 N» (abre, si es https) y su «📌 N» / «Soltar N».
+    const abrir = new Map(v.buttons.map((b) => [b.label.replace(/^🔗 /, ''), b]));
+    const buttons = v.pins
+      .flatMap((p, i) => [
+        abrir.get(String(i + 1)),
+        commandButton(p.label, 'biblioteca', p.clave, p.sub),
+      ])
+      .filter((b): b is { label: string; action: string } => b !== undefined);
+    await say(inbound, v.text, {
+      quote: true,
+      ...(buttons.length ? { buttons, buttonsPerRow: 4 } : {}),
+    });
+  };
   const cmdBiblioteca = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
       await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
@@ -7681,14 +7720,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       return;
     }
     // «/biblioteca enlaces»: los enlaces que te he mandado en este chat (Grok Bot, Library → Links).
-    if (orden.kind === 'enlaces') {
-      const { enlacesDe, enlacesVista } = await import('./enlaces-enviados.js');
-      const key = (await resolveThread(inbound)).key;
-      const v = enlacesVista(enlacesDe(sessions.recentAssistantTurns(key, 300)));
-      await say(inbound, v.text, {
-        quote: true,
-        ...(v.buttons.length ? { buttons: v.buttons, buttonsPerRow: 5 } : {}),
-      });
+    if (orden.kind === 'enlaces' || orden.kind === 'enlace-pin') {
+      await cmdBibliotecaEnlaces(inbound, orden);
       return;
     }
     if (orden.kind === 'lista') {

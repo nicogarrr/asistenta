@@ -284,6 +284,11 @@ export type BibliotecaOrden =
   /** «/biblioteca enlaces»: los enlaces que te he mandado (enlaces-enviados.ts). */
   | { kind: 'enlaces' }
   /**
+   * «/biblioteca enlaces fijar N» / «… soltar N» (N de «/biblioteca enlaces»), o el botón
+   * «📌 N» / «Soltar N» con la clave corta del enlace (enlaces-enviados.ts claveEnlace).
+   */
+  | { kind: 'enlace-pin'; fijar: boolean; n: number; clave?: string }
+  /**
    * «/biblioteca fijar N» / «soltar N» (N de la lista sin filtro). El botón «📌 Fijar N»
    * manda la clave del archivo en vez de N (n = 0): sigue siendo el mismo archivo aunque la
    * lista se haya reordenado desde que salió el mensaje.
@@ -294,6 +299,22 @@ export type BibliotecaOrden =
 export function bibliotecaOrden(args: string): BibliotecaOrden {
   const a = args.trim();
   if (!a) return { kind: 'lista', filtro: null };
+  const pinEnlace =
+    /^(?:enlaces?|links?)\s+(fijar|fija|anclar|soltar|suelta|desfijar)\s+(\d{1,2})$/i.exec(a);
+  if (pinEnlace?.[1] && pinEnlace[2])
+    return {
+      kind: 'enlace-pin',
+      fijar: /^(fijar|fija|anclar)$/i.test(pinEnlace[1]),
+      n: Number(pinEnlace[2]),
+    };
+  const pinEnlaceClave = /^(fijarenlace|soltarenlace)\s+([0-9a-f]{10})$/i.exec(a);
+  if (pinEnlaceClave?.[1] && pinEnlaceClave[2])
+    return {
+      kind: 'enlace-pin',
+      fijar: pinEnlaceClave[1].toLowerCase() === 'fijarenlace',
+      n: 0,
+      clave: pinEnlaceClave[2].toLowerCase(),
+    };
   // «fijar 2» cuenta en la lista entera; «pdf fijar 2» (o «fijar pdf 2»), en la de los PDF,
   // como «/biblioteca pdf 2» para mandarlo (bugs-36).
   const pin =

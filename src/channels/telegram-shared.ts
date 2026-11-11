@@ -91,7 +91,8 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // 📚 /biblioteca: «📤 N» te vuelve a mandar un archivo que te hice (arg = la fecha de su
   // id, AAAAMMDD-HHMMSS). «📌 Fijar N» / «Soltar N» (misma clave) lo deja arriba sin podarlo
   // o lo devuelve a la poda; no borra nada.
-  ['biblioteca', new Set(['enviar', 'fijar', 'soltar'])],
+  // «📌 N» / «Soltar N» de /biblioteca enlaces: la clave corta del enlace (10 hex).
+  ['biblioteca', new Set(['enviar', 'fijar', 'soltar', 'fijarenlace', 'soltarenlace'])],
 ]);
 const BUTTON_ARG = /^[A-Za-z0-9_-]{1,40}$/;
 
