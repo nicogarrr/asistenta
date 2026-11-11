@@ -551,12 +551,7 @@ import {
   kindleReplyWord,
   kindleSettings,
 } from './bandeja/kindle.js';
-import {
-  type BandejaComplete,
-  BandejaQueue,
-  type ProcesarDeps,
-  readableText,
-} from './bandeja/procesar.js';
+import { type BandejaComplete, BandejaQueue, type ProcesarDeps } from './bandeja/procesar.js';
 import { bandejaMaxMinutes, type DigestDeps, startDigestTimer } from './bandeja/resumen.js';
 import { type BandejaItem, BandejaStore } from './bandeja/store.js';
 import { SecretLibrary } from './books/secret.js';
@@ -6581,7 +6576,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         fetchRaw: bandejaFetchRaw,
         download: (fileId) => telegram.downloadFile(fileId, 20_000_000),
         fetchPdf: bandejaPdfBytes,
-        readable: (item) => readableText(item, bandejaProcDeps),
+        // Comparte el turno del whisper con la cola (antes iban dos transcripciones a la vez).
+        readable: (item) => bandejaQueue.readable(item),
         sendFile: (bytes, name, caption) =>
           telegram.sendDocumentBytes(Number(chatId), bytes, name, caption),
         mail: { account: () => loadMailAccount(), send: (account, req) => sendMail(account, req) },
