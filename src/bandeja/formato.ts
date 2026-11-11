@@ -50,8 +50,13 @@ export function ackText(
   tomorrow = false,
 ): string {
   const fresh = items.filter((i) => !i.dup);
-  const dups = items.length - fresh.length;
+  const retry = items.filter((i) => i.dup && i.item.status === 'error');
+  const dups = items.length - fresh.length - retry.length;
   const when = tomorrow ? `mañana a las ${hora}` : `a las ${hora}`;
+  if (fresh.length === 0 && retry.length > 0)
+    return retry.length === 1
+      ? `🔁 Eso ya estaba, pero falló (${retry[0]?.item.error ?? 'sin motivo'}): lo vuelvo a mirar. Te digo ${when} si merece la pena.`
+      : `🔁 ${retry.length} ya estaban pero fallaron: las vuelvo a mirar. Te digo ${when} si merecen la pena.`;
   if (fresh.length === 0)
     return `📥 Eso ya estaba en la bandeja (${countToday} hoy). Te lo cuento ${when}.`;
   const what =
