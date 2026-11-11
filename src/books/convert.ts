@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,33 +39,130 @@ export type Runner = (
   timeoutMs: number,
 ) => Promise<{ code: number; stderr: string }>;
 
-const defaultRunner: Runner = (cmd, args, timeoutMs) =>
-  new Promise((resolve) => {
-    execFile(
-      cmd,
-      args,
-      { timeout: timeoutMs, windowsHide: true, env: childEnv() },
-      (err, _out, stderr) => {
-        const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-        // A 5-minute timeout kills the converter with nothing on stderr: say so.
-        const why = err && (err as { killed?: boolean }).killed ? '\nETIMEDOUT' : '';
-        resolve({ code, stderr: `${String(stderr ?? '').slice(-400)}${why}` });
-      },
-    );
-  });
+/**
+ * Lanza el conversor con un tope. Al pasarse mata el ÁRBOL entero: ebook-convert reparte la
+ * conversión en procesos hijos (calibre-parallel) y, en Windows, matar solo
+ * ebook-convert.exe (lo que hacía execFile con `timeout`) los dejaba vivos comiendo CPU.
+ * Windows: taskkill /F /T /PID. Fuera: el hijo va en su propio grupo y se mata el grupo.
+ * La salida normal se descarta (Calibre escribe mucho): solo se guarda el final de stderr.
+ */
+export function makeRunner(
+  opts: {
+    spawnImpl?: typeof nodeSpawn;
+    platform?: NodeJS.Platform;
+    kill?: (pid: number, signal: NodeJS.Signals) => boolean;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Runner {
+  const spawn = opts.spawnImpl ?? nodeSpawn;
+  const platform = opts.platform ?? process.platform;
+  const kill = opts.kill ?? ((pid: number, sig: NodeJS.Signals) => process.kill(pid, sig));
+  return (cmd, args, timeoutMs) =>
+    new Promise((resolve) => {
+      let stderr = '';
+      let timedOut = false;
+      let settled = false;
+      const finish = (code: number, extra = '') => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          code,
+          stderr: `${stderr.slice(-400)}${extra}${timedOut ? '\nETIMEDOUT' : ''}`,
+        });
+      };
+      let child: ReturnType<typeof nodeSpawn>;
+      try {
+        child = spawn(cmd, args, {
+          windowsHide: true,
+          env: childEnv(),
+          stdio: ['ignore', 'ignore', 'pipe'],
+          // Fuera de Windows, su propio grupo: así se mata con todos sus hijos.
+          detached: platform !== 'win32',
+        });
+      } catch (err) {
+        resolve({ code: 1, stderr: String(err instanceof Error ? err.message : err) });
+        return;
+      }
+      const timer = setTimeout(() => {
+        timedOut = true;
+        const pid = child.pid;
+        try {
+          if (platform === 'win32' && pid) {
+            const root = (opts.env ?? process.env).SystemRoot ?? 'C:\\Windows';
+            spawn(join(root, 'System32', 'taskkill.exe'), ['/F', '/T', '/PID', String(pid)], {
+              windowsHide: true,
+              stdio: 'ignore',
+              env: childEnv(),
+            }).on?.('error', () => child.kill?.('SIGKILL'));
+          } else if (pid) kill(-pid, 'SIGKILL');
+          else child.kill?.('SIGKILL');
+        } catch {
+          try {
+            child.kill?.('SIGKILL');
+          } catch {}
+        }
+        // Si el árbol no dice nada en 3 s, se responde igual (no se cuelga el Kindle).
+        setTimeout(() => finish(1), 3_000).unref?.();
+      }, timeoutMs);
+      timer.unref?.();
+      child.stderr?.on('data', (d: Buffer | string) => {
+        stderr = `${stderr}${String(d)}`.slice(-4000);
+      });
+      child.on('error', (err: Error) => finish(1, err.message));
+      child.on('close', (code: number | null) => finish(timedOut ? 1 : (code ?? 1)));
+    });
+}
 
-/** First converter that answers `--version`, or null. */
+const defaultRunner: Runner = makeRunner();
+
+/**
+ * El conversor encontrado, por runner y por lista de candidatos. Antes cada conversión
+ * volvía a lanzar `ebook-convert --version` (en Windows, arrancar el Python de Calibre:
+ * segundos por candidato y por «📖 Al Kindle»). Lo encontrado vale mientras siga en su
+ * sitio; «no hay Calibre» se vuelve a mirar pasado CONVERTER_MISS_TTL_MS (por si lo instala).
+ */
+const converterCache = new WeakMap<Runner, Map<string, { cmd: string | null; at: number }>>();
+export const CONVERTER_MISS_TTL_MS = 10 * 60_000;
+
+export function _resetConverterCacheForTests(): void {
+  converterCache.delete(defaultRunner);
+}
+
+function isPath(cmd: string): boolean {
+  return cmd.includes('/') || cmd.includes('\\');
+}
+
+/** First converter that answers `--version`, or null (cached; see converterCache). */
 export async function findConverter(
   run: Runner = defaultRunner,
   env: NodeJS.ProcessEnv = process.env,
+  now: () => number = Date.now,
 ): Promise<string | null> {
-  for (const cmd of converterCandidates(env)) {
-    // An absolute path that does not exist is skipped without spawning anything.
-    if ((cmd.includes('/') || cmd.includes('\\')) && !existsSync(cmd)) continue;
-    const r = await run(cmd, ['--version'], 10_000);
-    if (r.code === 0) return cmd;
+  const candidates = converterCandidates(env);
+  const key = candidates.join('\n');
+  let cache = converterCache.get(run);
+  if (!cache) {
+    cache = new Map();
+    converterCache.set(run, cache);
   }
-  return null;
+  const hit = cache.get(key);
+  if (hit) {
+    if (hit.cmd && (!isPath(hit.cmd) || existsSync(hit.cmd))) return hit.cmd;
+    if (!hit.cmd && now() - hit.at < CONVERTER_MISS_TTL_MS) return null;
+  }
+  let found: string | null = null;
+  for (const cmd of candidates) {
+    // An absolute path that does not exist is skipped without spawning anything.
+    if (isPath(cmd) && !existsSync(cmd)) continue;
+    const r = await run(cmd, ['--version'], 10_000);
+    if (r.code === 0) {
+      found = cmd;
+      break;
+    }
+  }
+  cache.set(key, { cmd: found, at: now() });
+  return found;
 }
 
 export type ConvertResult =
