@@ -73,7 +73,7 @@ export function bandejaSlowSub(args: string): boolean {
   const sub = subRaw.toLowerCase();
   if (sub === 'ahora' || sub === 'ya') return true;
   // «🛒 A la compra» abre la página de la receta (hasta 30 s).
-  if (sub === 'compra' || sub === 'apuntar') return true;
+  if (sub === 'compra' || sub === 'apuntar' || sub === 'desapuntar') return true;
   // «🔄 Releer» abre la página otra vez (hasta 30 s).
   if (sub === 'releer' || sub === 'reprocesar') return true;
   if (sub !== 'kindle') return false;
@@ -115,6 +115,11 @@ export interface BandejaCommandDeps {
    * crearEvento); devuelve su respuesta («📅 Apuntado…» o el paso que falta).
    */
   calendario?: (args: EventoArgs) => Promise<string>;
+  /**
+   * «🗑️ Sí, quítalo» (la cancelación .ics de algo que apuntó): borra de su Google Calendar
+   * el evento con ese id (google/workspace.ts borrarEvento).
+   */
+  quitarCalendario?: (googleId: string) => Promise<string>;
   /** Su zona horaria (PA_TIMEZONE); por defecto, Europe/Madrid. */
   timeZone?: () => string;
   /** «🔄 Releer»: el HTML de una página (la misma descarga que usa la bandeja). */
@@ -298,6 +303,11 @@ async function calendarioSub(
   // fecha (el congreso se movió), antes decía «ya está en tu calendario» con la fecha NUEVA,
   // y en su calendario seguía la vieja (bugs-36). Una marca antigua (sin fecha) vale como
   // la de ahora.
+  // Una invitación que luego se canceló (llegó su .ics de cancelación): no se apunta.
+  const cancelada = item.extra.icsUid
+    ? deps.store.getMeta(cancelKey(item.chatId, item.extra.icsUid))
+    : null;
+  if (cancelada) return { text: `❌ «${ev.nombre}» se canceló (#${cancelada}): no lo apunto.` };
   const marca = deps.store.getMeta(mark);
   const conFecha = marca?.startsWith('inicio=') ? marca.slice('inicio='.length) : null;
   const otraFecha = Boolean(marca && conFecha !== null && conFecha !== ev.inicio);
@@ -359,8 +369,69 @@ async function calendarioSub(
         };
     }
     // Solo si de verdad se apuntó: sin Google conectado, el siguiente toque lo intenta otra vez.
-    if (text.startsWith('📅 Apuntado')) deps.store.setMeta(mark, `inicio=${ev.inicio}`);
+    if (text.startsWith('📅 Apuntado')) {
+      deps.store.setMeta(mark, `inicio=${ev.inicio}`);
+      // El id de Google y, si es un .ics, su UID: su cancelación podrá quitarlo (bugs-37).
+      const gid = idDeGoogle(text);
+      if (gid) deps.store.setMeta(gidKey(item.id), gid);
+      if (gid && item.extra.icsUid)
+        deps.store.setMeta(uidKey(item.chatId, item.extra.icsUid), String(item.id));
+    }
     return { text };
+  } finally {
+    calendarioEnCurso.delete(busy);
+  }
+}
+
+/** El id que Google dio al evento («📅 Apuntado … (id abc123)», crearEvento). */
+function idDeGoogle(text: string): string | null {
+  const id = /\(id ([^\s)]+)\)\s*$/.exec(text)?.[1];
+  return id && id !== '?' ? id : null;
+}
+const gidKey = (itemId: number) => `cal_gid_${itemId}`;
+/** UID de una invitación .ics → la cosa con la que se apuntó. */
+const uidKey = (chatId: string, uid: string) => `cal_uid_${chatId}_${uid}`;
+/** UID de una invitación .ics → la cosa con su cancelación. */
+const cancelKey = (chatId: string, uid: string) => `cal_cancel_${chatId}_${uid}`;
+
+/**
+ * «🗑️ Sí, quítalo»: borra de su Google Calendar el evento que se apuntó con «✅ Sí,
+ * apúntalo» de esta cosa (la cancelación .ics lo ofrece). Solo lo que apuntó Asistenta (su
+ * id de Google guardado); lo demás no se toca.
+ */
+async function desapuntarSub(
+  raw: string | undefined,
+  deps: BandejaCommandDeps,
+): Promise<BandejaReply> {
+  const item = ownItem(deps, raw);
+  if (typeof item === 'string') return { text: item };
+  const nombre = item.extra.evento?.nombre ?? `#${item.id}`;
+  const gid = deps.store.getMeta(gidKey(item.id));
+  if (!gid)
+    return {
+      text: `📅 «${nombre}» no lo tengo apuntado por mí en tu Google Calendar (o ya lo quité). Si está, bórralo allí.`,
+    };
+  if (!deps.quitarCalendario) return { text: 'El calendario no está disponible desde aquí.' };
+  const busy = `${deps.chatId}:${item.id}:desapuntar`;
+  if (calendarioEnCurso.has(busy)) return { text: `🗑️ Ya lo estoy quitando: «${nombre}».` };
+  calendarioEnCurso.add(busy);
+  try {
+    const text = await deps.quitarCalendario(gid);
+    // Ya borrado a mano: Google contesta 404 («ya no existe») o 410 («respondido 410»).
+    const yaNo = /ya no existe|respondido 410/.test(text);
+    if (!text.startsWith('🗑️') && !yaNo) return { text };
+    deps.store.setMeta(`cal_added_${item.id}`, null);
+    deps.store.setMeta(gidKey(item.id), null);
+    if (item.extra.icsUid) deps.store.setMeta(uidKey(item.chatId, item.extra.icsUid), null);
+    const tz = deps.timeZone?.() ?? 'Europe/Madrid';
+    const cuando = item.extra.evento
+      ? `, ${cuandoTexto(eventoArgs(item.extra.evento, tz, item.url))}`
+      : '';
+    return {
+      text: yaNo
+        ? `🗑️ «${nombre}» ya no estaba en tu Google Calendar.`
+        : `🗑️ Quitado de tu Google Calendar: «${nombre}»${cuando}.`,
+    };
   } finally {
     calendarioEnCurso.delete(busy);
   }
@@ -376,11 +447,33 @@ export async function icsAviso(
   deps: BandejaCommandDeps,
 ): Promise<BandejaReply | null> {
   if (item.extra.source !== ICS_SOURCE || item.status !== 'listo') return null;
-  if (!item.extra.evento)
+  if (!item.extra.evento) {
+    // Una cancelación: si su invitación (el mismo UID) se apuntó con «✅ Sí», ofrece quitarla
+    // (antes solo decía «quítalo de tu calendario» y había que buscarla a mano; bugs-37).
+    const uid = item.extra.icsUid;
+    if (uid) deps.store.setMeta(cancelKey(item.chatId, uid), String(item.id));
+    const origId = uid ? Number(deps.store.getMeta(uidKey(item.chatId, uid)) ?? 0) : 0;
+    const orig = origId ? deps.store.get(origId) : null;
+    const apuntado = orig?.chatId === item.chatId && deps.store.getMeta(gidKey(origId));
+    const quitar = apuntado
+      ? commandButton('🗑️ Sí, quítalo', 'bandeja', String(origId), 'desapuntar')
+      : undefined;
+    if (orig && quitar) {
+      const tz = deps.timeZone?.() ?? 'Europe/Madrid';
+      const ev = orig.extra.evento;
+      const nombre = ev?.nombre ?? item.extra.icsCancelado?.nombre ?? 'el evento';
+      const cuando = ev ? ` (${cuandoTexto(eventoArgs(ev, tz, orig.url))})` : '';
+      return {
+        text: `❌ #${item.id} Se cancela «${nombre}»${cuando}. Lo apunté en tu Google Calendar con la #${orig.id}: ¿lo quito?`,
+        buttons: [quitar],
+        itemId: item.id,
+      };
+    }
     return {
       text: `❌ #${item.id} ${item.reason ?? 'Es la cancelación de un evento.'}`,
       itemId: item.id,
     };
+  }
   const r = await calendarioSub('calendario', String(item.id), deps);
   return { ...r, text: `📅 #${item.id} es una invitación. ${r.text}` };
 }
@@ -605,6 +698,8 @@ ${cardText(r.item, now)}`,
     case 'apuntar':
     case 'ics':
       return calendarioSub(sub, restParts[0], deps);
+    case 'desapuntar':
+      return desapuntarSub(restParts[0], deps);
     default: {
       const cands = explicitCapture(trimmed);
       if (!cands) return { text: HELP };

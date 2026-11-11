@@ -15,6 +15,11 @@ export interface IcsEvento extends BandejaEvento {
   cancelado?: boolean;
   /** Se repite (RRULE): se apunta solo la primera vez y se dice. */
   repite?: boolean;
+  /**
+   * El UID del VEVENT: el mismo en la invitación y en su cancelación (RFC 5545 §3.8.4.7).
+   * Con él, la cancelación sabe qué evento apuntado quitar (bugs-37).
+   */
+  uid?: string;
 }
 
 /** La fuente (`extra.source`) de una cosa de la bandeja que es una invitación .ics. */
@@ -267,6 +272,7 @@ function evento(p: Map<string, Linea>, metodo?: string): IcsEvento | null {
   const lugar = texto(p.get('LOCATION')?.value ?? '');
   const cancelado =
     metodo === 'CANCEL' || (p.get('STATUS')?.value.trim().toUpperCase() ?? '') === 'CANCELLED';
+  const uid = (p.get('UID')?.value.trim() ?? '').slice(0, 255);
   return {
     nombre,
     inicio,
@@ -274,6 +280,7 @@ function evento(p: Map<string, Linea>, metodo?: string): IcsEvento | null {
     ...(lugar ? { lugar } : {}),
     ...(cancelado ? { cancelado: true } : {}),
     ...(p.has('RRULE') ? { repite: true } : {}),
+    ...(uid ? { uid } : {}),
   };
 }
 

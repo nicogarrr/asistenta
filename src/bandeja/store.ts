@@ -64,6 +64,13 @@ export interface BandejaExtra {
   evento?: BandejaEvento;
   /** Cuándo se releyó su página (🔄): «/bandeja releer todo» no la vuelve a abrir. */
   releidaAt?: string;
+  /**
+   * Una invitación .ics: el UID de su VEVENT. Con él, su cancelación (el mismo UID) ofrece
+   * quitar el evento que se apuntó (bugs-37).
+   */
+  icsUid?: string;
+  /** Una cancelación .ics: el evento cancelado (para decir cuál), sin «📅 Al calendario». */
+  icsCancelado?: { nombre: string; inicio: string };
 }
 
 export interface BandejaItem {
