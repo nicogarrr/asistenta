@@ -5383,13 +5383,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     const chatKey_ = chatKey(inbound);
     const routines = store.listRoutines().filter((r) => inChatScope(r.scope, chatKey_));
-    const extras: Array<{ at: Date; text: string }> = [];
+    const extras: Array<{ at: Date; text: string; cada?: string }> = [];
     if (isOwnerDm(inbound, vigilanteOwnerId)) {
       // El resumen de la noche de la bandeja (src/bandeja/resumen.ts), a su hora.
       const { digestHora } = await import('./bandeja/resumen.js');
       const [h, m] = digestHora(bandejaStore).split(':');
-      const at = nextScheduleRun(`${Number(m)} ${Number(h)} * * *`);
-      if (at) extras.push({ at, text: '📥 resumen de la bandeja' });
+      const cada = `${Number(m)} ${Number(h)} * * *`;
+      const at = nextScheduleRun(cada);
+      if (at) extras.push({ at, text: '📥 resumen de la bandeja', cada });
     }
     const now = new Date();
     const out = previstoFilas(

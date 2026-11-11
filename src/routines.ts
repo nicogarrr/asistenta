@@ -437,6 +437,27 @@ export function nextScheduleRun(expr: string): Date | null {
   return parsed.ok ? parsed.next : null;
 }
 
+/**
+ * Las ejecuciones de un horario cron después de `after` (hora local), como mucho `max`.
+ * Para enseñar lo que viene (/previsto), no para disparar. Vacío si el horario no vale.
+ */
+export function scheduleRunsAfter(expr: string, after: Date, max: number): Date[] {
+  const fields = expr.trim().split(/\s+/).filter(Boolean);
+  if ((fields.length !== 5 && fields.length !== 6) || max <= 0) return [];
+  try {
+    const job = new Cron(fields.join(' '), {
+      mode: '5-or-6-parts',
+      paused: true,
+      timezone: localTimeZone(),
+    });
+    const runs = job.nextRuns(max, after);
+    job.stop();
+    return runs;
+  } catch {
+    return [];
+  }
+}
+
 export function validateSchedule(
   expr: string,
 ): { ok: true; next: string } | { ok: false; error: string } {
