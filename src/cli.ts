@@ -6681,6 +6681,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     onDone: async (item) => {
       await bandejaIcsAviso(item);
       await bandejaAutoKindle(item);
+      await bandejaIntenciones(item).catch((err: unknown) =>
+        log.warn('bandeja: recordatorio por tema no enviado', { err: String(err) }),
+      );
     },
   };
   const bandejaQueue = new BandejaQueue(bandejaStore, bandejaProcDeps, (msg, data) =>
@@ -6714,6 +6717,32 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           telegram.sendDocumentBytes(Number(chatId), bytes, name, caption),
         mail: { account: () => loadMailAccount(), send: (account, req) => sendMail(account, req) },
       });
+  /**
+   * «cuando hable de Indra, recuérdame…»: guardar en la bandeja un artículo o un vídeo de
+   * Indra también es hablar de Indra. Al acabar de leerlo (título, por qué importa, temas), el
+   * aviso sale con su «🔕», como al escribirlo. Solo en el privado del dueño; los mismos topes.
+   */
+  const bandejaIntenciones = async (item: BandejaItem): Promise<void> => {
+    if (item.status !== 'listo' || item.chatId !== briefingOwner()) return;
+    const it = await import('./intenciones.js');
+    const texto = it.textoDeGuardado(item);
+    if (!texto) return;
+    const store = new it.IntencionesStore(join(paths.state, 'intenciones.json'));
+    const chat = chatKey({ channel: 'telegram', account: telegram.account, chatId: item.chatId });
+    for (const i of store.disparar(chat, texto, Date.now())) {
+      const b =
+        i.veces < it.INTENCION_MAX_VECES
+          ? commandButton(it.OLVIDAR_LABEL, 'intenciones', String(i.id), 'olvidar')
+          : undefined;
+      await telegram.send({
+        channel: 'telegram',
+        account: telegram.account,
+        chatId: item.chatId,
+        text: it.textoAviso(i, { guardado: item.title ?? item.url ?? `#${item.id}` }),
+        ...(b ? { buttons: [b] } : {}),
+      });
+    }
+  };
   const bandejaIcsAviso = async (item: BandejaItem): Promise<void> => {
     const reply = await icsAviso(item, {
       store: bandejaStore,
