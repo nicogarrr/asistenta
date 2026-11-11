@@ -165,6 +165,16 @@ export const STATE_ENTRIES: readonly StateEntry[] = [
     backup: 'file',
   },
   {
+    name: 'intenciones.json',
+    what: 'recordatorios por tema del dueño («cuando hable de X, recuérdame Y», /intenciones)',
+    backup: 'file',
+  },
+  {
+    name: 'enlaces-fijados.json',
+    what: 'enlaces fijados con 📌 en «/biblioteca enlaces», por chat',
+    backup: 'file',
+  },
+  {
     name: 'chat-titulos.json',
     what: 'nombres de los grupos de Telegram (para decir a qué grupo va una regla)',
     backup: 'file',
