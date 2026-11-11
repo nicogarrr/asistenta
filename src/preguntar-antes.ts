@@ -244,6 +244,16 @@ export function runAskFirstCommand(store: AskFirstStore, args: string): string {
       ? `Vale, ya no te pregunto de más para: ${gone.map((r) => AREAS[r.area].label).join('; ')}. Lo de siempre (dinero, enviar correos, instalar) te lo sigo preguntando.`
       : 'No tengo esa regla. Las tuyas: /permisos preguntar lista.';
   }
+  return askFirstAdd(store, raw);
+}
+
+/**
+ * Apunta «pregúntame antes de <raw>». Lo que se dijo hablando entra siempre por aquí: antes
+ * pasaba por runAskFirstCommand y «pregúntame antes de borrar archivos» empezaba por
+ * «borrar», así que QUITABA la regla de archivos en vez de ponerla (y «antes de ver la
+ * tele» enseñaba la lista).
+ */
+export function askFirstAdd(store: AskFirstStore, raw: string): string {
   const r = store.add(raw);
   if (r.unknown)
     return `No sé a qué acciones te refieres con «${raw}». Puedo preguntarte antes de: ${AREA_HINT}.`;
@@ -258,4 +268,14 @@ export function runAskFirstCommand(store: AskFirstStore, args: string): string {
     );
   lines.push('Tus reglas: /permisos preguntar lista.');
   return lines.join('\n');
+}
+
+/**
+ * «pregúntame antes de …» dicho hablando: la respuesta si lo apunta, null si no es eso o no
+ * nombra nada que se sepa vigilar (entonces lo lleva el modelo como siempre).
+ */
+export function askFirstFromText(store: AskFirstStore, text: string): string | null {
+  const what = askFirstRequest(text);
+  if (what === null || areasOf(what).length === 0) return null;
+  return askFirstAdd(store, what);
 }
