@@ -218,6 +218,104 @@ export function buscarEventos(
   });
 }
 
+/** Un evento que ya está en su Google Calendar (a su hora: «2026-11-20T09:30» o «2026-11-20»). */
+export interface EventoGoogle {
+  id: string;
+  titulo: string;
+  inicio: string;
+  fin?: string;
+  lugar?: string;
+}
+
+function aLocal(t: unknown, tz: string): string {
+  const s = (t ?? {}) as { date?: string; dateTime?: string };
+  if (s.date) return s.date;
+  if (!s.dateTime) return '';
+  const d = new Date(s.dateTime);
+  if (!Number.isFinite(d.getTime())) return '';
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(d)
+      .map((x) => [x.type, x.value]),
+  );
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+function aEvento(e: Record<string, unknown>, tz: string): EventoGoogle | null {
+  if (typeof e.id !== 'string' || e.status === 'cancelled') return null;
+  const inicio = aLocal(e.start, tz);
+  if (!inicio) return null;
+  const fin = aLocal(e.end, tz);
+  return {
+    id: e.id,
+    titulo: String(e.summary ?? ''),
+    inicio,
+    ...(fin ? { fin } : {}),
+    ...(typeof e.location === 'string' && e.location ? { lugar: e.location } : {}),
+  };
+}
+
+const normTitulo = (t: string) =>
+  t
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+
+/**
+ * ¿Ya está esta invitación en su Google Calendar? (Gmail suele añadirlas solo.) Primero por el
+ * UID del .ics (Google lo guarda como iCalUID, también si lo añadió Gmail); si no, el mismo
+ * título a la misma hora. Solo lee. `null` = no está; 'sin-acceso' = sin Google o sin permiso
+ * de leer el calendario (o Google no responde): no se sabe, y quien llama sigue como antes.
+ */
+export async function eventoDeInvitacion(
+  deps: WorkspaceDeps,
+  q: { uid?: string; titulo: string; inicio: string },
+): Promise<EventoGoogle | null | 'sin-acceso'> {
+  const tz = (deps.timeZone ?? localTimeZone)();
+  try {
+    if (q.uid) {
+      const u = new URL(CAL_API);
+      u.searchParams.set('iCalUID', q.uid);
+      u.searchParams.set('maxResults', '5');
+      const res = await call(deps, 'calendar', u.toString());
+      const items =
+        ((await res.json().catch(() => ({}))) as { items?: Record<string, unknown>[] }).items ?? [];
+      const evs = items.map((e) => aEvento(e, tz)).filter((e): e is EventoGoogle => e !== null);
+      if (evs.length) return evs.find((e) => e.inicio === q.inicio) ?? evs[0] ?? null;
+    }
+    const dia = /^(\d{4}-\d{2}-\d{2})/.exec(q.inicio)?.[1];
+    if (!dia || !q.titulo.trim()) return null;
+    const desde = new Date(`${dia}T00:00:00Z`);
+    const u = new URL(CAL_API);
+    u.searchParams.set('singleEvents', 'true');
+    u.searchParams.set('maxResults', '10');
+    u.searchParams.set('q', q.titulo.trim());
+    u.searchParams.set('timeMin', new Date(desde.getTime() - 86_400_000).toISOString());
+    u.searchParams.set('timeMax', new Date(desde.getTime() + 2 * 86_400_000).toISOString());
+    const res = await call(deps, 'calendar', u.toString());
+    const items =
+      ((await res.json().catch(() => ({}))) as { items?: Record<string, unknown>[] }).items ?? [];
+    const t = normTitulo(q.titulo);
+    return (
+      items
+        .map((e) => aEvento(e, tz))
+        .find((e) => e !== null && e.inicio === q.inicio && normTitulo(e.titulo) === t) ?? null
+    );
+  } catch {
+    return 'sin-acceso';
+  }
+}
+
 let warmed = false;
 export function resetWorkspaceForTests(): void {
   warmed = false;
