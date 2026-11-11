@@ -279,6 +279,14 @@ import { mailStatus } from './mail/status.js';
 import { mailAttentionText } from './mail/triage.js';
 import { createMailTriggerFeed, kvSeenIds } from './mail/trigger.js';
 import type { MailMessage } from './mail/types.js';
+import {
+  necesitaIdle,
+  setVigilarLigero,
+  textoVigilar,
+  trasAvisos,
+  vigilarLigero,
+  vigilarOrden,
+} from './mail/vigilar-ligero.js';
 import { findCurlImpersonate } from './media/download.js';
 import { AudioRecall } from './media/recall.js';
 import {
@@ -4352,6 +4360,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       }
     }
   };
+  // «/correo vigilar on»: IDLE solo para las tarjetas de invitación y los recordatorios por tema.
+  const mailKv = {
+    get: (k: string) => store.kvGet(k),
+    set: (k: string, v: string) => store.kvSet(k, v),
+  };
+  /** Por qué hace falta la conexión IDLE (el ojo, un disparador «correo» o el aviso ligero). */
+  const motivosIdle = () => ({
+    ojo: attentionFreeConfig(config),
+    disparador: hasMailTrigger(),
+    ligero: vigilarLigero(mailKv),
+  });
   // IDLE requires existing mail credentials and a verified owner DM. No new account or scope.
   // Without the free attention model it only runs when a «correo» trigger exists.
   const mailIdle = new MailIdleTransport({
@@ -4375,11 +4394,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         log.warn('correo: recordatorio por tema no enviado', { err: String(err) }),
       );
       await mailTriggers(messages, scope);
-      if (!attentionFreeConfig(config) || !getOjoEnabled(memoryDb)) {
-        // Solo disparadores: el correo ya se ofreció; el ojo no lo quiere.
-        if (hasMailTrigger()) return;
-        throw new Error('Attention disabled');
-      }
+      const paso = trasAvisos({
+        ojo: attentionFreeConfig(config) && getOjoEnabled(memoryDb),
+        disparador: hasMailTrigger(),
+        ligero: vigilarLigero(mailKv),
+      });
+      // Solo disparadores o «/correo vigilar on»: el correo ya se ofreció; el ojo no lo quiere.
+      if (paso === 'leido') return;
+      if (paso === 'rechazar') throw new Error('Attention disabled');
       const deliveries = messages.map((m) => ({
         source: 'mail' as const,
         id: `${scope}:${m.id}`,
@@ -4393,7 +4415,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     status: (state) => log.info('attention IMAP', { state }),
   });
-  if (attentionFreeConfig(config) || hasMailTrigger()) mailIdle.start();
+  if (necesitaIdle(motivosIdle())) mailIdle.start();
   // Descargas: nace apagado (/ojo descargas on). Un vigilante de carpeta por encendido.
   const downloadsCtl = createDownloadsController({
     db: memoryDb,
@@ -4551,6 +4573,27 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, 'Correo solo disponible en el DM del dueño.', { quote: true });
       return;
     }
+    const vigilar = vigilarOrden(args);
+    if (vigilar) {
+      if (vigilar !== 'estado') setVigilarLigero(mailKv, vigilar === 'on');
+      const m = motivosIdle();
+      if (necesitaIdle(m)) mailIdle.start();
+      else await mailIdle.pause();
+      const cuenta = await loadReadMailAccount()
+        .then((a) => a !== null)
+        .catch(() => false);
+      await say(
+        inbound,
+        textoVigilar({
+          orden: vigilar,
+          on: m.ligero,
+          cuenta,
+          otros: { ...m, ligero: false },
+        }),
+        { quote: true },
+      );
+      return;
+    }
     if (args.trim() === 'estado') {
       try {
         await say(inbound, (await mailStatus()).lines.join('\n'), { quote: true });
@@ -4597,7 +4640,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     if (!match) {
       await say(
         inbound,
-        'Para contestar un correo, responde a su aviso y escribe lo que quieres decir. Si quieres ver cómo va el correo o los últimos que han llegado, dímelo.',
+        'Para contestar un correo, responde a su aviso y escribe lo que quieres decir. Si quieres ver cómo va el correo o los últimos que han llegado, dímelo. «/correo vigilar on» te avisa de invitaciones y recordatorios por tema sin gastar modelo.',
         { quote: true },
       );
       return;
@@ -8532,7 +8575,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const busy = openBusyItems();
     if (busy.length > 0) out.push(`lo que estoy haciendo (se cancela): ${describeBusy(busy)}`);
     out.push('rutinas, recordatorios, objetivos y avisos programados');
-    if (attentionFreeConfig(config) || hasMailTrigger()) out.push('vigilancia del correo');
+    if (necesitaIdle(motivosIdle())) out.push('vigilancia del correo');
     if (currentWake()?.isRunning()) out.push(`micrófono (palabra «${wakeWord}»)`);
     if (panelPlan.kind === 'start') out.push('panel web');
     if (currentTvButton()) out.push('botón de la tele');
@@ -12153,7 +12196,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             ? { ok: true }
             : { ok: false, detalle: 'no disponible' },
       });
-    if (attentionFreeConfig(config) || hasMailTrigger())
+    if (necesitaIdle(motivosIdle()))
       checks.push({ nombre: 'Vigilancia del correo', comprobar: async () => ({ ok: true }) });
     void informarLevantado(paths.state, checks, (text) =>
       telegram.send({ channel: 'telegram', account: telegram.account, chatId: owner, text }),

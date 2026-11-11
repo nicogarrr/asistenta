@@ -43,3 +43,7 @@ Asistenta pregunta antes de mandar datos a webs nuevas.
 5. Reinicia Asistenta. `/correo estado` te dice si lectura y envío están bien.
 
 Si falta algo, Asistenta te lo dice con estos mismos pasos («Falta configurar el envío: …»).
+
+## Aviso ligero: `/correo vigilar on`
+
+Sin el ojo (modelo gratis) ni un disparador «correo», Asistenta no mira el correo nuevo, así que no salen las tarjetas de invitación («📅 ¿La apunto?») ni los recordatorios por tema («cuando hable con Marta…»). `/correo vigilar on` abre la misma conexión de solo lectura únicamente para eso: no usa modelo y no pasa nada más al ojo. `/correo vigilar off` la cierra (si nada más la usa) y `/correo vigilar` dice cómo está.
