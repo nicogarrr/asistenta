@@ -120,6 +120,13 @@ export interface BibliotecaView {
   text: string;
   /** «📤 N»: subcomando `enviar` con la clave del archivo. */
   sends: Array<{ label: string; clave: string }>;
+  /**
+   * «📌 Fijar N» / «Soltar N» de cada fila (subcomando `fijar`/`soltar` con la misma clave
+   * que «📤 N»): fijar con un toque, sin escribir el número (Grok Bot «Pin»,
+   * https://docs.x.ai/grok-bot/files-and-results). Va con la clave y no con N porque al
+   * fijar algo la lista se reordena y «fijar 3» de un mensaje viejo sería otro archivo.
+   */
+  pins: Array<{ label: string; clave: string; sub: 'fijar' | 'soltar' }>;
 }
 
 /**
@@ -146,11 +153,13 @@ export function bibliotecaVista(
     return {
       text: '📚 Aún no te he hecho ningún archivo. Pídeme una gráfica, un Excel o un PDF y aquí lo tendrás.',
       sends: [],
+      pins: [],
     };
   if (!all.length)
     return {
       text: `📚 No tengo ${NINGUN[filtro ?? 'otro']} de los que te he hecho. /biblioteca para verlo todo.`,
       sends: [],
+      pins: [],
     };
   const shown = all.slice(0, BIBLIOTECA_MAX);
   const lines = shown.map(
@@ -162,9 +171,19 @@ export function bibliotecaVista(
     text:
       `📚 Lo que te he hecho${filtro ? ` (${filtro})` : ''}: ${all.length}\n${lines.join('\n')}${more}\n\n` +
       'Toca 📤 para que te lo mande otra vez, o «/biblioteca N». También te lo adjunto a un correo si me dices su nombre.\n' +
-      '📌 «/biblioteca fijar N» lo deja arriba y no se borra nunca (guardo los 40 últimos).',
+      '📌 Toca «📌 Fijar» (o «/biblioteca fijar N») y lo dejo arriba sin borrarlo nunca (guardo los 40 últimos).',
     sends: shown
       .map((c, i) => ({ label: `📤 ${i + 1}`, clave: claveBoton(c, lista) }))
+      .filter((s) => s.clave),
+    pins: shown
+      .map((c, i) => {
+        const fijado = fijados.has(c.id);
+        return {
+          label: fijado ? `Soltar ${i + 1}` : `📌 Fijar ${i + 1}`,
+          clave: claveBoton(c, lista),
+          sub: fijado ? ('soltar' as const) : ('fijar' as const),
+        };
+      })
       .filter((s) => s.clave),
   };
 }
@@ -174,8 +193,12 @@ export type BibliotecaOrden =
   | { kind: 'lista'; filtro: Tipo | null }
   | { kind: 'enviar'; n: number; filtro: Tipo | null }
   | { kind: 'clave'; clave: string }
-  /** «/biblioteca fijar N» / «soltar N» (N de la lista sin filtro). */
-  | { kind: 'fijar' | 'soltar'; n: number }
+  /**
+   * «/biblioteca fijar N» / «soltar N» (N de la lista sin filtro). El botón «📌 Fijar N»
+   * manda la clave del archivo en vez de N (n = 0): sigue siendo el mismo archivo aunque la
+   * lista se haya reordenado desde que salió el mensaje.
+   */
+  | { kind: 'fijar' | 'soltar'; n: number; clave?: string }
   | { kind: 'ayuda'; why: string };
 
 export function bibliotecaOrden(args: string): BibliotecaOrden {
@@ -186,6 +209,13 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
     return {
       kind: /^(fijar|fija|anclar)$/i.test(pin[1]) ? 'fijar' : 'soltar',
       n: Number(pin[2]),
+    };
+  const pinClave = /^(fijar|soltar)\s+(\d{8}-\d{6}(?:-\d{1,2})?(?:-h[0-9a-f]{6})?)$/i.exec(a);
+  if (pinClave?.[1] && pinClave[2])
+    return {
+      kind: pinClave[1].toLowerCase() === 'fijar' ? 'fijar' : 'soltar',
+      n: 0,
+      clave: pinClave[2],
     };
   const send = /^enviar\s+(\d{8}-\d{6}(?:-\d{1,2})?(?:-h[0-9a-f]{6})?)$/i.exec(a);
   if (send?.[1]) return { kind: 'clave', clave: send[1] };
@@ -200,20 +230,25 @@ export function bibliotecaOrden(args: string): BibliotecaOrden {
   return filtro ? { kind: 'lista', filtro } : { kind: 'ayuda', why: a };
 }
 
+/** El archivo de una clave de botón («20261111-120000» o «…-h1a2b3c»). */
+function porClave(lista: readonly Creado[], clave: string): Creado | null {
+  const m = /^(.*)-(h[0-9a-f]{6})$/i.exec(clave);
+  if (m)
+    return (
+      lista.find((c) => claveDe(c.id) === m[1] && huella(c.id) === m[2]?.toLowerCase()) ?? null
+    );
+  return lista.find((c) => claveDe(c.id) === clave) ?? null;
+}
+
 /** El archivo que pide una orden; null si no existe (ya podado o número fuera de lista). */
 export function bibliotecaElegir(
   lista: readonly Creado[],
   orden: BibliotecaOrden,
   fijados: ReadonlySet<string> = new Set(),
 ): Creado | null {
-  if (orden.kind === 'clave') {
-    const m = /^(.*)-(h[0-9a-f]{6})$/i.exec(orden.clave);
-    if (m)
-      return (
-        lista.find((c) => claveDe(c.id) === m[1] && huella(c.id) === m[2]?.toLowerCase()) ?? null
-      );
-    return lista.find((c) => claveDe(c.id) === orden.clave) ?? null;
-  }
+  if (orden.kind === 'clave') return porClave(lista, orden.clave);
+  if ((orden.kind === 'fijar' || orden.kind === 'soltar') && orden.clave)
+    return porClave(lista, orden.clave);
   const ordered = ordenBiblioteca(lista, fijados);
   if (orden.kind === 'fijar' || orden.kind === 'soltar')
     return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (ordered[orden.n - 1] ?? null) : null;
@@ -239,6 +274,30 @@ export function textoFijar(
     return `Ya tienes ${max} fijados, que es el tope. Suelta alguno con «/biblioteca soltar N».`;
   if (r !== 'ok') return 'Ese archivo ya no lo tengo. /biblioteca para ver los que quedan.';
   return `📌 Fijado «${c.nombre}»: sale arriba en /biblioteca y no se borra. «/biblioteca soltar N» lo suelta.`;
+}
+
+/**
+ * 📌 desde el panel («Páginas» → «📌 Fijar»/«Soltar»): lo mismo que «/biblioteca fijar N»,
+ * por id. `ok: false` solo si el archivo ya no está (el panel lo dice y repinta).
+ */
+export function fijarPorId(
+  store: {
+    lista(): Creado[];
+    fijar(id: string): 'ok' | 'ya' | 'lleno' | 'no';
+    soltar(id: string): boolean;
+  },
+  id: string,
+  fijar: boolean,
+  max: number,
+): { ok: boolean; mensaje: string } {
+  const c = store.lista().find((x) => x.id === id) ?? null;
+  if (!c) return { ok: false, mensaje: 'Ese archivo ya no lo tengo (guardo los 40 últimos).' };
+  const r = fijar ? store.fijar(id) : store.soltar(id);
+  const mensaje = textoFijar(fijar ? 'fijar' : 'soltar', c, r, max).replace(
+    / «\/biblioteca soltar N» lo suelta\.$/,
+    '',
+  );
+  return { ok: r !== 'no', mensaje };
 }
 
 export const BIBLIOTECA_AYUDA =

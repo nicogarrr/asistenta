@@ -2549,6 +2549,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             );
           },
           creado: (id) => creados.leer(id),
+          // 📌 Fijar/Soltar desde «Páginas»: lo mismo que «/biblioteca fijar N».
+          fijarCreado: async (id, fijar) =>
+            (await import('./biblioteca.js')).fijarPorId(creados, id, fijar, CREADOS_MAX_FIJADOS),
           // Tarjeta Apuntes: temas de apuntes por tema con sus archivos (solo lectura).
           expertos: () => panelApuntes(baseExpertos),
           pagina: (id) => {
@@ -7631,8 +7634,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     if (orden.kind === 'lista') {
       const v = bib.bibliotecaVista(lista, orden.filtro, Date.now(), fijados);
+      // Por fila: «📤 N» y su «📌 Fijar N»/«Soltar N» (dos por fila, la misma clave).
+      const pinDe = new Map(v.pins.map((p) => [p.clave, p]));
       const buttons = v.sends
-        .map((s) => commandButton(s.label, 'biblioteca', s.clave, 'enviar'))
+        .flatMap((s) => {
+          const pin = pinDe.get(s.clave);
+          return [
+            commandButton(s.label, 'biblioteca', s.clave, 'enviar'),
+            pin ? commandButton(pin.label, 'biblioteca', pin.clave, pin.sub) : undefined,
+          ];
+        })
         .filter((b): b is { label: string; action: string } => b !== undefined);
       await say(inbound, v.text, { quote: true, ...(buttons.length ? { buttons } : {}) });
       return;

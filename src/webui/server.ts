@@ -51,6 +51,14 @@ export interface WebUiDeps {
   pagina?(id: string): unknown | Promise<unknown>;
   /** Un archivo generado (gráfica, Excel, PDF…) para bajarlo desde «Páginas»; null = 404. */
   creado?(id: string): { bytes: Buffer; mime: string; nombre: string } | null;
+  /**
+   * 📌 Fijar/soltar un archivo creado desde «Páginas» (lo mismo que «/biblioteca fijar N»):
+   * lo fijado no se poda. Devuelve el texto para el aviso. Si falta, 503.
+   */
+  fijarCreado?(
+    id: string,
+    fijar: boolean,
+  ): { ok: boolean; mensaje: string } | Promise<{ ok: boolean; mensaje: string }>;
   /** Tarjeta «Apuntes»: temas de apuntes con sus archivos (expertos/panel.ts). Si falta, 503. */
   expertos?(): unknown | Promise<unknown>;
   /**
@@ -276,6 +284,7 @@ type ApiRoute =
   | { method: 'POST'; kind: 'clave' }
   | { method: 'POST'; kind: 'miniapp' }
   | { method: 'POST'; kind: 'voz' }
+  | { method: 'POST'; kind: 'fijarCreado' }
   | { method: 'GET'; kind: 'vozResto' }
   | { method: 'GET'; kind: 'vozCalentar' }
   | { method: 'POST'; kind: 'approval'; id: string };
@@ -446,6 +455,8 @@ function matchApiRoute(pathname: string): ApiRoute | null {
       return { method: 'POST', kind: 'voz' };
     case '/api/voz/resto':
       return { method: 'GET', kind: 'vozResto' };
+    case '/api/creados/fijar':
+      return { method: 'POST', kind: 'fijarCreado' };
     case '/api/voz/calentar':
       return { method: 'GET', kind: 'vozCalentar' };
     default:
@@ -743,6 +754,17 @@ async function respondApi(
           throw new Error('deps.retry devolvio una respuesta invalida');
         // Lo mismo que /api/chat: un turno repetido también trae sus capturas y archivos.
         payload = panelReply(answer);
+        break;
+      }
+      case 'fijarCreado': {
+        const id = body.id;
+        if (typeof id !== 'string' || !id || id.length > 200)
+          throw new HttpError(400, 'Falta el id');
+        if (typeof body.fijar !== 'boolean') throw new HttpError(400, 'Falta «fijar»');
+        if (!deps.fijarCreado) throw new HttpError(503, 'Fijar archivos no disponible');
+        const r = await deps.fijarCreado(id, body.fijar);
+        if (!r.ok) throw new HttpError(404, r.mensaje);
+        payload = r;
         break;
       }
       case 'modelo': {

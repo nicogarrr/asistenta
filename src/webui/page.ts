@@ -2417,6 +2417,18 @@ ${renderMiniAppScript()}
         }
       }
 
+      async function fijarCreado(f, boton) {
+        boton.disabled = true;
+        try {
+          var r = await enviar('/api/creados/fijar', { id: f.id, fijar: !f.fijado });
+          if (r && r.mensaje) mostrarAviso(r.mensaje);
+          await cargarPaginas(true);
+        } catch (error) {
+          mostrarAviso(error && error.message ? error.message : 'No se pudo fijar el archivo.');
+          boton.disabled = false;
+        }
+      }
+
       async function cargarApuntes(silencio) {
         var contenedor = document.getElementById('panel-apuntes');
         if (silencio !== true) pintarCarga(contenedor);
@@ -2465,8 +2477,14 @@ ${renderMiniAppScript()}
               var boton = nodo('button', 'mini', f.nombre);
               boton.type = 'button';
               boton.addEventListener('click', function () { descargarCreado(f, boton); });
+              if (f.fijado) fila.appendChild(document.createTextNode('📌 '));
               fila.appendChild(boton);
-              fila.appendChild(document.createTextNode(' · ' + f.creado + ' · ' + Math.max(1, Math.round(f.bytes / 1024)) + ' KB'));
+              fila.appendChild(document.createTextNode(' · ' + f.creado + ' · ' + Math.max(1, Math.round(f.bytes / 1024)) + ' KB '));
+              // 📌 Fijar / Soltar: lo mismo que «/biblioteca fijar N» (no se borra con la poda).
+              var pin = nodo('button', 'mini', f.fijado ? 'Soltar' : '📌 Fijar');
+              pin.type = 'button';
+              pin.addEventListener('click', function () { fijarCreado(f, pin); });
+              fila.appendChild(pin);
               lista3.appendChild(fila);
             });
             contenedor.appendChild(lista3);
