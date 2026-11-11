@@ -9,6 +9,7 @@
 
 import {
   anuncioPendientes,
+  desfaseReloj,
   etiquetaAmbito,
   etiquetaAmbitoPorDefecto,
   etiquetaCampo,
@@ -48,6 +49,7 @@ export function renderFormatScript(): string {
   'use strict';
   var resumenAprobacion = ${resumenAprobacion.toString()};
   var recordatorioAprobacion = ${recordatorioAprobacion.toString()};
+  var desfaseReloj = ${desfaseReloj.toString()};
   var tiempoRestante = ${tiempoRestante.toString()};
   var etiquetaCampo = ${etiquetaCampo.toString()};
   var formatearCampo = ${formatearCampo.toString()};
@@ -72,6 +74,7 @@ export function renderFormatScript(): string {
     mensajeDeError: mensajeDeError,
     resumenAprobacion: resumenAprobacion,
     recordatorioAprobacion: recordatorioAprobacion,
+    desfaseReloj: desfaseReloj,
     tiempoRestante: tiempoRestante,
     etiquetaCampo: etiquetaCampo,
     formatearCampo: formatearCampo
@@ -872,6 +875,13 @@ ${renderMiniAppScript()}
         document.getElementById('form-token').hidden = false;
       }
 
+      // Las aprobaciones llevan la hora del PC; el navegador (el móvil por Tailscale) puede ir
+      // desfasado. Cada respuesta del panel trae su cabecera Date y de ahí sale el desfase.
+      var desfasePC = 0;
+      function ahoraPC() {
+        return Date.now() + desfasePC;
+      }
+
       async function llamar(ruta, opciones) {
         if (!token) throw errorSinToken();
         // Sin respuesta en 30 s (un proceso viejo que dejó el panel abierto sin Asistenta
@@ -904,6 +914,7 @@ ${renderMiniAppScript()}
             }, tope)
           : null;
         var respuesta;
+        var pedidoEn = Date.now();
         try {
           respuesta = await fetch(ruta, {
             method: opciones.metodo,
@@ -918,6 +929,9 @@ ${renderMiniAppScript()}
           if (opciones.tope && corte && corte.signal.aborted) throw errorTope();
           throw errorNoEnMarcha();
         }
+        // La hora del PC, para las cuentas atrás de las aprobaciones (ahoraPC).
+        if (respuesta && respuesta.headers && typeof respuesta.headers.get === 'function')
+          desfasePC = formato.desfaseReloj(respuesta.headers.get('Date'), pedidoEn, Date.now(), desfasePC);
         var datos = null;
         var esJson = true;
         try {
@@ -1102,7 +1116,7 @@ ${renderMiniAppScript()}
 
       // Cuenta atrás de cada aprobación; al caducar se desactivan sus botones.
       function actualizarCaducidades() {
-        var ahora = Date.now();
+        var ahora = ahoraPC();
         var marcas = document.querySelectorAll('#panel-aprobaciones [data-caduca]');
         for (var i = 0; i < marcas.length; i += 1) {
           var caduca = Number(marcas[i].getAttribute('data-caduca'));
@@ -1353,7 +1367,7 @@ ${renderMiniAppScript()}
           if (resumen.herramienta) meta.push('Herramienta: ' + resumen.herramienta);
           if (meta.length) tarjeta.appendChild(nodo('p', 'meta', meta.join(' · ')));
           if (resumen.caduca !== null) {
-            var caduca = nodo('p', 'caduca', formato.tiempoRestante(resumen.caduca, Date.now()));
+            var caduca = nodo('p', 'caduca', formato.tiempoRestante(resumen.caduca, ahoraPC()));
             caduca.setAttribute('data-caduca', String(resumen.caduca));
             tarjeta.appendChild(caduca);
           }

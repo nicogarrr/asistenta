@@ -58,6 +58,30 @@ export function tiempoRestante(caduca: number | null, ahora: number): string {
 }
 
 /**
+ * Cuánto va el reloj del PC por delante del navegador, en ms, leído de la cabecera Date de
+ * una respuesta del panel (`antes`/`despues`: Date.now() del navegador al pedir y al
+ * recibir). Las aprobaciones traen su hora del PC (`createdAt`, `expiresAt`) y el panel las
+ * comparaba con el reloj del navegador: con el móvil por Tailscale a unos minutos del PC, el
+ * «⏳ Sigue esperando…» y la cuenta atrás salían antes o después (bugs-36). Date va en
+ * segundos: un desfase de menos de 2 s se toma como 0, y una respuesta lenta (más de 5 s) o
+ * sin cabecera deja el `previo`.
+ */
+export function desfaseReloj(
+  cabeceraDate: unknown,
+  antes: number,
+  despues: number,
+  previo: number,
+): number {
+  if (typeof cabeceraDate !== 'string' || cabeceraDate.trim() === '') return previo;
+  const pc = Date.parse(cabeceraDate);
+  if (!Number.isFinite(pc) || !Number.isFinite(antes) || !Number.isFinite(despues)) return previo;
+  if (despues < antes || despues - antes > 5000) return previo;
+  // Date se trunca al segundo: el PC estaba en algún punto de [pc, pc + 1000).
+  const d = pc + 500 - (antes + despues) / 2;
+  return Math.abs(d) < 2000 ? 0 : Math.round(d);
+}
+
+/**
  * El recordatorio de una aprobación del panel que sigue sin respuesta (Grok Bot vuelve a
  * avisar si te sigue esperando; en Telegram, gaps-12 #2324). Igual que allí: a los 3 min,
  * solo si la aprobación dura 4 min o más y aún no ha caducado. '' = nada que recordar.
