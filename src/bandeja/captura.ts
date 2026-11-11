@@ -47,6 +47,8 @@ export interface CaptureInput {
   audioFileId?: string;
   replyToMessageId?: string;
   forwardedFrom?: string;
+  /** Enlaces escondidos tras el texto (text_link de Telegram). */
+  linkUrls?: string[];
   isGroup?: boolean;
 }
 
@@ -58,9 +60,25 @@ const URL_RE = /https?:\/\/[^\s<>"«»]+/gi;
 const OWN_COMMENT_MARK = '[Fin del mensaje reenviado';
 const FORWARD_MARK = /^\[Mensaje reenviado(?: de [^\]\n]*)?\]\s*/;
 
-/** Quita la puntuación que se pega al final de un enlace pegado en una frase. */
+/**
+ * Quita la puntuación que se pega al final de un enlace pegado en una frase. Un «)» solo
+ * se quita si no cierra un «(» del propio enlace: es.wikipedia.org/wiki/Mises_(economista)
+ * perdía el paréntesis y daba una página que no existe.
+ */
 function cleanUrl(raw: string): string {
-  return raw.replace(/[),.;:!?»"'\]]+$/u, '');
+  let u = raw;
+  for (;;) {
+    const next = u.replace(/[,.;:!?»"'\]]+$/u, '');
+    if (next.endsWith(')') && count(next, '(') < count(next, ')')) {
+      u = next.slice(0, -1);
+      continue;
+    }
+    return next;
+  }
+}
+
+function count(s: string, ch: string): number {
+  return s.split(ch).length - 1;
 }
 
 export function extractUrls(text: string): string[] {
@@ -208,8 +226,10 @@ export function detectCapture(
   if (m.replyToMessageId) return null;
   // Un reenvío con comentario tuyo debajo: el comentario es para la conversación.
   if (m.text.includes(OWN_COMMENT_MARK)) return null;
+  // El pie de un REENVÍO no es tuyo (el texto del post del canal): no lo saca de la bandeja.
+  const othersCaption = m.forwardedFrom && text ? { note: text.slice(0, 2000) } : {};
   if (m.documentFileId) {
-    if (text) return null;
+    if (text && !m.forwardedFrom) return null;
     return [
       {
         kind: isPdfDoc(m) ? 'pdf' : 'texto',
@@ -217,14 +237,23 @@ export function detectCapture(
         fileId: m.documentFileId,
         fileName: m.documentName?.trim() || undefined,
         mimeType: m.documentMimeType,
+        ...othersCaption,
       },
     ];
   }
-  if (m.photoFileId) {
-    if (text) return null;
-    return [{ kind: 'imagen', fileId: m.photoFileId, mimeType: 'image/jpeg' }];
-  }
   const urls = extractUrls(text);
+  for (const u of m.linkUrls ?? []) if (!urls.includes(u)) urls.push(u);
+  if (m.photoFileId) {
+    if (text && !m.forwardedFrom) return null;
+    // Un post reenviado con foto y enlace: lo que vale es el enlace (la foto es su portada).
+    if (m.forwardedFrom && urls.length)
+      return urls.slice(0, MAX_PER_MESSAGE).map((url) => ({
+        kind: kindOfUrl(url),
+        url,
+        ...othersCaption,
+      }));
+    return [{ kind: 'imagen', fileId: m.photoFileId, mimeType: 'image/jpeg', ...othersCaption }];
+  }
   if (urls.length === 0) return null;
   let rest = text;
   for (const u of urls) rest = rest.split(u).join(' ');

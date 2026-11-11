@@ -614,6 +614,8 @@ export class TelegramChannel implements ChannelAdapter {
     const forwarded = forwardedLabel(msg);
     if (forwarded && inbound.text) inbound.text = `${forwarded}\n${inbound.text}`;
     if (forwarded) inbound.forwardedFrom = forwarded;
+    const hidden = hiddenLinks(msg);
+    if (hidden.length) inbound.linkUrls = hidden;
     // Un contacto, una encuesta o un sticker con emoji llegan como texto que el asistente
     // entiende (telegram-compartido.ts), en vez del «Aún no sé leer…» de antes.
     const shared = inbound.text ? null : sharedKindText(msg);
@@ -2927,6 +2929,27 @@ export function sharedLocationText(msg: object): string | null {
       : '';
   const label = m.venue ? 'Sitio compartido' : 'Ubicación compartida';
   return `[${label}${live}: ${place ? `${place} — ` : ''}${coords} — ${link}]`;
+}
+
+/**
+ * Los enlaces escondidos tras un texto (entidades `text_link` del texto o del pie): «Leer
+ * más», un titular enlazado… No van en el texto, así que la bandeja no los veía y un post
+ * reenviado de un canal iba a la conversación. Solo http(s), sin repetir, como mucho 10.
+ */
+export function hiddenLinks(msg: object): string[] {
+  const m = msg as { entities?: unknown; caption_entities?: unknown };
+  const out: string[] = [];
+  for (const list of [m.entities, m.caption_entities]) {
+    if (!Array.isArray(list)) continue;
+    for (const e of list as Array<{ type?: unknown; url?: unknown }>) {
+      if (e?.type !== 'text_link' || typeof e.url !== 'string') continue;
+      const url = e.url.trim();
+      if (!/^https?:\/\/\S+$/i.test(url) || out.includes(url)) continue;
+      out.push(url);
+      if (out.length >= 10) return out;
+    }
+  }
+  return out;
 }
 
 /**

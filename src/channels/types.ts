@@ -121,6 +121,11 @@ export interface Inbound {
    * aquí está para lo que se construye dentro del turno, como la transcripción de un audio.
    */
   forwardedFrom?: string;
+  /**
+   * Enlaces escondidos tras un texto («Leer más» con enlace, text_link de Telegram): no
+   * están en `text`. Un post reenviado de un canal suele traer así su enlace.
+   */
+  linkUrls?: string[];
 }
 
 /**
