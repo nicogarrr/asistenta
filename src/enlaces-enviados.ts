@@ -233,6 +233,23 @@ export function buscarEnlaces<T extends EnlaceEnviado>(enlaces: readonly T[], bu
   });
 }
 
+/**
+ * El enlace de «📌 N» / «Soltar N» (o «/biblioteca enlaces fijar N»). Con la clave del botón,
+ * también entre los más viejos que encuentra la búsqueda (ENLACES_BUSCA_MAX): «📌 1» de
+ * «/biblioteca enlaces idealista» contestaba «no encuentro ese enlace» si era de hace más de 10
+ * respuestas (bugs-38). Sin clave, N cuenta en la lista de siempre (fijados + 10 últimos).
+ */
+export function enlaceParaFijar(
+  turnos: ReadonlyArray<{ text: string; at: number }>,
+  fijados: readonly EnlaceEnviado[],
+  orden: { n: number; clave?: string },
+): EnlaceEnviado | null {
+  const todos = enlacesConFijados(enlacesDe(turnos), fijados);
+  if (!orden.clave) return todos[orden.n - 1] ?? null;
+  const es = (x: EnlaceEnviado) => claveEnlace(x.url) === orden.clave;
+  return todos.find(es) ?? enlacesDe(turnos, ENLACES_BUSCA_MAX).find(es) ?? null;
+}
+
 /** Lo fijado arriba y luego lo último que te mandé (sin repetir lo fijado). La numeración de la lista. */
 export function enlacesConFijados(
   recientes: readonly EnlaceEnviado[],

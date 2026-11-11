@@ -7815,10 +7815,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const fijos = new en.EnlacesFijados(join(paths.state, 'enlaces-fijados.json'));
     const chat = chatKey(inbound);
     if (orden.kind === 'enlace-pin') {
-      const todos = en.enlacesConFijados(recientes, fijos.lista(chat));
-      const e = orden.clave
-        ? (todos.find((x) => en.claveEnlace(x.url) === orden.clave) ?? null)
-        : (todos[orden.n - 1] ?? null);
+      // Con la clave del botón, también un enlace viejo que salió en una búsqueda (bugs-38).
+      const e = en.enlaceParaFijar(turnos, fijos.lista(chat), orden);
       const r = !e
         ? false
         : orden.fijar
