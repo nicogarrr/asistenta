@@ -46,6 +46,11 @@ export interface Skill {
   /** Desactivada por el dueño («quita la de X»): no entra en el índice ni se sigue. */
   disabled?: boolean;
   /**
+   * Fijada por el dueño («/funciones fijar …»): nunca se propone archivarla por falta de
+   * uso. Como el «lock» del curador de Hermes. No cambia permisos ni cuándo se usa.
+   */
+  pinned?: boolean;
+  /**
    * Actúa hacia fuera o gasta (enviar, reservar, comprar, encender cosas). Solo
    * informa: los permisos los decide permissions.ts, nunca la skill.
    */

@@ -80,7 +80,7 @@ export function archiveCandidates(
 ): Skill[] {
   const cutoff = now - USO_VENTANA_MS;
   return skills.filter((s) => {
-    if (s.disabled || s.trust === 'official') return false;
+    if (s.disabled || s.pinned || s.trust === 'official') return false;
     if (s.createdAt > cutoff) return false;
     const last = Math.max(use[s.id]?.last ?? 0, s.updatedAt ?? 0);
     return last < cutoff;
@@ -121,11 +121,15 @@ export function usoText(v: UsoView): string {
           .map((s) => `${s.name} (${v.skillUse[s.id]?.n ?? 0})`)
           .join(', ')}`,
       );
+    const pinned = learned.filter((s) => s.pinned);
+    if (pinned.length)
+      lines.push(`📌 Fijadas (nunca se archivan): ${pinned.map((s) => s.name).join(', ')}`);
     const stale = archiveCandidates(v.skills, v.skillUse, v.now);
     if (stale.length) {
       lines.push(
         `Sin usar en 30 días: ${stale.map((s) => s.name).join(', ')}`,
         'Para archivarlas (se desactivan, no se borran): /funciones archivar',
+        'Para que una no se archive nunca: /funciones fijar <nombre>',
       );
     }
   }
@@ -195,4 +199,82 @@ export function archivarText(
 /** «sí», «si», «vale», «ok», «confirmo» tras /funciones archivar. */
 export function isArchiveConfirm(rest: string): boolean {
   return /^(s[ií]|vale|ok|confirmo|adelante)(?=$|[\s,.!])/i.test(rest.trim());
+}
+
+/** Busca una habilidad aprendida por id o por nombre (sin acentos ni mayúsculas). */
+export function findLearnedSkill(skills: readonly Skill[], query: string): Skill | null {
+  const fold = (t: string) =>
+    t
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[«»"'“”]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const q = fold(query);
+  if (!q) return null;
+  const learned = skills.filter((s) => s.trust !== 'official');
+  const exact = learned.find(
+    (s) => s.id === q || fold(s.name) === q || fold(s.id.replace(/-/g, ' ')) === q,
+  );
+  if (exact) return exact;
+  const partial = learned.filter(
+    (s) => fold(s.name).includes(q) || s.id.includes(q.replace(/ /g, '-')),
+  );
+  return partial.length === 1 ? (partial[0] ?? null) : null;
+}
+
+/**
+ * «/funciones fijar <nombre>» y «/funciones soltar <nombre>» (el «lock» del curador de
+ * Hermes): una habilidad fijada nunca sale en «sin usar» ni la archiva /funciones archivar.
+ * Sin nombre, lista las fijadas.
+ */
+export function fijarText(
+  skills: readonly Skill[],
+  query: string,
+  pin: boolean,
+  setPinned: (id: string, pinned: boolean) => boolean,
+): string {
+  const q = query.trim();
+  if (!q) {
+    const pinned = skills.filter((s) => s.pinned && s.trust !== 'official');
+    return pinned.length
+      ? [
+          '📌 Habilidades fijadas (nunca se archivan):',
+          ...pinned.map((s) => `• ${s.name}`),
+          '',
+          'Para soltar una: /funciones soltar <nombre>',
+        ].join('\n')
+      : 'No tienes ninguna habilidad fijada. Para fijar una: /funciones fijar <nombre> (las ves con /funciones uso).';
+  }
+  const s = findLearnedSkill(skills, q);
+  if (!s) {
+    const learned = skills.filter((x) => x.trust !== 'official');
+    const hint = learned.length
+      ? `Las que tengo: ${learned
+          .slice(0, 10)
+          .map((x) => x.name)
+          .join(', ')}${learned.length > 10 ? '…' : ''}`
+      : 'Todavía no he aprendido ninguna habilidad.';
+    return `No encuentro ninguna habilidad aprendida que se llame «${shorten(q)}». ${hint}`;
+  }
+  if (Boolean(s.pinned) === pin)
+    return pin
+      ? `📌 «${s.name}» ya estaba fijada: no se archiva nunca.`
+      : `«${s.name}» no estaba fijada.`;
+  if (!setPinned(s.id, pin)) return `No pude ${pin ? 'fijar' : 'soltar'} «${s.name}».`;
+  return pin
+    ? `📌 Fijada «${s.name}»: aunque pase tiempo sin usarla, no te la propondré archivar.${s.disabled ? ' Ojo: ahora está desactivada; «activa la habilidad …» para volver a usarla.' : ''}`
+    : `Soltada «${s.name}»: si pasa 30 días sin usarse, volverá a salir en /funciones archivar.`;
+}
+
+/** «fijar», «fija», «bloquear» → true; «soltar», «desfijar», «suelta» → false; si no, null. */
+export function pinSubcommand(sub: string): boolean | null {
+  const s = sub
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  if (/^(fijar|fija|fijala|bloquear|bloquea)$/.test(s)) return true;
+  if (/^(soltar|suelta|desfijar|desfija|desbloquear|desbloquea)$/.test(s)) return false;
+  return null;
 }

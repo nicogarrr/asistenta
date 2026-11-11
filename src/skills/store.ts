@@ -187,6 +187,7 @@ function toList(value: string | undefined): string[] {
 function optionalMeta(meta: Map<string, string>): Partial<Skill> {
   const out: Partial<Skill> = {};
   if (meta.get('disabled') === 'true') out.disabled = true;
+  if (meta.get('pinned') === 'true') out.pinned = true;
   const outward = meta.get('outward');
   if (outward === 'true' || outward === 'false') out.outward = outward === 'true';
   const needs = toList(meta.get('needs'));
@@ -209,6 +210,7 @@ export function serializeSkillMarkdown(skill: Skill): string {
     `updated_at: ${quoteYaml(new Date(skill.updatedAt).toISOString())}`,
   ];
   if (skill.disabled) out.push('disabled: true');
+  if (skill.pinned) out.push('pinned: true');
   if (skill.outward !== undefined) out.push(`outward: ${skill.outward}`);
   if (skill.needs && skill.needs.length > 0)
     out.push(`needs: ${quoteYaml(skill.needs.join(', '))}`);
@@ -331,6 +333,8 @@ export class SkillStore {
     };
     // Re-guardar no reactiva una skill que el dueño desactivó.
     if (existing?.disabled) skill.disabled = true;
+    // Ni fijarla: mejorar una habilidad fijada no la vuelve archivable.
+    if (existing?.pinned) skill.pinned = true;
     const outward = draft.outward ?? existing?.outward;
     if (outward !== undefined) skill.outward = outward;
     const needs = (draft.needs ?? existing?.needs ?? [])
@@ -351,6 +355,17 @@ export class SkillStore {
     if (disabled) skill.disabled = true;
     else delete skill.disabled;
     skill.updatedAt = Date.now();
+    this.#write(skill);
+    return true;
+  }
+
+  /** «/funciones fijar …»: fijada no se propone archivar. Devuelve false si no existe. */
+  setPinned(id: string, pinned: boolean): boolean {
+    const skill = this.read(id);
+    if (!skill) return false;
+    if (Boolean(skill.pinned) === pinned) return true;
+    if (pinned) skill.pinned = true;
+    else delete skill.pinned;
     this.#write(skill);
     return true;
   }
