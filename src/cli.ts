@@ -723,7 +723,7 @@ import { recordLessons } from './skills/lessons.js';
 import { RepeatTracker } from './skills/repeats.js';
 import { SkillStore } from './skills/store.js';
 import { repitchText, wantsRepitch } from './skills/wait-what.js';
-import { conversationStatus, formatStatus, summarizeLog } from './status.js';
+import { conversationStatus, formatStatus, gruposEstado, summarizeLog } from './status.js';
 import { steerChat } from './steer.js';
 import { briefingTasks, TaskBoard } from './tasks/board.js';
 import { startTelegramEstado } from './telegram-estado.js';
@@ -8147,8 +8147,12 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         preguntas.ask(chatKey(inbound), 'proyecto', { answer: projectAnswer });
       }
     }
+    // Los grupos donde estoy, por su nombre: solo al dueño en privado (en un grupo no se
+    // cuentan los demás).
+    const grupos = isOwnerDm(inbound, vigilanteOwnerId) ? gruposEstado(chatTitulos.lista()) : [];
     const text = formatStatus({
       conversation,
+      ...(grupos.length ? { grupos } : {}),
       version: process.env.npm_package_version ?? 'dev',
       node: process.version,
       uptimeMs: Date.now() - startedAt,

@@ -72,6 +72,8 @@ export interface StatusInfo {
   droppedReminders?: string[];
   /** Solo en el chat privado del dueño: proyecto y modelo de esta conversación. */
   conversation?: string[];
+  /** «Grupos donde estoy»: una línea por grupo (gruposEstado); solo al dueño en privado. */
+  grupos?: string[];
   /** Cuánto tarda en contestar (daemon/latency.ts). */
   latency?: string;
 }
@@ -108,6 +110,33 @@ export function conversationStatus(c: {
   return [project, model, sv];
 }
 
+/** Grupos que enseña /estado como mucho (el resto, «y N más»). */
+export const ESTADO_GRUPOS_MAX = 8;
+
+function haceDias(ms: number): string {
+  const d = Math.floor(ms / 86_400_000);
+  if (d <= 0) return 'hoy';
+  if (d === 1) return 'ayer';
+  return `hace ${d} días`;
+}
+
+/**
+ * «Grupos donde estoy» de /estado: el nombre de cada grupo de Telegram en que me han
+ * escrito (chat-titulos.ts) y cuándo fue la última vez, del más reciente al más viejo.
+ * Uno que ya no se oye en meses puede ser un grupo del que me sacaron: se ve en la fecha.
+ */
+export function gruposEstado(
+  grupos: ReadonlyArray<{ titulo: string; visto: number }>,
+  now: number = Date.now(),
+): string[] {
+  if (!grupos.length) return [];
+  const lines = grupos
+    .slice(0, ESTADO_GRUPOS_MAX)
+    .map((g) => `«${g.titulo}» (último mensaje ${haceDias(now - g.visto)})`);
+  if (grupos.length > ESTADO_GRUPOS_MAX) lines.push(`…y ${grupos.length - ESTADO_GRUPOS_MAX} más`);
+  return lines;
+}
+
 export function formatStatus(s: StatusInfo): string {
   const lines = [
     `Asistenta ${s.version} (Node ${s.node}), encendida desde hace ${formatDuration(s.uptimeMs)}.`,
@@ -134,6 +163,10 @@ export function formatStatus(s: StatusInfo): string {
   if (s.latency) lines.push(s.latency);
   lines.push(`Páginas vigiladas: ${s.pageWatches}.`);
   for (const d of s.droppedReminders ?? []) lines.push(`No pude avisarte de: ${d}`);
+  if (s.grupos?.length) {
+    lines.push('', 'Grupos donde estoy:');
+    for (const l of s.grupos) lines.push(`- ${l}`);
+  }
   if (s.conversation?.length) {
     lines.push('', 'Esta conversación:');
     for (const l of s.conversation) lines.push(`- ${l}`);
