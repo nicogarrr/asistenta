@@ -375,6 +375,11 @@ export class BandejaStore {
       );
   }
 
+  /** Cambia solo `extra` (releer la página: su receta o su evento), sin tocar el veredicto. */
+  setExtra(id: number, extra: BandejaExtra): void {
+    this.#db.prepare('UPDATE items SET extra = ? WHERE id = ?').run(JSON.stringify(extra), id);
+  }
+
   /** Guarda el texto entero de una cosa (para «📖 Al Kindle»). */
   saveText(id: number, body: string): void {
     this.#db
