@@ -159,6 +159,37 @@ export function coincide(nombre: string, busca: string): boolean {
   return ws.every((w) => n.includes(w));
 }
 
+/** La palabra del tipo para escribirlo en una orden: «/biblioteca graficas 2». */
+const PALABRA: Record<Tipo, string> = {
+  pdf: 'pdf',
+  excel: 'excel',
+  word: 'word',
+  imagen: 'graficas',
+  csv: 'csv',
+  texto: 'notas',
+  otro: '',
+};
+
+/**
+ * Las dos líneas de ayuda bajo la lista. Los números de una lista filtrada son los de esa
+ * lista: «/biblioteca fijar 1» tras «/biblioteca pdf» fijaba el 1 de la lista ENTERA (otro
+ * archivo, bugs-36). Con tipo, la orden lleva el tipo; con búsqueda, solo los botones.
+ */
+function pistaNumeros(filtro: Tipo | null, busca?: string): string {
+  const fijar = '📌 Toca «📌 Fijar»';
+  const resto = ' y lo dejo arriba sin borrarlo nunca (guardo los 40 últimos).';
+  if (busca)
+    return (
+      'Toca 📤 para que te lo mande otra vez. También te lo adjunto a un correo si me dices su nombre.\n' +
+      `${fijar}${resto}`
+    );
+  const t = filtro ? `${PALABRA[filtro]} ` : '';
+  return (
+    `Toca 📤 para que te lo mande otra vez, o «/biblioteca ${t}N». También te lo adjunto a un correo si me dices su nombre.\n` +
+    `${fijar} (o «/biblioteca ${t}fijar N»)${resto}`
+  );
+}
+
 export function bibliotecaVista(
   lista: readonly Creado[],
   filtro: Tipo | null,
@@ -196,8 +227,7 @@ export function bibliotecaVista(
   return {
     text:
       `📚 ${busca ? `Lo que se llama «${busca}»` : 'Lo que te he hecho'}${filtro ? ` (${filtro})` : ''}: ${all.length}\n${lines.join('\n')}${more}\n\n` +
-      'Toca 📤 para que te lo mande otra vez, o «/biblioteca N». También te lo adjunto a un correo si me dices su nombre.\n' +
-      '📌 Toca «📌 Fijar» (o «/biblioteca fijar N») y lo dejo arriba sin borrarlo nunca (guardo los 40 últimos).',
+      pistaNumeros(filtro, busca),
     sends: shown
       .map((c, i) => ({ label: `📤 ${i + 1}`, clave: claveBoton(c, lista) }))
       .filter((s) => s.clave),
@@ -224,18 +254,28 @@ export type BibliotecaOrden =
    * manda la clave del archivo en vez de N (n = 0): sigue siendo el mismo archivo aunque la
    * lista se haya reordenado desde que salió el mensaje.
    */
-  | { kind: 'fijar' | 'soltar'; n: number; clave?: string }
+  | { kind: 'fijar' | 'soltar'; n: number; clave?: string; filtro?: Tipo }
   | { kind: 'ayuda'; why: string };
 
 export function bibliotecaOrden(args: string): BibliotecaOrden {
   const a = args.trim();
   if (!a) return { kind: 'lista', filtro: null };
-  const pin = /^(fijar|fija|anclar|soltar|suelta|desfijar|desanclar)\s+(\d{1,2})$/i.exec(a);
-  if (pin?.[1] && pin[2])
+  // «fijar 2» cuenta en la lista entera; «pdf fijar 2» (o «fijar pdf 2»), en la de los PDF,
+  // como «/biblioteca pdf 2» para mandarlo (bugs-36).
+  const pin =
+    /^(?:(\S+)\s+)?(fijar|fija|anclar|soltar|suelta|desfijar|desanclar)\s+(?:(\S+)\s+)?(\d{1,2})$/i.exec(
+      a,
+    );
+  if (pin?.[2] && pin[4]) {
+    const palabra = pin[1] ?? pin[3];
+    const filtro = palabra ? filtroDe(palabra) : null;
+    if (palabra && !filtro) return { kind: 'ayuda', why: a };
     return {
-      kind: /^(fijar|fija|anclar)$/i.test(pin[1]) ? 'fijar' : 'soltar',
-      n: Number(pin[2]),
+      kind: /^(fijar|fija|anclar)$/i.test(pin[2]) ? 'fijar' : 'soltar',
+      n: Number(pin[4]),
+      ...(filtro ? { filtro } : {}),
     };
+  }
   const pinClave = /^(fijar|soltar)\s+(\d{8}-\d{6}(?:-\d{1,2})?(?:-h[0-9a-f]{6})?)$/i.exec(a);
   if (pinClave?.[1] && pinClave[2])
     return {
@@ -286,8 +326,10 @@ export function bibliotecaElegir(
   if ((orden.kind === 'fijar' || orden.kind === 'soltar') && orden.clave)
     return porClave(lista, orden.clave);
   const ordered = ordenBiblioteca(lista, fijados);
-  if (orden.kind === 'fijar' || orden.kind === 'soltar')
-    return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (ordered[orden.n - 1] ?? null) : null;
+  if (orden.kind === 'fijar' || orden.kind === 'soltar') {
+    const de = orden.filtro ? ordered.filter((c) => tipoDe(c.nombre) === orden.filtro) : ordered;
+    return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (de[orden.n - 1] ?? null) : null;
+  }
   if (orden.kind !== 'enviar') return null;
   const all = orden.filtro ? ordered.filter((c) => tipoDe(c.nombre) === orden.filtro) : ordered;
   return orden.n >= 1 && orden.n <= BIBLIOTECA_MAX ? (all[orden.n - 1] ?? null) : null;
