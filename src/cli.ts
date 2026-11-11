@@ -542,7 +542,7 @@ import {
 } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
 import { detectCapture } from './bandeja/captura.js';
-import { bandejaCommand, captureAndAck, captureOn } from './bandeja/comando.js';
+import { bandejaCommand, bandejaSlowSub, captureAndAck, captureOn } from './bandeja/comando.js';
 import {
   autoKindle,
   deliverToKindle,
@@ -6616,6 +6616,21 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, 'La bandeja es solo para el dueño, en su chat privado.', { quote: true });
       return;
     }
+    // «⚡ Míralo ya» y «📖 Al Kindle» pueden tardar minutos (transcribir, Calibre): aparte,
+    // para que Telegram siga atendiendo lo demás (las actualizaciones van de una en una).
+    if (bandejaSlowSub(args)) {
+      void runBandejaCmd(inbound, args).catch(async (err: unknown) => {
+        log.warn('bandeja: orden lenta falló', { err: String(err) });
+        const why = err instanceof Error ? err.message : String(err);
+        await say(inbound, `⚠️ No pude terminarlo: ${sliceSafe(why, 160)}.`, {
+          quote: true,
+        }).catch(() => undefined);
+      });
+      return;
+    }
+    await runBandejaCmd(inbound, args);
+  };
+  const runBandejaCmd = async (inbound: Inbound, args: string): Promise<void> => {
     // «/bandeja» como pie de una foto o un PDF: guarda ese archivo.
     const attached = detectCapture({ ...inbound, text: '' }, { auto: true })?.[0] ?? null;
     const reply = await bandejaCommand(args, {
