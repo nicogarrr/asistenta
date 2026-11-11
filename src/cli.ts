@@ -7436,6 +7436,47 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     });
     await say(inbound, r.text, { quote: true, buttons: r.buttons });
   };
+  /** /biblioteca: lo que te he hecho (src/biblioteca.ts), con «📤 N» para que te lo mande. */
+  const cmdBiblioteca = async (inbound: Inbound, args: string): Promise<void> => {
+    if (!isOwnerDm(inbound, vigilanteOwnerId)) {
+      await say(inbound, 'Este comando solo funciona en el chat privado del dueño.', {
+        quote: true,
+      });
+      return;
+    }
+    const bib = await import('./biblioteca.js');
+    const { commandButton } = await import('./channels/telegram-shared.js');
+    const orden = bib.bibliotecaOrden(args);
+    const lista = creados.lista();
+    if (orden.kind === 'ayuda') {
+      await say(inbound, bib.BIBLIOTECA_AYUDA, { quote: true });
+      return;
+    }
+    if (orden.kind === 'lista') {
+      const v = bib.bibliotecaVista(lista, orden.filtro);
+      const buttons = v.sends
+        .map((s) => commandButton(s.label, 'biblioteca', s.clave, 'enviar'))
+        .filter((b): b is { label: string; action: string } => b !== undefined);
+      await say(inbound, v.text, { quote: true, ...(buttons.length ? { buttons } : {}) });
+      return;
+    }
+    const elegido = bib.bibliotecaElegir(lista, orden);
+    const file = elegido ? creados.leer(elegido.id) : null;
+    if (!elegido || !file) {
+      await say(
+        inbound,
+        'Ese archivo ya no lo tengo (guardo los 40 últimos). /biblioteca para ver los que quedan.',
+        { quote: true },
+      );
+      return;
+    }
+    await telegram.sendDocumentBytes(
+      Number(inbound.chatId),
+      file.bytes,
+      file.nombre,
+      `📚 ${file.nombre}`,
+    );
+  };
   /** /spotify: estado, conectar (permiso en el navegador del PC), desconectar, pausa… */
   const cmdSpotify = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
@@ -10619,6 +10660,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     },
     { names: ['spotify'], run: (inbound, args) => cmdSpotify(inbound, args) },
     { names: ['google'], run: (inbound, args) => cmdGoogle(inbound, args) },
+    { names: ['biblioteca'], run: (inbound, args) => cmdBiblioteca(inbound, args) },
     { names: ['borrar_chat'], run: (inbound) => cmdBorrarChat(inbound) },
     {
       names: ['recordatorios', 'reminders'],

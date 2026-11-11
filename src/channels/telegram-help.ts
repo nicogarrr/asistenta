@@ -204,6 +204,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'pie de un PDF o foto: texto seleccionable',
       },
       { command: 'expertos', description: 'apuntes por tema' },
+      {
+        command: 'biblioteca',
+        args: '[pdf|excel|word|graficas] [N]',
+        description: 'lo que te he hecho (gráficas, Excel, PDF…): te lo vuelvo a mandar',
+      },
     ],
   },
   {
