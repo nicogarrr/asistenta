@@ -210,6 +210,7 @@ import { durableMessageThread, openReplyThreadStore } from './daemon/reply-threa
 import { chatIdOfScope, createRoutineFire, deliverMissedThenStart } from './daemon/routine-fire.js';
 import { RoutineResendQueue } from './daemon/routine-resend-queue.js';
 import { createRoutineTask } from './daemon/routine-task.js';
+import { RoutineStops } from './daemon/rutina-parar.js';
 import { createSpecialistAsk, denySpecialistAsksForChat } from './daemon/specialist-ask.js';
 import { ThreadOutputs, threadContext } from './daemon/thread-context.js';
 import { evictIdleThreads as evictThreads } from './daemon/thread-evict.js';
@@ -4006,7 +4007,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     execute: goalTickExecute,
   });
 
-  const runRoutineTask = createRoutineTask(threadTickDeps);
+  // «/cron parar <rutina>»: corta solo esa ejecución (antes solo /stop, que para todo el chat).
+  const routineStops = new RoutineStops();
+  const runRoutineTask = createRoutineTask(threadTickDeps, {
+    stops: routineStops,
+    abortThread: (t) => {
+      t.agent.abort('external');
+      backgroundDelegates.abortThread(t.key);
+    },
+  });
 
   const routineDelivery = new RoutineDeliveryStore(join(paths.state, 'routine-delivery.json'));
   const traficoVistos = new TraficoVistosStore(join(paths.state, 'trafico-avisos.json'));
@@ -5540,6 +5549,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           goals: goalStore,
           ask: (opts) => preguntas.ask(chatKey(inbound), 'cron', opts),
           history: routineHistoryAt(paths.state, routineBornAt),
+          stops: routineStops,
         },
         args,
       ),
