@@ -535,7 +535,7 @@ function delegateTool(
 import { confirmacionCalendario, preguntaFechaPasada } from './agenda/calendario-pasado.js';
 import { respuestaCalendarioPasado } from './agenda/calendario-respuesta.js';
 import { parseFechaCalendarioDicha, parseTramoCalendario } from './agenda/fecha-natural.js';
-import { appendEvent } from './agenda/write.js';
+import { appendEvent, localUidHash } from './agenda/write.js';
 import { type AlertInbox, startAlertInbox } from './alerts/inbox.js';
 import { approvals } from './approvals/broker.js';
 import {
@@ -3224,6 +3224,26 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       createGoogleTool({
         google: () => ({ vault: { get: vaultGet, set: vaultSet, delete: vaultDelete } }),
         allowed: () => isOwnerDm(inboundFor(thread), vigilanteOwnerId),
+        // Si Google no lo apunta (sin conectar, permiso caducado…), el evento le llega en un
+        // «📲 .ics» para añadirlo en el iPhone. Solo un fichero a su chat; nada se apunta.
+        enviarIcs: (bytes, filename, caption) =>
+          ctx
+            .sendFile({ bytes, name: filename }, () =>
+              telegram
+                .sendDocumentBytes(
+                  chatNumberOf(thread.chatKey),
+                  bytes,
+                  filename,
+                  caption,
+                  inboundFor(thread).threadId,
+                )
+                .then(() => true),
+            )
+            .then(() => true)
+            .catch((err: unknown) => {
+              log.warn('google: .ics no enviado', { err: String(err) });
+              return false;
+            }),
       }),
       // Spotify por API (PA_SPOTIFY_CLIENT_ID): «pon X», pausa, siguiente… solo el dueño.
       createSpotifyTool({
@@ -8732,6 +8752,43 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       });
       return;
     }
+    // «📲 .ics (iPhone)» de un evento recién apuntado: ESE evento en un fichero, sin Google.
+    const icsArg = /^ics\s+(\S+)$/i.exec(args.trim());
+    if (icsArg) {
+      const { eventoLocalIcs } = await import('./agenda/ics-iphone.js');
+      let cal = '';
+      try {
+        cal = await readFile(join(paths.state, 'calendar', 'local.ics'), 'utf8');
+      } catch {
+        cal = '';
+      }
+      const ev = eventoLocalIcs(cal, icsArg[1] ?? '');
+      if (!ev) {
+        await say(inbound, 'Ese evento ya no está en tu calendario.', { quote: true });
+        return;
+      }
+      const sent =
+        inbound.channel === 'telegram'
+          ? await telegram
+              .sendDocumentBytes(
+                Number(inbound.chatId),
+                Buffer.from(ev.ics, 'utf8'),
+                ev.nombre,
+                `📲 «${ev.titulo}»: ábrelo en el iPhone y toca «Añadir».`,
+                inbound.threadId,
+              )
+              .then(() => true)
+              .catch((err: unknown) => {
+                log.warn('calendario: .ics no enviado', { err: String(err) });
+                return false;
+              })
+          : false;
+      if (!sent)
+        await say(inbound, 'No he podido mandarte el .ics. Prueba otra vez en un rato.', {
+          quote: true,
+        });
+      return;
+    }
     // «confirmado …»: la respuesta «sí» a apuntar una fecha que ya pasó.
     const confirmed = /^confirmado\s/i.test(args.trim());
     const m = /^(?:add|anadir|añadir|confirmado)\s+(.+?)\s*\|\s*(.+)$/i.exec(args.trim());
@@ -8775,8 +8832,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const file = join(paths.state, 'calendar', 'local.ics');
     const end = tramo?.end;
     await appendEvent(file, end ? { title, start, end } : { title, start });
+    // Este calendario vive en el PC: «📲 .ics (iPhone)» se lo lleva al móvil sin Google.
+    const icsBtn = commandButton(
+      '📲 .ics (iPhone)',
+      'calendario',
+      localUidHash(title, start),
+      'ics',
+    );
     await say(inbound, confirmacionCalendario(title, start, new Date(), undefined, end), {
       quote: true,
+      ...(icsBtn ? { buttons: [icsBtn] } : {}),
     });
   };
   const cmdSkillsImport = async (inbound: Inbound, args: string): Promise<void> => {

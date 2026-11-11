@@ -58,17 +58,24 @@ function escapeText(value: string): string {
     .replace(/,/g, '\\,');
 }
 
+/**
+ * La parte del UID que pone `appendEvent` a un evento sin uid propio (20 hex de título+inicio):
+ * con ella el botón «📲 .ics (iPhone)» de /calendario encuentra ESE evento en el local.ics.
+ */
+export function localUidHash(title: string, start: Date): string {
+  return createHash('sha1')
+    .update(`${title.replace(/\r\n|\r/g, '\n').trim()}\u0000${start.toISOString()}`)
+    .digest('hex')
+    .slice(0, 20);
+}
+
 function uidFor(event: IcsEvent, title: string): string {
   const explicit = (event.uid ?? '')
     .replace(/[\r\n]+/g, ' ')
     .trim()
     .slice(0, 200);
   if (explicit) return escapeText(explicit);
-  const hash = createHash('sha1')
-    .update(`${title}\u0000${event.start.toISOString()}`)
-    .digest('hex')
-    .slice(0, 20);
-  return `${hash}@asistenta.local`;
+  return `${localUidHash(title, event.start)}@asistenta.local`;
 }
 
 /**
