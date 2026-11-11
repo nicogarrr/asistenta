@@ -93,6 +93,8 @@ export function toMessage(
     flags?: Set<string>;
   },
   folder: string,
+  /** Invitaciones bajadas aparte porque la fuente vino cortada (mail/invitacion-grande.ts). */
+  calendariosAparte: readonly string[] = [],
 ): MailMessage {
   const envelope = raw.envelope ?? {};
   // Cuerpo decodificado (MIME, quoted-printable, base64, charset), prefiriendo
@@ -106,7 +108,10 @@ export function toMessage(
   // sitio o que es una cancelación, leídos sin modelo, delante (no los corta el tope de 8000).
   let invitaciones: string[] = [];
   try {
-    invitaciones = invitacionLineas(calendarPartsOf(raw.source ?? ''), localTimeZone());
+    invitaciones = invitacionLineas(
+      [...calendarPartsOf(raw.source ?? ''), ...calendariosAparte],
+      localTimeZone(),
+    );
   } catch {
     invitaciones = [];
   }

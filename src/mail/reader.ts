@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto';
 import type { FetchMessageObject, ImapFlow } from 'imapflow';
 import { toMessage } from './client.js';
 import type { ReadMailAccount } from './idle.js';
+import {
+  bajarCalendarios,
+  type CalendarStructNode,
+  calendarioCortado,
+  SOURCE_MAX_BYTES,
+} from './invitacion-grande.js';
 import type { MailMessage } from './types.js';
 
 export interface ReplyMessage extends MailMessage {
@@ -41,7 +47,7 @@ export function parseHeaderMetadata(headers: Buffer | undefined) {
 const QUERY = {
   uid: true,
   envelope: true,
-  source: { maxLength: 32768 },
+  source: { maxLength: SOURCE_MAX_BYTES },
   flags: true,
   threadId: true,
   bodyStructure: true,
@@ -69,10 +75,10 @@ async function withReader<T>(
     client.close();
   }
 }
-function message(raw: FetchMessageObject): ReplyMessage {
+function message(raw: FetchMessageObject, calendariosAparte: string[] = []): ReplyMessage {
   const meta = parseHeaderMetadata(raw.headers);
   return {
-    ...toMessage(raw as never, 'INBOX'),
+    ...toMessage(raw as never, 'INBOX', calendariosAparte),
     ...meta,
     replyTo: (raw.envelope?.replyTo ?? []).map((a) => a.address ?? '').filter(Boolean),
     attachments: attachmentsOf(raw.bodyStructure as StructNode | undefined),
@@ -118,7 +124,12 @@ export async function readReplyThread(
     );
     if (!raw) return null;
     if (!raw.threadId) throw new Error('Servidor sin identidad de hilo Gmail');
-    const result = message(raw);
+    // Invitación detrás de un HTML grande (la fuente se pide cortada): solo esa parte.
+    const cortados = calendarioCortado(raw.source, raw.bodyStructure as CalendarStructNode);
+    const result = message(
+      raw,
+      cortados.length ? await bajarCalendarios(client, raw.uid, cortados) : [],
+    );
     if (!result.messageId) throw new Error('Sin Message-ID RFC válido');
     // Gmail's special-use All Mail includes user's sent replies as well as inbox messages.
     const folders = await client.list();
