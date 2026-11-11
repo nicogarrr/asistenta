@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { lazySchema, Type } from '../core/lazy-schema.js';
+import { localTimeZone } from '../datecontext.js';
 import { type GoogleDeps, GoogleNotConnectedError, startLoopbackFlow } from '../google/oauth.js';
 import {
   borrarEvento,
@@ -11,6 +13,7 @@ import {
   moverEvento,
   type WorkspaceDeps,
 } from '../google/workspace.js';
+import { icsDeEvento, icsNombre } from '../ics.js';
 
 /**
  * Herramienta `google`: apunta, mueve y borra eventos de su Google Calendar (cada cambio
@@ -52,9 +55,36 @@ const Params = lazySchema(() =>
   }),
 );
 
+/**
+ * El .ics del evento que Google no apuntó (icsDeEvento, en su zona horaria), a su chat.
+ * Devuelve la frase que se añade al resultado para el modelo, o '' si no salió.
+ */
+async function icsSinGoogle(
+  a: { titulo?: string; inicio?: string; fin?: string; lugar?: string; descripcion?: string },
+  g: WorkspaceDeps,
+  enviar: (bytes: Buffer, filename: string, caption: string) => Promise<boolean>,
+): Promise<string> {
+  const tz = (g.timeZone ?? localTimeZone)();
+  const ics = icsDeEvento(a, tz, { uid: `${randomUUID()}@asistenta.local` });
+  if (!ics) return '';
+  const ok = await enviar(
+    Buffer.from(ics, 'utf8'),
+    icsNombre(a.titulo),
+    `📲 «${a.titulo?.trim()}»: no he podido apuntarlo en Google; ábrelo en el iPhone y toca «Añadir».`,
+  ).catch(() => false);
+  return ok
+    ? ' Le he mandado el evento en un .ics («📲») para que lo añada en el iPhone sin Google; díselo.'
+    : '';
+}
+
 export function createGoogleTool(deps: {
   google: () => WorkspaceDeps;
   allowed: () => boolean;
+  /**
+   * Manda un fichero a su chat. Si `evento_crear` no se pudo apuntar en Google (sin conectar,
+   * permiso caducado, Google caído), el mismo evento le llega como «📲 .ics» para el iPhone.
+   */
+  enviarIcs?: (bytes: Buffer, filename: string, caption: string) => Promise<boolean>;
 }): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'google',
@@ -70,6 +100,8 @@ export function createGoogleTool(deps: {
         switch (a.action) {
           case 'evento_crear':
             text = await crearEvento(g, a);
+            if (!text.startsWith('📅 Apuntado') && deps.enviarIcs && a.titulo?.trim() && a.inicio)
+              text += await icsSinGoogle(a, g, deps.enviarIcs);
             break;
           case 'evento_mover':
             text = await moverEvento(g, a);
