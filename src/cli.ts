@@ -8,6 +8,7 @@ import {
   STOP_USAGE,
   WATCHDOG_USAGE,
 } from './cli-uso.js';
+import { alCaerConexion } from './conexion-caida.js';
 import { doneCheckLine } from './core/hecho.js';
 import { resolveModelCaps } from './core/models.js';
 import { RouteStore, routeAfterTurn, routesOn } from './core/rutas.js';
@@ -9950,6 +9951,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     }
     await say(to, text, { quote: false });
   };
+  // Google/Spotify retiran el permiso (invalid_grant): un aviso al chat en vez de fallar en
+  // silencio dentro de una rutina (src/conexion-caida.ts).
+  alCaerConexion((_servicio, texto) => {
+    void notifyLastChat(texto).catch(() => {});
+  });
   /** «sí» tras un aviso del micrófono: vuelve a encender la escucha. */
   const WAKE_ON_ASK = { command: 'wake', args: 'on' };
 
