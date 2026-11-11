@@ -20,7 +20,8 @@ import { invitacionLineas } from '../ics.js';
 import { log } from '../log.js';
 import { foldAccents } from '../text.js';
 import { vaultGet } from '../vault.js';
-import { calendarPartsOf, extractBodyText } from './mime.js';
+import { calendariosEnteros } from './invitacion-grande.js';
+import { extractBodyText } from './mime.js';
 import {
   GMAIL_IMAP_HOST,
   GMAIL_IMAP_PORT,
@@ -109,7 +110,7 @@ export function toMessage(
   let invitaciones: string[] = [];
   try {
     invitaciones = invitacionLineas(
-      [...calendarPartsOf(raw.source ?? ''), ...calendariosAparte],
+      [...calendariosEnteros(raw.source ?? ''), ...calendariosAparte],
       localTimeZone(),
     );
   } catch {

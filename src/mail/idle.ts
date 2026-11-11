@@ -7,9 +7,9 @@ import {
   type CalendarDownloader,
   type CalendarStructNode,
   calendarioCortado,
+  calendariosEnteros,
   SOURCE_MAX_BYTES,
 } from './invitacion-grande.js';
-import { calendarPartsOf } from './mime.js';
 import type { MailMessage } from './types.js';
 
 /** Separate credential capability: never load mail:password or SMTP configuration. */
@@ -275,7 +275,7 @@ export class MailIdleTransport {
                       : [];
                   const message = toMessage(raw, 'INBOX', aparte);
                   // El .ics en crudo, para la tarjeta «📅 ¿La apunto?» (no sale del daemon).
-                  const calendarios = [...calendarPartsOf(raw.source ?? ''), ...aparte];
+                  const calendarios = [...calendariosEnteros(raw.source ?? ''), ...aparte];
                   if (calendarios.length) message.calendarios = calendarios;
                   // Stable Gmail message ID survives UIDVALIDITY resets; fallback includes epoch.
                   message.id = raw.emailId

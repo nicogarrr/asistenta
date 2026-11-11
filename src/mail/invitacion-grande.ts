@@ -41,6 +41,15 @@ export function calendarPartIds(root: CalendarStructNode | undefined): string[] 
   return out;
 }
 
+/**
+ * Los calendarios de la fuente que llegan ENTEROS (con su END:VEVENT). Si el corte de 32 KB cae
+ * dentro del .ics, el trozo trae un BEGIN:VEVENT a medias: antes contaba como «ya lo tengo», no
+ * se bajaba la parte y la invitación salía sin título u hora, o no salía (bugs-38).
+ */
+export function calendariosEnteros(source: Buffer | string): string[] {
+  return calendarPartsOf(source).filter((t) => /END:VEVENT/i.test(t));
+}
+
 /** ¿Hay que bajar aparte el calendario? Solo si la fuente vino cortada y no trae ninguno. */
 export function calendarioCortado(
   source: Buffer | string | undefined,
@@ -51,7 +60,7 @@ export function calendarioCortado(
   const ids = calendarPartIds(root);
   if (!ids.length) return [];
   try {
-    if (calendarPartsOf(source ?? '').length) return [];
+    if (calendariosEnteros(source ?? '').length) return [];
   } catch {
     // Una fuente cortada que no se deja leer: se baja la parte.
   }
