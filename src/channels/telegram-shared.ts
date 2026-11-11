@@ -43,6 +43,9 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // Botones de un recordatorio que acaba de avisar: no borran nada (+1h crea otro).
   ['recordatorios', new Set(['hecho', 'pospone', 'manana'])],
   ['cron', new Set(['pausa', 'reanudar'])],
+  // «📲 .ics (iPhone)» de /calendario add: ESE evento del calendario local en un fichero
+  // (arg = los 20 hex de su UID). Solo lee; no apunta ni borra nada.
+  ['calendario', new Set(['ics'])],
   // Ficha de un candidato de la auto-mejora: «📄 Ver parche» solo lee; «✅ Aplicar» es la
   // aprobación del dueño (un commit local que se deshace con git revert); «🗑 Descartar»
   // no toca la copia. El daemon exige dueño en privado para aplicar y descartar.
