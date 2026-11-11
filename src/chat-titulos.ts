@@ -100,4 +100,11 @@ export class ChatTitulos {
   nombre(chatKey: string): string | undefined {
     return this.#leer()[chatSinHilo(chatKey)]?.titulo;
   }
+
+  /** Los grupos que conozco, del último en hablar al primero (para «/estado»). */
+  lista(): Array<{ chatKey: string; titulo: string; visto: number }> {
+    return Object.entries(this.#leer())
+      .map(([chatKey, e]) => ({ chatKey, titulo: e.titulo, visto: e.visto }))
+      .sort((a, b) => b.visto - a.visto);
+  }
 }
