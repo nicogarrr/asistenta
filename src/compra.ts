@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { recetaItems, recetaNote, recetaUrl } from './compra-receta.js';
 import { lazySchema, Type } from './core/lazy-schema.js';
 import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
@@ -384,10 +385,11 @@ const Params = lazySchema(() =>
         Type.Literal('limpiar_tachados'),
         Type.Literal('vaciar'),
         Type.Literal('texto'),
+        Type.Literal('receta'),
       ],
       {
         description:
-          'añadir | ver | tachar | destachar | quitar | limpiar_tachados | vaciar | texto (lo que falta en texto llano, para copiar o reenviar)',
+          'añadir | ver | tachar | destachar | quitar | limpiar_tachados | vaciar | texto (lo que falta en texto llano, para copiar o reenviar) | receta (apunta los ingredientes de la receta en `receta`)',
       },
     ),
     cosas: Type.Optional(
@@ -396,16 +398,67 @@ const Params = lazySchema(() =>
         description: 'Lo que añadir, tachar o quitar, separado por comas («leche, pan, 6 huevos»).',
       }),
     ),
+    receta: Type.Optional(
+      Type.String({
+        maxLength: 8000,
+        description:
+          'Para accion=receta: el enlace de la receta, o su texto (lo pegado o leído de una foto) con la lista de ingredientes.',
+      }),
+    ),
   }),
 );
 
+/**
+ * «/compra receta <enlace o texto>»: apunta los ingredientes de una receta. Con enlace,
+ * descarga la página (`fetchHtml`, con el mismo filtro SSRF que la herramienta fetch).
+ */
+export async function recetaACompra(
+  store: CompraStore,
+  input: string,
+  fetchHtml?: (url: string) => Promise<string>,
+): Promise<CompraView> {
+  const arg = input.trim();
+  if (!arg)
+    return {
+      text: 'Mándame el enlace de la receta o pega sus ingredientes: /compra receta https://… (o el texto).',
+      buttons: [],
+    };
+  const url = recetaUrl(arg);
+  let r: ReturnType<typeof recetaItems>;
+  if (url && fetchHtml) {
+    let html: string;
+    try {
+      html = await fetchHtml(url);
+    } catch {
+      return {
+        text: 'No pude abrir esa receta. Pega aquí sus ingredientes con /compra receta y los apunto.',
+        buttons: [],
+      };
+    }
+    r = recetaItems({ html });
+  } else {
+    r = recetaItems({ text: arg });
+    // Pegado sin título «Ingredientes»: una línea con comas también vale.
+    if (!r.items.length && !r.skipped.length && !url)
+      r = { ...r, items: itemsFromText(arg), source: 'texto' };
+  }
+  if (!r.items.length) {
+    return { text: recetaNote(r, [], []), buttons: [] };
+  }
+  const added = store.add(r.items);
+  return compraView(store.list(), recetaNote(r, added.added, added.already));
+}
+
 /** Herramienta del modelo: «añade leche», «ya he comprado el pan», «¿qué me falta?». */
-export function createCompraTool(store: CompraStore): AgentTool<ReturnType<typeof Params>> {
+export function createCompraTool(
+  store: CompraStore,
+  fetchHtml?: (url: string) => Promise<string>,
+): AgentTool<ReturnType<typeof Params>> {
   return {
     name: 'compra',
     label: 'Lista de la compra',
     description:
-      "The owner's shopping list (lista de la compra). Use for «añade leche», «apunta huevos para la compra», «ya he comprado el pan» (tachar), «quita las galletas», «¿qué me falta por comprar?». Items comma-separated in `cosas`. The owner can also open /compra to tick items off with buttons. Not for to-dos (use tasks) or price watching.",
+      "The owner's shopping list (lista de la compra). Use for «añade leche», «apunta huevos para la compra», «ya he comprado el pan» (tachar), «quita las galletas», «¿qué me falta por comprar?». Items comma-separated in `cosas`. The owner can also open /compra to tick items off with buttons. For «apúntame lo de esta receta» (a recipe link, pasted recipe or a photo of one) use accion=receta with the link or the recipe text in `receta`: it adds the ingredients itself (skips salt/pepper/water). Not for to-dos (use tasks) or price watching.",
     parameters: Params(),
     executionMode: 'sequential',
     execute: async (_id, args) => {
@@ -452,6 +505,11 @@ export function createCompraTool(store: CompraStore): AgentTool<ReturnType<typeo
           break;
         case 'texto':
           return { content: [{ type: 'text', text: compraTexto(store.list()) }], details: {} };
+        case 'receta': {
+          const view = await recetaACompra(store, args.receta ?? args.cosas ?? '', fetchHtml);
+          const text = `${view.text.replace(/\nToca una para tacharla\.$/, '')}\n(Con /compra el dueño la ve con botones para tachar.)`;
+          return { content: [{ type: 'text', text }], details: {} };
+        }
         default:
           break;
       }
