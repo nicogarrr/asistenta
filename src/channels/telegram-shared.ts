@@ -82,6 +82,8 @@ const BUTTON_COMMANDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'compra',
       'calendario',
       'apuntar',
+      // «🔄 Releer la página»: vuelve a leer su receta o su evento (solo esas fichas).
+      'releer',
     ]),
   ],
   // 📚 /biblioteca: «📤 N» te vuelve a mandar un archivo que te hice (arg = la fecha de su

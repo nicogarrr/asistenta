@@ -6751,6 +6751,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           args,
         ),
       timeZone: () => localTimeZone(),
+      // «🔄 Releer la página» (lo guardado antes de 🛒/📅): la misma descarga de la bandeja.
+      fetchPagina: (url) => bandejaFetchRaw(url),
     });
     const itemId = reply.itemId;
     await say(inbound, reply.text, {

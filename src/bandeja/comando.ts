@@ -12,6 +12,7 @@
  *   /bandeja captura on|off  guardar solo lo que llega a secas (on) o solo con /bandeja (off)
  *   /bandeja compra N        «🛒 A la compra»: los ingredientes de esa receta a /compra
  *   /bandeja calendario N    «📅 Al calendario»: el evento de esa página a tu Google Calendar
+ *   /bandeja releer N        vuelve a abrir la página y lee su receta o su evento (lo guardado antes)
  *   /bandeja kindle N [pdf]  «📖 Al Kindle»: el texto entero en EPUB (+AZW3 con Calibre, +PDF)
  *   /bandeja kindle <enlace> lo mismo con un enlace (también «/kindle <enlace>»)
  *   /bandeja kindle auto on|off      lo 🔴 para leer entero va solo al Kindle
@@ -37,6 +38,7 @@ import {
 } from './formato.js';
 import { type KindleTarget, kindleStatusText } from './kindle.js';
 import type { BandejaQueue } from './procesar.js';
+import { releerCosa } from './releer.js';
 import {
   composeDigest,
   composeWeekly,
@@ -62,6 +64,8 @@ export function bandejaSlowSub(args: string): boolean {
   if (sub === 'ahora' || sub === 'ya') return true;
   // «🛒 A la compra» abre la página de la receta (hasta 30 s).
   if (sub === 'compra' || sub === 'apuntar') return true;
+  // «🔄 Releer» abre la página otra vez (hasta 30 s).
+  if (sub === 'releer' || sub === 'reprocesar') return true;
   if (sub !== 'kindle') return false;
   const opt = next.toLowerCase();
   return opt !== '' && !['auto', 'correo', 'email', 'mail'].includes(opt);
@@ -101,6 +105,8 @@ export interface BandejaCommandDeps {
   calendario?: (args: EventoArgs) => Promise<string>;
   /** Su zona horaria (PA_TIMEZONE); por defecto, Europe/Madrid. */
   timeZone?: () => string;
+  /** «🔄 Releer»: el HTML de una página (la misma descarga que usa la bandeja). */
+  fetchPagina?: (url: string) => Promise<string>;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -210,10 +216,16 @@ async function calendarioSub(
   const item = ownItem(deps, raw);
   if (typeof item === 'string') return { text: item };
   const ev = item.extra.evento;
-  if (!ev)
+  if (!ev) {
+    // Guardado antes del 11-nov (o la página cambió): «🔄 Releer» la vuelve a mirar.
+    const releer = item.url
+      ? commandButton('🔄 Releer la página', 'bandeja', String(item.id), 'releer')
+      : undefined;
     return {
-      text: `#${item.id} no trae la fecha de un evento. Dime «apunta en el calendario …» con el día y la hora y lo hago.`,
+      text: `#${item.id} no trae la fecha de un evento.${releer ? ' Si lo guardaste hace tiempo, toca «🔄 Releer la página» y la vuelvo a mirar.' : ''} O dime «apunta en el calendario …» con el día y la hora y lo hago.`,
+      ...(releer ? { buttons: [releer] } : {}),
     };
+  }
   const tz = deps.timeZone?.() ?? 'Europe/Madrid';
   const args = eventoArgs(ev, tz, item.url);
   const cuando = cuandoTexto(args);
@@ -265,6 +277,7 @@ const HELP = [
   '/bandeja — lo de hoy · /bandeja ver N — ficha · /bandeja resumen — el resumen ya',
   '/bandeja semana · /bandeja pendientes · /bandeja hora 22:00 · /bandeja captura off',
   '📖 /kindle N o /kindle <enlace> — el texto entero para el Kindle · /bandeja kindle — ajustes',
+  '🔄 /bandeja releer N — vuelve a mirar la página (receta 🛒 o evento 📅 de algo guardado antes)',
 ].join('\n');
 
 export async function bandejaCommand(
@@ -445,6 +458,25 @@ export async function bandejaCommand(
         .catch(() => undefined);
       const view = await deps.compra(item);
       return { text: view.text, ...(view.buttons?.length ? { buttons: view.buttons } : {}) };
+    }
+    case 'releer':
+    case 'reprocesar': {
+      const item = ownItem(deps, restParts[0]);
+      if (typeof item === 'string') return { text: item };
+      if (!deps.fetchPagina) return { text: 'Releer páginas no está disponible desde aquí.' };
+      const r = await releerCosa(deps.store, item, deps.fetchPagina);
+      if (typeof r === 'string') return { text: r };
+      const head = r.nuevo.length
+        ? `🔄 Releída: ${r.nuevo.join(' · ')}.`
+        : '🔄 Releída: no trae receta ni evento nuevos.';
+      return {
+        text: `${head}
+
+${cardText(r.item, now)}`,
+        buttons: cardButtons(r.item),
+        perRow: 3,
+        itemId: r.item.id,
+      };
     }
     case 'calendario':
     case 'apuntar':
