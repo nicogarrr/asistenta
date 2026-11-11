@@ -6796,6 +6796,17 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await bandejaDeps
         .sendPdf?.(inbound.chatId, reply.pdf.url, reply.pdf.name)
         .catch((err: unknown) => log.warn('bandeja: PDF no adjuntado', { err: String(err) }));
+    // «📲 .ics»: el fichero del evento, detrás.
+    if (reply.file)
+      await telegram
+        .sendDocumentBytes(
+          Number(inbound.chatId),
+          reply.file.bytes,
+          reply.file.name,
+          reply.file.caption,
+          inbound.threadId,
+        )
+        .catch((err: unknown) => log.warn('bandeja: .ics no enviado', { err: String(err) }));
   };
   /** Lo que llega a secas (enlace, PDF, captura, «libro: …»): a la bandeja, sin modelo. */
   /** La última respuesta del asistente en este chat (si la conversación acabó en ella). */
