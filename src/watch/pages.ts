@@ -64,6 +64,11 @@ export interface PageWatch {
   lastAlertCents: number | null;
   /** «🔕 Silenciar»: hasta este instante no se manda ningún aviso de esta página (0 = no). */
   mutedUntil: number;
+  /**
+   * «avísame si se agota» (opt-in): aviso cuando la ficha pasa de en stock a agotado. El
+   * contrario de «vuelve a haber stock» (#2285). Apagado salvo que se pida (ausente = no).
+   */
+  notifySoldOut?: boolean;
 }
 
 export type CheckOutcome =
@@ -101,6 +106,12 @@ export type CheckOutcome =
       cents: number;
       /** Precio de la última lectura en que constaba agotado. */
       prevCents: number;
+    }
+  | {
+      /** «avísame si se agota»: la ficha decía en stock y ahora dice agotado. */
+      kind: 'soldout';
+      /** Último precio con stock. */
+      cents: number;
     }
   | { kind: 'error'; message: string; failures: number; notify: boolean };
 
@@ -355,6 +366,7 @@ function row(r: Record<string, unknown>): PageWatch {
     lastAlertAt: Number(r.last_alert_at ?? 0),
     lastAlertCents: r.last_alert_cents == null ? null : Number(r.last_alert_cents),
     mutedUntil: Number(r.muted_until ?? 0),
+    notifySoldOut: Number(r.notify_soldout ?? 0) === 1,
   };
 }
 
@@ -407,6 +419,9 @@ export class PageWatchStore {
     if (!cols.some((c) => c.name === 'muted_until')) {
       db.exec('ALTER TABLE page_watches ADD COLUMN muted_until INTEGER NOT NULL DEFAULT 0');
     }
+    if (!cols.some((c) => c.name === 'notify_soldout')) {
+      db.exec('ALTER TABLE page_watches ADD COLUMN notify_soldout INTEGER NOT NULL DEFAULT 0');
+    }
     // Histórico propio por vigilancia: solo lecturas fiables (consenso del extractor).
     db.exec(`CREATE TABLE IF NOT EXISTS watch_readings (
       watch_id TEXT NOT NULL, ts INTEGER NOT NULL, cents INTEGER NOT NULL, in_stock INTEGER)`);
@@ -418,11 +433,16 @@ export class PageWatchStore {
     url: string,
     label = '',
     keyword = '',
-    opts: { targetCents?: number | null; dropPct?: number | null } = {},
+    opts: { targetCents?: number | null; dropPct?: number | null; notifySoldOut?: boolean } = {},
   ): PageWatch {
     const kw = sliceSafe(keyword.trim(), 60);
     const existing = this.list(scope).find((w) => w.url === url && w.keyword === kw);
     if (existing) {
+      // «/vigila <url> avísame si se agota» sobre una que ya existe: se enciende sin duplicar.
+      if (opts.notifySoldOut !== undefined)
+        this.setNotifySoldOut(scope, existing.id, opts.notifySoldOut);
+      if (opts.targetCents === undefined && opts.dropPct === undefined)
+        return this.get(existing.id) as PageWatch;
       // Misma página + misma palabra = la misma vigilancia. Si el usuario pasa un
       // objetivo nuevo ("/vigila <url> objetivo=400€"), se reconfigura sin duplicar.
       if (opts.targetCents !== undefined || opts.dropPct !== undefined) {
@@ -441,7 +461,7 @@ export class PageWatchStore {
     const id = randomUUID().slice(0, 8);
     this.db
       .prepare(
-        'INSERT INTO page_watches (id, scope, url, label, created_at, keyword, target_cents, drop_pct) VALUES (?,?,?,?,?,?,?,?)',
+        'INSERT INTO page_watches (id, scope, url, label, created_at, keyword, target_cents, drop_pct, notify_soldout) VALUES (?,?,?,?,?,?,?,?,?)',
       )
       .run(
         id,
@@ -452,6 +472,7 @@ export class PageWatchStore {
         kw,
         opts.targetCents ?? null,
         opts.dropPct ?? null,
+        opts.notifySoldOut ? 1 : 0,
       );
     return this.get(id) as PageWatch;
   }
@@ -494,6 +515,16 @@ export class PageWatchStore {
     this.db
       .prepare('UPDATE page_watches SET muted_until = ? WHERE id = ?')
       .run(this.now() + ms, w.id);
+    return this.get(w.id);
+  }
+
+  /** «avísame si se agota» encendido/apagado (mismo chat). null si no es suya o no existe. */
+  setNotifySoldOut(scope: string, idOrPrefix: string, on: boolean): PageWatch | null {
+    const w = byIdOrPrefix(this.list(scope), idOrPrefix);
+    if (!w) return null;
+    this.db
+      .prepare('UPDATE page_watches SET notify_soldout = ? WHERE id = ?')
+      .run(on ? 1 : 0, w.id);
     return this.get(w.id);
   }
 
@@ -653,6 +684,10 @@ export class PageWatchStore {
       if (prev && prev.inStock === false && ext.inStock === true) {
         return { kind: 'restock', cents, prevCents: prev.cents };
       }
+      // «avísame si se agota» (opt-in): de en stock a agotado, aunque el precio no cambie.
+      if (w.notifySoldOut && prev && prev.inStock === true && ext.inStock === false) {
+        return { kind: 'soldout', cents: prev.cents };
+      }
       // Sin histórico estructurado previo: primera lectura, nueva referencia silenciosa.
       // (Si la vigilancia viene de la heurística de texto, comparar métodos distintos
       // daría un "cambio" falso.)
@@ -778,6 +813,9 @@ export function describeChange(w: PageWatch, o: CheckOutcome): string | null {
         : `a ${eur(o.cents)} (cuando se agotó estaba a ${eur(o.prevCents)})`;
     return `🟢 Vuelve a haber stock en ${name}, ${precio}. Si lo quieres, mejor no esperar.\n${w.url}`;
   }
+  if (o.kind === 'soldout') {
+    return `🔴 Se ha agotado ${name} (con stock estaba a ${eur(o.cents)}). Sigo mirando y te aviso en cuanto vuelva.\n${w.url}`;
+  }
   if (o.kind === 'error' && o.notify) {
     return `No consigo leer ${name} desde hace ${o.failures} comprobaciones (${readFailureCause(o.message)}). Sigo intentándolo, pero ahora mismo no te puedo avisar de cambios.`;
   }
@@ -875,6 +913,7 @@ export function describeWatch(
   }
   if (w.targetCents !== null) lines.push(`Objetivo: te aviso si baja de ${eur(w.targetCents)}.`);
   if (w.dropPct !== null) lines.push(`Te aviso si baja un ${w.dropPct} % o más.`);
+  if (w.notifySoldOut) lines.push('Te aviso si se agota (y cuando vuelva).');
   if (w.mutedUntil > now) {
     lines.push(
       `🔕 Silenciada hasta ${fmtDayTime().format(w.mutedUntil)}. Si quieres que vuelva a avisarte antes, dime «avísame otra vez».`,
@@ -952,6 +991,8 @@ export interface VigilaArgs {
   targetCents: number | null;
   /** baja=15% -> 15. null = no se pidió. */
   dropPct: number | null;
+  /** «avísame si se agota» / agotado=sí → true; agotado=no → false; null = no se dijo. */
+  notifySoldOut: boolean | null;
 }
 
 /**
@@ -990,6 +1031,22 @@ export function parseVigilaArgs(args: string): VigilaArgs | null {
   let keyword = '';
   let targetCents: number | null = null;
   let dropPct: number | null = null;
+  let notifySoldOut: boolean | null = null;
+  // «agotado=sí|no» o «avísame si se agota». Antes de «palabra=»: «palabra=agotado» es otra cosa.
+  const soldEq = /(?<![\p{L}=])agotad[oa]s?\s*=\s*(s[ií]|si|on|1|no|off|0)(?=\s|$)/iu.exec(rest);
+  if (soldEq?.[1]) {
+    notifySoldOut = !/^(?:no|off|0)$/i.test(soldEq[1]);
+    rest = rest.replace(soldEq[0], ' ');
+  } else {
+    const soldNat =
+      /(?:av[ií]same\s+)?(?:tambi[eé]n\s+)?(?:si|cuando)\s+se\s+agot(?:a|e|en|an)\b|aviso\s+(?:si|cuando)\s+se\s+agote\b/i.exec(
+        rest,
+      );
+    if (soldNat) {
+      notifySoldOut = true;
+      rest = rest.replace(soldNat[0], ' ');
+    }
+  }
   const kw = /palabra\s*=\s*(?:["“”«]([^"“”»]+)["“”»]|(\S+))/i.exec(rest);
   if (kw) {
     keyword = (kw[1] ?? kw[2] ?? '').trim();
@@ -1044,5 +1101,6 @@ export function parseVigilaArgs(args: string): VigilaArgs | null {
     label: rest.replace(/\s+/g, ' ').trim(),
     targetCents,
     dropPct,
+    notifySoldOut,
   };
 }
