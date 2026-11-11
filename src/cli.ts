@@ -4330,15 +4330,23 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const now = new Date();
     for (const m of conIcs) {
       for (const inv of store.nuevas(iv.invitacionesDe(m.calendarios ?? [], m, tz, now), tz, now)) {
-        const buttons = [
-          commandButton('✅ Sí, apúntala', 'invitacion', inv.clave, 'apuntar'),
-          commandButton('📲 .ics (iPhone)', 'invitacion', inv.clave, 'ics'),
-        ].filter((b): b is { label: string; action: string } => b !== undefined);
+        // Cambio de hora o cancelación de una que se apuntó (mismo UID): mover o quitar ESA.
+        const previa = store.previa(inv);
+        const buttons = (
+          inv.cancela
+            ? [commandButton('🗑️ Sí, quítala', 'invitacion', inv.clave, 'quitar')]
+            : [
+                previa
+                  ? commandButton('✅ Sí, cámbiala', 'invitacion', inv.clave, 'cambiar')
+                  : commandButton('✅ Sí, apúntala', 'invitacion', inv.clave, 'apuntar'),
+                commandButton('📲 .ics (iPhone)', 'invitacion', inv.clave, 'ics'),
+              ]
+        ).filter((b): b is { label: string; action: string } => b !== undefined);
         await telegram.send({
           channel: 'telegram',
           account: telegram.account,
           chatId: owner,
-          text: iv.textoInvitacion(inv),
+          text: iv.textoInvitacion(inv, previa),
           ...(buttons.length ? { buttons } : {}),
         });
       }
@@ -7987,7 +7995,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const tz = localTimeZone();
     const icsBtn = commandButton('📲 .ics (iPhone)', 'invitacion', inv.clave, 'ics');
     if (orden.kind === 'ics') {
-      const ics = icsDeEvento(iv.argsDe(inv), tz, { uid: `${inv.clave}@asistenta.correo` });
+      const ics = icsDeEvento(iv.argsDe(inv), tz, {
+        uid: inv.uid ?? `${inv.clave}@asistenta.correo`,
+      });
       const ok =
         ics && inbound.channel === 'telegram'
           ? await telegram
@@ -8004,21 +8014,80 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       if (!ok) await say(inbound, 'No he podido mandarte el .ics.', { quote: true });
       return;
     }
+    const ws = {
+      vault: { get: vaultGet, set: vaultSet, delete: vaultDelete },
+      timeZone: localTimeZone,
+    };
+    if (orden.kind === 'quitar' || orden.kind === 'cambiar') {
+      const previa = store.previa(inv);
+      if (!previa?.gid) {
+        await say(
+          inbound,
+          `📅 Ya no tengo apuntada la reunión de antes de «${inv.titulo}» (¿ya la cambiaste o la quitaste?).`,
+          { quote: true },
+        );
+        return;
+      }
+      if (orden.kind === 'cambiar' && iv.invitacionPasada(inv, tz, new Date())) {
+        await say(inbound, `📅 «${inv.titulo}» ya pasó; no la cambio.`, { quote: true });
+        return;
+      }
+      const busy = `${previa.clave}:${orden.kind}`;
+      if (invitacionEnCurso.has(busy)) return;
+      invitacionEnCurso.add(busy);
+      try {
+        const text =
+          orden.kind === 'quitar'
+            ? await borrarEvento(ws, { id: previa.gid })
+            : await moverEvento(ws, { ...iv.argsDe(inv), id: previa.gid });
+        // Lo borró él desde el calendario: no queda nada que mover ni quitar.
+        const noEsta = /ya no existe|respondido 4(?:04|10)/.test(text);
+        const ok = text.startsWith(orden.kind === 'quitar' ? '🗑️' : '📅 Movido');
+        if (ok || noEsta) store.olvidarApuntada(previa.clave);
+        if (ok && orden.kind === 'cambiar') store.marcarApuntada(inv.clave, previa.gid);
+        if (noEsta && orden.kind === 'cambiar') {
+          const yes = commandButton('✅ Sí, apúntala', 'invitacion', inv.clave, 'apuntar');
+          await say(
+            inbound,
+            `📅 La de antes ya no está en tu Google Calendar. ¿Apunto «${inv.titulo}», ${iv.cuandoDe(inv)}?`,
+            { quote: true, ...(yes ? { buttons: [yes] } : {}) },
+          );
+          return;
+        }
+        await say(
+          inbound,
+          noEsta
+            ? `🗑️ «${inv.titulo}» ya no estaba en tu Google Calendar.`
+            : ok && orden.kind === 'quitar'
+              ? `🗑️ Quitada de tu Google Calendar: «${inv.titulo}».`
+              : ok
+                ? `📅 Cambiada en tu Google Calendar: «${inv.titulo}», ahora ${iv.cuandoDe(inv)}.`
+                : text,
+          { quote: true },
+        );
+      } finally {
+        invitacionEnCurso.delete(busy);
+      }
+      return;
+    }
+    if (inv.cancela) return;
     if (inv.apuntada) {
       await say(inbound, `📅 «${inv.titulo}» ya está apuntada en tu Google Calendar.`, {
         quote: true,
       });
       return;
     }
+    // Tocar «✅» días después no apunta algo que ya pasó.
+    if (iv.invitacionPasada(inv, tz, new Date())) {
+      await say(inbound, `📅 «${inv.titulo}» ya pasó; no la apunto.`, { quote: true });
+      return;
+    }
     if (invitacionEnCurso.has(inv.clave)) return;
     invitacionEnCurso.add(inv.clave);
     try {
-      const text = await crearEvento(
-        { vault: { get: vaultGet, set: vaultSet, delete: vaultDelete }, timeZone: localTimeZone },
-        iv.argsDe(inv),
-      );
+      const text = await crearEvento(ws, iv.argsDe(inv));
       const ok = text.startsWith('📅 Apuntado');
-      if (ok) store.marcarApuntada(inv.clave);
+      if (ok) store.marcarApuntada(inv.clave, iv.idDeGoogle(text));
       await say(
         inbound,
         ok ? text : `${text}\n\nSi quieres, te la mando en un .ics para el iPhone.`,
@@ -8031,6 +8100,7 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       invitacionEnCurso.delete(inv.clave);
     }
   };
+
   /** /intenciones: los recordatorios por tema («cuando hable de X, recuérdame Y»). */
   const cmdIntenciones = async (inbound: Inbound, args: string): Promise<void> => {
     if (!isOwnerDm(inbound, vigilanteOwnerId)) {
