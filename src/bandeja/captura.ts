@@ -301,9 +301,44 @@ export function pidioAdjunto(
   now: number,
 ): boolean {
   if (!last?.text || now - last.at > PIDIO_ADJUNTO_MS || now < last.at - 60_000) return false;
-  // Solo el final del mensaje: la petición suele ir al cierre.
-  const tail = last.text.slice(-400);
-  return PIDE_VERBO.test(tail) && PIDE_COSA.test(tail);
+  // Solo el cierre del mensaje (las dos últimas frases): si pidió algo y luego siguió con
+  // otra cosa, el hilo no se quedó esperando ese archivo (bugs-35). Antes bastaba con que
+  // saliera en los últimos 400 caracteres.
+  const frases = last.text
+    .split(/(?<=[.!?…])\s+|\n+/)
+    .map((f) => f.trim())
+    .filter(Boolean)
+    .slice(-2);
+  return frases.some(
+    (f) => PIDE_VERBO.test(f) && PIDE_COSA.test(f) && !EXPLICA.test(f) && !SI_MANDAS.test(f),
+  );
+}
+
+// Explicar la bandeja («mándame enlaces y te los guardo en la bandeja») no es pedir un
+// archivo para esta conversación; y «si me mandas un enlace, lo guardo» describe, no pide.
+const EXPLICA = /\bbandeja\b/i;
+const SI_MANDAS =
+  /\bsi\s+(me\s+|le\s+|nos\s+)?(m[aá]nd|env[ií]|p[aá]s|s[uú]b|adjunt|compart|p[eé]g|reenv)\w*/i;
+
+/**
+ * La última respuesta del asistente en un hilo, solo si el turno terminó en ella (el hilo
+ * espera a Nico). Un turno a medias (iba a usar una herramienta), cortado o con error no
+ * espera nada; y si lo último es de Nico o de una herramienta, tampoco.
+ */
+export function ultimaRespuesta(messages: readonly unknown[]): { text: string; at: number } | null {
+  const last = messages.at(-1) as
+    | { role?: string; content?: unknown; timestamp?: number; stopReason?: string }
+    | undefined;
+  if (last?.role !== 'assistant' || typeof last.timestamp !== 'number') return null;
+  if (last.stopReason !== undefined && last.stopReason !== 'stop') return null;
+  const text = Array.isArray(last.content)
+    ? last.content
+        .map((b: { type?: string; text?: string }) => (b?.type === 'text' ? (b.text ?? '') : ''))
+        .join('')
+    : typeof last.content === 'string'
+      ? last.content
+      : '';
+  return text ? { text, at: last.timestamp } : null;
 }
 
 /** «/bandeja <cosa>» a mano: enlaces, «libro X» o un texto/idea suelto. */

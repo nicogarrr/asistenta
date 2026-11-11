@@ -550,7 +550,7 @@ import {
   tvStopperFromVault,
 } from './audio/tv-cast.js';
 import { verifyCallAudit } from './audit/calls.js';
-import { detectCapture, pidioAdjunto } from './bandeja/captura.js';
+import { detectCapture, pidioAdjunto, ultimaRespuesta } from './bandeja/captura.js';
 import { bandejaCommand, bandejaSlowSub, captureAndAck, captureOn } from './bandeja/comando.js';
 import {
   autoKindle,
@@ -6743,19 +6743,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   const lastAssistantSaid = (key: string): { text: string; at: number } | null => {
     let best: { text: string; at: number } | null = null;
     for (const t of threads.values()) {
-      if (t.chatKey !== key) continue;
-      const last = t.agent.messages.at(-1) as
-        | { role?: string; content?: unknown; timestamp?: number }
-        | undefined;
-      if (last?.role !== 'assistant' || typeof last.timestamp !== 'number') continue;
-      const text = Array.isArray(last.content)
-        ? last.content
-            .map((b: { type?: string; text?: string }) =>
-              b?.type === 'text' ? (b.text ?? '') : '',
-            )
-            .join('')
-        : '';
-      if (text && (!best || last.timestamp > best.at)) best = { text, at: last.timestamp };
+      // Un hilo trabajando no espera a Nico; uno que acabó en error o a medias, tampoco.
+      if (t.chatKey !== key || t.active) continue;
+      const last = ultimaRespuesta(t.agent.messages);
+      if (last && (!best || last.at > best.at)) best = last;
     }
     return best;
   };
