@@ -116,7 +116,7 @@ describe('gaps-16: invitación por correo → «📅 ¿La apunto?» con botón',
     expect(src.slice(d, d + 400)).toContain('await avisarInvitacionesCorreo(messages)');
     expect(src).toContain("commandButton('✅ Sí, apúntala', 'invitacion', inv.clave, 'apuntar')");
     expect(src).toContain('if (invitacionEnCurso.has(inv.clave)) return;');
-    expect(src).toContain('if (ok) store.marcarApuntada(inv.clave);');
+    expect(src).toContain('if (ok) store.marcarApuntada(inv.clave, iv.idDeGoogle(text));');
     expect(src).toContain("names: ['invitacion', 'invitaciones']");
   });
 });
