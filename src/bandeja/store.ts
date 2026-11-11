@@ -70,7 +70,7 @@ export interface BandejaExtra {
    */
   icsUid?: string;
   /** Una cancelación .ics: el evento cancelado (para decir cuál), sin «📅 Al calendario». */
-  icsCancelado?: { nombre: string; inicio: string };
+  icsCancelado?: { nombre: string; inicio: string; soloUno?: boolean };
 }
 
 export interface BandejaItem {
