@@ -3,6 +3,7 @@
  * guardar, la ficha de una cosa, la lista de /bandeja y los botones.
  */
 import { commandButton } from '../channels/telegram-shared.js';
+import { localDay } from '../datecontext.js';
 import { sliceSafe } from '../text.js';
 import { type BandejaKind, displayUrl } from './captura.js';
 import { goodreadsLine } from './goodreads.js';
@@ -41,6 +42,12 @@ export function shortTitle(item: BandejaItem, max = 70): string {
   return t.length > max ? `${sliceSafe(t, max - 1)}…` : t;
 }
 
+/** «11/11» del día local de un instante ISO. */
+function diaCorto(iso: string): string {
+  const [, m, d] = localDay(new Date(iso)).split('-');
+  return `${Number(d)}/${Number(m)}`;
+}
+
 /** «📥 Guardado en la bandeja (3 hoy). Te digo esta noche a las 21:30 si merece la pena.» */
 export function ackText(
   items: readonly { item: BandejaItem; dup: boolean }[],
@@ -57,6 +64,19 @@ export function ackText(
     return retry.length === 1
       ? `🔁 Eso ya estaba, pero falló (${retry[0]?.item.error ?? 'sin motivo'}): lo vuelvo a mirar. Te digo ${when} si merece la pena.`
       : `🔁 ${retry.length} ya estaban pero fallaron: las vuelvo a mirar. Te digo ${when} si merecen la pena.`;
+  // Ya juzgado y ya salió en un resumen (y no es 🔴, que se arrastra): no vuelve a salir,
+  // así que «te lo cuento a las 21:30» era falso. Se dice lo que ya se sabe.
+  const old = items.length === 1 ? items[0]?.item : undefined;
+  if (
+    fresh.length === 0 &&
+    old?.status === 'listo' &&
+    old.verdict &&
+    old.verdict !== 'imprescindible' &&
+    old.digestedAt
+  ) {
+    const score = scoreLabel(old);
+    return `📥 Eso ya estaba y ya lo miré: ${VERDICT_EMOJI[old.verdict]}${score ? ` ${score}` : ''} «${shortTitle(old, 60)}», en el resumen del ${diaCorto(old.digestedAt)}. /bandeja ficha ${old.id} para verlo otra vez.`;
+  }
   if (fresh.length === 0)
     return `📥 Eso ya estaba en la bandeja (${countToday} hoy). Te lo cuento ${when}.`;
   const what =
