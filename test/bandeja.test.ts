@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { canonicalKey, detectCapture, explicitCapture, kindOfUrl } from '../src/bandeja/captura.js';
 import { bandejaCommand, captureAndAck, captureOn } from '../src/bandeja/comando.js';
-import { cardText, itemButtons, linkLines } from '../src/bandeja/formato.js';
+import { cardText, itemButtons, linkLines, scoreLabel } from '../src/bandeja/formato.js';
 import { goodreadsLine, goodreadsLookup, parseGoodreadsSearch } from '../src/bandeja/goodreads.js';
 import {
   BandejaQueue,
@@ -17,6 +17,7 @@ import {
 } from '../src/bandeja/procesar.js';
 import {
   _resetDigestForTests,
+  bandejaMaxMinutes,
   composeDigest,
   digestItems,
   nextDay,
@@ -176,6 +177,13 @@ describe('bandeja: veredicto del modelo', () => {
     expect(parseVerdict('Veredicto: Paja, descartar')?.score).toBe(3);
   });
 
+  it('veredicto y nota cuadran: 🔴 con menos de 7 es 🟡, ⚪ con 6 o más es 🟡', () => {
+    expect(parseVerdict('VEREDICTO: IMPRESCINDIBLE\nNOTA: 6')?.verdict).toBe('ideas');
+    expect(parseVerdict('VEREDICTO: PAJA\nNOTA: 6')?.verdict).toBe('ideas');
+    expect(parseVerdict('VEREDICTO: IMPRESCINDIBLE\nNOTA: 7')?.verdict).toBe('imprescindible');
+    expect(parseVerdict('VEREDICTO: PAJA\nNOTA: 4')?.verdict).toBe('paja');
+  });
+
   it('solo nota: veredicto por la nota; sin nada: null (nunca inventado)', () => {
     expect(parseVerdict('NOTA: 8')?.verdict).toBe('imprescindible');
     expect(parseVerdict('NOTA: 5')?.verdict).toBe('ideas');
@@ -202,6 +210,15 @@ describe('bandeja: Goodreads', () => {
     }, 'x');
     expect(blocked).toEqual({ ok: false, reason: 'Goodreads bloqueó la consulta' });
     expect(goodreadsLine(blocked)).toBe('⭐ Goodreads: N/D (Goodreads bloqueó la consulta)');
+    const waf = await goodreadsLookup(
+      async () =>
+        '<html><head><title></title></head><script src="https://x.token.awswaf.com/challenge.js"></script></html>',
+      'x',
+    );
+    expect(waf).toEqual({
+      ok: false,
+      reason: 'Goodreads bloqueó la consulta (verificación anti-bots)',
+    });
     const none = await goodreadsLookup(async () => '<html><body>No results</body></html>', 'zzz');
     expect(none.ok).toBe(false);
     expect(none.reason).toBe('no encontré el libro en Goodreads');
@@ -592,6 +609,62 @@ describe('bandeja: procesado (red y modelo falsos)', () => {
     ]);
   });
 
+  it('si la transcripción revienta, se juzga por la descripción (no queda en error)', async () => {
+    const { item } = store.add(
+      CHAT,
+      { kind: 'youtube', url: 'https://youtu.be/tCDY1k1JGqw' },
+      NOV11,
+      '2026-11-11',
+    );
+    const r = await processItem(
+      item,
+      base({
+        videoText: async () => {
+          throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`);
+        },
+        fetchRaw: async (url: string) =>
+          url.includes('oembed')
+            ? JSON.stringify({ title: 'Vídeo', author_name: 'Canal' })
+            : `"attributedDescriptionBodyText":{"content":"${'Una charla larga sobre satélites y espectro. '.repeat(8)}"}`,
+      }),
+    );
+    expect(r.extra.basis).toBe('descripcion');
+    expect(r.extra.basisReason).toMatch(/YouTube contestó algo raro/);
+  });
+
+  it('un vídeo de captura que ya estaba se descarta antes de gastar modelo', async () => {
+    const prev = store.add(
+      CHAT,
+      { kind: 'youtube', url: 'https://youtu.be/EWvNQjAaOHw' },
+      NOV11,
+      '2026-11-11',
+    );
+    const { item } = store.add(
+      CHAT,
+      { kind: 'youtube', title: 'How I use LLMs', note: 'Andrej Karpathy' },
+      NOV11,
+      '2026-11-11',
+    );
+    let llm = 0;
+    const queue = new BandejaQueue(
+      store,
+      base({
+        complete: async () => async () => {
+          llm++;
+          return REPLY;
+        },
+        fetchRaw: async () =>
+          '"videoRenderer":{"videoId":"EWvNQjAaOHw","x":1,"title":{"runs":[{"text":"How I use LLMs"}]}',
+      }),
+    );
+    await queue.enqueue(item.id);
+    expect(store.get(item.id)).toMatchObject({
+      state: 'descartado',
+      error: `repetido de #${prev.item.id}`,
+    });
+    expect(llm).toBe(0);
+  });
+
   it('un fallo queda en error con su motivo, sin reintentos', async () => {
     const { item } = store.add(
       CHAT,
@@ -638,6 +711,8 @@ describe('bandeja: procesado (red y modelo falsos)', () => {
                   title: 'El nombre del viento',
                   author_name: ['Patrick Rothfuss'],
                   number_of_pages_median: 662,
+                  ratings_average: 4.4,
+                  ratings_count: 210,
                 },
               ],
             });
@@ -653,6 +728,7 @@ describe('bandeja: procesado (red y modelo falsos)', () => {
     expect(r.extra.goodreads).toMatchObject({ ok: true, rating: 4.52, ratings: 1126819 });
     expect(r.costLabel).toBe('📚 662 págs · ~14 h');
     expect(seen[0]).toContain('Goodreads: 4.52/5 con 1126819 valoraciones');
+    expect(r.extra.publicRating).toBe('⭐ Open Library 4,40/5 (210 valoraciones)');
   });
 
   it('sin modelo: error claro, nunca un veredicto inventado', async () => {
@@ -752,5 +828,74 @@ describe('bandeja: piezas sueltas', () => {
       { kind: 'youtube', url: 'https://youtu.be/AAAAAAAAAAA' },
       { kind: 'youtube', title: 'X', note: 'Y' },
     ]);
+  });
+});
+
+describe('bandeja: notas provisionales y lo visto en capturas', () => {
+  it('sin transcripción la nota lleva «~» y la ficha dice «(provisional)»', () => {
+    const id = addDone('https://youtu.be/AAAAAAAAAAA', 'imprescindible', 8);
+    const it0 = store.get(id);
+    if (!it0) throw new Error('no item');
+    store.saveResult(
+      id,
+      {
+        ...it0,
+        extra: { source: 'YouTube', basis: 'descripcion', basisReason: 'YouTube bloqueó' },
+      },
+      NOV11,
+    );
+    const it = store.get(id);
+    if (!it) throw new Error('no item');
+    expect(scoreLabel(it)).toBe('~8/10');
+    expect(cardText(it)).toContain('🔴 Imprescindible: míralo entero · ~8/10 (provisional)');
+    expect(cardText(it)).toContain(
+      '⚠️ Sin transcripción: juzgado por la descripción (YouTube bloqueó)',
+    );
+    expect(composeDigest([it], '2026-11-11').text).toContain('~8/10');
+    const done = addDone('https://youtu.be/CCCCCCCCCCC', 'ideas', 6);
+    expect(scoreLabel(store.get(done) as never)).toBe('6/10');
+  });
+
+  it('«Post de @usuario» de una captura no repite el post de X ya guardado por su enlace', () => {
+    const x = store.add(
+      CHAT,
+      { kind: 'x', url: 'https://x.com/trypto_tran/status/2118686002000876028' },
+      NOV11,
+      '2026-11-11',
+    );
+    const post = store.add(
+      CHAT,
+      { kind: 'texto', title: 'Post de @trypto_tran', note: 'Post de X de @trypto_tran: …' },
+      NOV11,
+      '2026-11-11',
+    );
+    expect(post.dup).toBe(true);
+    expect(post.item.id).toBe(x.item.id);
+    expect(
+      store.add(CHAT, { kind: 'texto', title: 'Post de @otro', note: 'x' }, NOV11, '2026-11-11')
+        .dup,
+    ).toBe(false);
+  });
+
+  it('un artículo que solo se ve en una captura: «sin abrir», nota provisional', async () => {
+    const [cand] = parseSplit('ARTICULO: Tesis de inversión ASTS | PDF') ?? [];
+    if (!cand) throw new Error('sin candidato');
+    const { item } = store.add(CHAT, cand, NOV11, '2026-11-11');
+    const r = await processItem(item, {
+      complete: async () => async () => 'VEREDICTO: IDEAS\nNOTA: 6',
+      fetchRaw: async () => '',
+      videoText: async () => ({ ok: false, reason: 'no' }),
+    });
+    expect(r.extra.basis).toBe('ficha');
+    store.saveResult(item.id, r, NOV11);
+    expect(cardText(store.get(item.id) as never)).toContain(
+      '⚠️ Sin abrir: juzgado solo por el título',
+    );
+  });
+
+  it('la bandeja transcribe hasta 3 h por defecto (PA_BANDEJA_MAX_MIN)', () => {
+    expect(bandejaMaxMinutes({})).toBe(180);
+    expect(bandejaMaxMinutes({ PA_BANDEJA_MAX_MIN: '300' })).toBe(300);
+    expect(bandejaMaxMinutes({ PA_BANDEJA_MAX_MIN: '2' })).toBe(180);
   });
 });

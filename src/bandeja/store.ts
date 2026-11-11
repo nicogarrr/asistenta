@@ -197,6 +197,18 @@ export class BandejaStore {
       const prev = this.findPendingByKey(chatId, key);
       if (prev) return { item: prev, dup: true };
     }
+    // «Post de @usuario» leído en una captura: si ya hay un post de X de esa cuenta
+    // pendiente (Nico mandó también el enlace), es el mismo.
+    const xUser =
+      !c.url && c.kind === 'texto' ? /^Post de @(\w{1,30})/.exec(c.title ?? '')?.[1] : undefined;
+    if (xUser) {
+      const prev = this.#db
+        .prepare(
+          "SELECT * FROM items WHERE chat_id = ? AND kind = 'x' AND state = 'pendiente' AND lower(url) LIKE ? ORDER BY id LIMIT 1",
+        )
+        .get(chatId, `%/${xUser.toLowerCase()}/status/%`) as Row | undefined;
+      if (prev) return { item: mapRow(prev), dup: true };
+    }
     const res = this.#db
       .prepare(
         `INSERT INTO items (chat_id, kind, url, url_key, title, note, file_id, file_name, mime_type, created_at, day)

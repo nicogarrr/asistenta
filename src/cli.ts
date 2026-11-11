@@ -543,7 +543,7 @@ import { verifyCallAudit } from './audit/calls.js';
 import { detectCapture } from './bandeja/captura.js';
 import { bandejaCommand, captureAndAck, captureOn } from './bandeja/comando.js';
 import { type BandejaComplete, BandejaQueue } from './bandeja/procesar.js';
-import { type DigestDeps, startDigestTimer } from './bandeja/resumen.js';
+import { bandejaMaxMinutes, type DigestDeps, startDigestTimer } from './bandeja/resumen.js';
 import { BandejaStore } from './bandeja/store.js';
 import { SecretLibrary } from './books/secret.js';
 import {
@@ -6492,8 +6492,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       fetchRaw: bandejaFetchRaw,
       videoText: async (url, opts) => {
         const { getVideoText } = await import('./media/resumen-video.js');
+        // La bandeja transcribe en segundo plano y entero (un podcast de 4 h): su propio tope.
         return getVideoText(url, {
           cookiesFromBrowser: config.downloadCookiesBrowser,
+          env: { ...process.env, PA_RESUMEN_MAX_MIN: String(bandejaMaxMinutes()) },
           ...(opts?.directAudio ? { directAudio: true } : {}),
         });
       },

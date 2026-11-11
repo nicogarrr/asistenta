@@ -220,6 +220,27 @@ async function searchYoutube(
   }
 }
 
+/**
+ * videoText que nunca lanza: un fallo raro dentro de la escalera de transcripción (YouTube
+ * devolviendo una página HTML donde se esperaba JSON) es «sin transcripción», no un error
+ * de la cosa entera (en el e2e, 3 vídeos se quedaban en ⚠️ por eso).
+ */
+async function safeVideoText(
+  deps: ProcesarDeps,
+  url: string,
+  opts: { signal?: AbortSignal; directAudio?: boolean },
+): ReturnType<ProcesarDeps['videoText']> {
+  try {
+    return await deps.videoText(url, opts);
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    return {
+      ok: false,
+      reason: `YouTube contestó algo raro (${String(err instanceof Error ? err.message : err).slice(0, 60)})`,
+    } as Awaited<ReturnType<ProcesarDeps['videoText']>>;
+  }
+}
+
 interface YoutubePage {
   title?: string;
   author?: string;
@@ -286,7 +307,7 @@ async function videoContent(
     found = hit;
   }
   const site = item.kind === 'x' ? 'X' : 'YouTube';
-  const v = await deps.videoText(url, { signal });
+  const v = await safeVideoText(deps, url, { signal });
   if (v.ok) {
     const mins = v.meta.durationSeconds ? v.meta.durationSeconds / 60 : null;
     return {
@@ -436,7 +457,7 @@ async function podcastContent(
   // (b) El mp3 del RSS del programa (iTunes da el feed), transcrito en el PC.
   const mp3 = show ? await rssEnclosure(deps, show, title) : null;
   if (mp3) {
-    const v = await deps.videoText(mp3, { signal, directAudio: true });
+    const v = await safeVideoText(deps, mp3, { signal, directAudio: true });
     if (v.ok)
       return {
         title,
@@ -603,7 +624,7 @@ export function parseSplit(reply: string): CaptureCandidate[] | null {
       out.push({
         kind: 'texto',
         title: first,
-        note: `Artículo «${first}»${second ? ` de ${second}` : ''} (visto en una captura)`,
+        note: `Artículo «${first}»${second ? ` de ${second}` : ''} ${SEEN_IN_CAPTURE}`,
       });
   }
   return out.length >= 1 ? out.slice(0, 15) : null;
@@ -669,7 +690,8 @@ async function bookContent(item: BandejaItem, deps: ProcesarDeps): Promise<Conte
     goodreadsLookup(deps.fetchRaw, query, isGrUrl ? (item.url ?? undefined) : undefined),
     openLibraryLookup(deps.fetchRaw, olQuery(query)),
   ]);
-  const title = gr.ok && gr.title ? gr.title : (ol?.title ?? item.title ?? query);
+  // El título que escribió Nico manda sobre el de Open Library (que suele venir en inglés).
+  const title = gr.ok && gr.title ? gr.title : (item.title ?? ol?.title ?? query);
   const author = (gr.ok && gr.author) || ol?.author;
   const pages = ol?.pages;
   const mins = pages ? (pages * WORDS_PER_BOOK_PAGE) / WORDS_PER_MIN : null;
@@ -704,6 +726,11 @@ async function bookContent(item: BandejaItem, deps: ProcesarDeps): Promise<Conte
       ...(pages ? { pages } : {}),
       ...(ol?.year ? { year: ol.year } : {}),
       ...(ol?.url ? { altUrl: ol.url } : {}),
+      ...(ol?.rating && ol.ratings
+        ? {
+            publicRating: `⭐ Open Library ${ol.rating.toFixed(2).replace('.', ',')}/5 (${ol.ratings} valoraciones)`,
+          }
+        : {}),
     },
     describe: 'Un libro que Nico apuntó para leer.',
   };
@@ -717,16 +744,27 @@ function olQuery(q: string): string {
     .trim();
 }
 
+/** Marca de las cosas que solo se vieron por su título en una captura (ver parseSplit). */
+export const SEEN_IN_CAPTURE = '(visto en una captura)';
+
 function textContent(item: BandejaItem): Content {
   const text = item.note ?? item.title ?? '';
   if (!text.trim()) throw new BandejaError('no hay texto que mirar');
   const mins = readingMinutes(words(text));
+  // Un artículo o PDF del que la captura solo enseña el título: nota provisional.
+  const onlyTitle = text.includes(SEEN_IN_CAPTURE);
   return {
     title: item.title,
     text,
-    costMin: mins,
-    costLabel: `📝 ${minutesLabel(mins)}`,
-    extra: { source: 'nota', basis: 'texto' },
+    costMin: onlyTitle ? null : mins,
+    costLabel: onlyTitle ? '📝 sin abrir' : `📝 ${minutesLabel(mins)}`,
+    extra: onlyTitle
+      ? {
+          source: 'captura',
+          basis: 'ficha',
+          basisReason: 'en la captura solo se ve el título; mándame el enlace o el archivo',
+        }
+      : { source: 'nota', basis: 'texto' },
     describe: 'Un texto o idea que Nico guardó (puede ser solo lo que se leía en una captura).',
   };
 }
@@ -875,9 +913,27 @@ export class BandejaQueue {
   }
 
   async #runOne(id: number): Promise<void> {
-    const item = this.#store.get(id);
+    let item = this.#store.get(id);
     if (!item || item.state === 'descartado') return;
     this.#store.setStatus(id, 'procesando');
+    // Un vídeo que llegó solo por su título (de una captura): primero su enlace, y si ya
+    // estaba guardado por él, fuera el repetido antes de gastar transcripción y modelo.
+    if (!item.url && item.kind === 'youtube' && item.title) {
+      const found = await searchYoutube(
+        this.#deps,
+        `${item.title} ${item.note ?? ''}`.trim(),
+        item.title,
+      );
+      if (found) {
+        this.#store.setUrl(id, found);
+        const twin = this.#store.findPendingByKey(item.chatId, canonicalKey(found), id);
+        if (twin) {
+          this.#store.closeAs(id, `repetido de #${twin.id}`);
+          return;
+        }
+        item = this.#store.get(id) ?? item;
+      }
+    }
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), PROCESS_TIMEOUT_MS);
     timer.unref?.();
