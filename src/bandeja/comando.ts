@@ -102,7 +102,10 @@ export function captureAndAck(
   const now = deps.now();
   const day = localDay(now);
   const saved = cands.map((c) => deps.store.add(deps.chatId, c, now, day));
-  for (const s of saved) if (!s.dup) void deps.queue.enqueue(s.item.id);
+  // Lo que ya estaba pero falló (⚠️): mandarlo otra vez es pedir otro intento. Antes
+  // contestaba «Eso ya estaba» y no lo reintentaba nunca.
+  for (const s of saved)
+    if (!s.dup || s.item.status === 'error') void deps.queue.enqueue(s.item.id);
   return {
     text: ackText(
       saved,

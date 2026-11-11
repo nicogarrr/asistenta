@@ -1169,8 +1169,11 @@ export class BandejaQueue {
       fileSeen: (item, sha) => {
         const key = `sha256:${sha}`;
         const twin = store.findPendingByKey(item.chatId, key, item.id);
-        if (!twin) store.setKey(item.id, key);
-        return twin?.id ?? null;
+        // La que falló no cuenta: volver a mandarla es pedir otro intento (bugs-33).
+        if (twin && twin.status !== 'error') return twin.id;
+        if (twin) store.closeAs(twin.id, `la volviste a mandar: va en #${item.id}`);
+        store.setKey(item.id, key);
+        return null;
       },
     };
   }
