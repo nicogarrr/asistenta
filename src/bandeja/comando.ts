@@ -451,10 +451,14 @@ export async function icsAviso(
     // Una cancelación: si su invitación (el mismo UID) se apuntó con «✅ Sí», ofrece quitarla
     // (antes solo decía «quítalo de tu calendario» y había que buscarla a mano; bugs-37).
     const uid = item.extra.icsUid;
-    if (uid) deps.store.setMeta(cancelKey(item.chatId, uid), String(item.id));
+    // Un solo día de una serie («se cancela la del jueves»): la serie sigue, así que ni se
+    // bloquea su «✅ Sí» ni se ofrece quitar lo apuntado, salvo que sea justo ese día.
+    const soloUno = item.extra.icsCancelado?.soloUno === true;
+    if (uid && !soloUno) deps.store.setMeta(cancelKey(item.chatId, uid), String(item.id));
     const origId = uid ? Number(deps.store.getMeta(uidKey(item.chatId, uid)) ?? 0) : 0;
     const orig = origId ? deps.store.get(origId) : null;
-    const apuntado = orig?.chatId === item.chatId && deps.store.getMeta(gidKey(origId));
+    const mismoDia = !soloUno || orig?.extra.evento?.inicio === item.extra.icsCancelado?.inicio;
+    const apuntado = mismoDia && orig?.chatId === item.chatId && deps.store.getMeta(gidKey(origId));
     const quitar = apuntado
       ? commandButton('🗑️ Sí, quítalo', 'bandeja', String(origId), 'desapuntar')
       : undefined;

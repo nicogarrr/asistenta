@@ -16,6 +16,11 @@ export interface IcsEvento extends BandejaEvento {
   /** Se repite (RRULE): se apunta solo la primera vez y se dice. */
   repite?: boolean;
   /**
+   * Es UN día de una serie (RECURRENCE-ID): Outlook y Google mandan así «se cancela solo la
+   * del jueves» o «la del jueves pasa a las 11». Solo se usa si el .ics no trae la serie.
+   */
+  ocurrencia?: boolean;
+  /**
    * El UID del VEVENT: el mismo en la invitación y en su cancelación (RFC 5545 §3.8.4.7).
    * Con él, la cancelación sabe qué evento apuntado quitar (bugs-37).
    */
@@ -203,6 +208,8 @@ export function parseIcs(raw: string): { metodo?: string; eventos: IcsEvento[] }
   if (!/BEGIN:VCALENDAR|BEGIN:VEVENT/i.test(raw.slice(0, ICS_MAX_CHARS))) return { eventos: [] };
   let metodo: string | undefined;
   const eventos: IcsEvento[] = [];
+  // Los de un solo día de una serie (RECURRENCE-ID): si el .ics no trae otra cosa, son ellos.
+  const ocurrencias: IcsEvento[] = [];
   let cur: Map<string, Linea> | null = null;
   let depth = 0;
   for (const l of lineas(raw)) {
@@ -222,6 +229,10 @@ export function parseIcs(raw: string): { metodo?: string; eventos: IcsEvento[] }
       if (cur && l.value.trim().toUpperCase() === 'VEVENT') {
         const ev = evento(cur, metodo);
         if (ev && !cur.has('RECURRENCE-ID')) eventos.push(ev);
+        else if (ev && ocurrencias.length < ICS_MAX_EVENTOS) {
+          const { repite: _r, ...uno } = ev;
+          ocurrencias.push({ ...uno, ocurrencia: true });
+        }
         cur = null;
         if (eventos.length >= ICS_MAX_EVENTOS) break;
       }
@@ -230,7 +241,9 @@ export function parseIcs(raw: string): { metodo?: string; eventos: IcsEvento[] }
     // Lo de dentro de un VALARM (depth > 0) no es del evento.
     if (cur && depth === 0 && !cur.has(l.name)) cur.set(l.name, l);
   }
-  return { ...(metodo ? { metodo } : {}), eventos };
+  // «Se cancela solo la del jueves» (Outlook): antes no había «eventos» y acababa en ⚠️ «el
+  // .ics no trae ningún evento con fecha» (bugs-37).
+  return { ...(metodo ? { metodo } : {}), eventos: eventos.length ? eventos : ocurrencias };
 }
 
 function evento(p: Map<string, Linea>, metodo?: string): IcsEvento | null {
