@@ -274,7 +274,9 @@ export class AskFirstStore {
   reasonFor(call: CallLike, chat?: string): string | null {
     for (const r of this.list()) {
       if (appliesIn(r, chat) && AREAS[r.area].match(call))
-        return `Me pediste que te preguntara antes de ${AREAS[r.area].label}${r.chat === undefined ? '' : ' en este chat'} («${r.dicho}»).`;
+        // Como el «Edit rule» de Grok Bot en su tarjeta: la pregunta dice qué regla la hizo
+        // saltar y cómo quitarla, para no tener que buscarla en /permisos preguntar lista.
+        return `Me pediste que te preguntara antes de ${AREAS[r.area].label}${r.chat === undefined ? '' : ' en este chat'} («${r.dicho}»). Si ya no quieres que te lo pregunte: /permisos preguntar quitar ${r.id}.`;
     }
     return null;
   }
