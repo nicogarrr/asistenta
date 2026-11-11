@@ -24,6 +24,7 @@ import { sliceSafe } from '../text.js';
 import { decodeEntities, extractText } from '../tools/fetch.js';
 import { canonicalKey, displayUrl, kindOfUrl } from './captura.js';
 import type { FetchRaw } from './goodreads.js';
+import { readableDocKind } from './procesar.js';
 import type { BandejaExtra, BandejaItem, BandejaStore } from './store.js';
 
 export type BlockKind = 'h' | 'p' | 'li' | 'q';
@@ -593,6 +594,8 @@ export function kindleable(item: BandejaItem): boolean {
   if (item.kind === 'youtube' || isPodcast(item)) return item.extra.basis === 'transcripcion';
   if (item.kind === 'x') return true;
   if (item.kind === 'enlace') return Boolean(item.url);
+  // Un EPUB, DOCX u ODT que mandaste.
+  if (item.kind === 'texto' && item.fileId) return readableDocKind(item) !== null;
   return false;
 }
 
@@ -668,6 +671,7 @@ export interface KindleTarget {
 type Built =
   | { kind: 'doc'; doc: KindleDoc }
   | { kind: 'pdf'; bytes: Buffer; title: string }
+  | { kind: 'epub'; bytes: Buffer; title: string }
   | { kind: 'link'; url: string | null; title: string; reason: string };
 
 function pseudoItem(url: string, chatId: string): BandejaItem {
@@ -777,6 +781,18 @@ async function buildFor(item: BandejaItem, deps: KindleDeliverDeps): Promise<Bui
       };
     return { kind: 'pdf', bytes, title: item.fileName?.replace(/\.pdf$/i, '') || title };
   }
+  // Un EPUB que mandó Nico: el original tal cual (y su AZW3 con Calibre).
+  if (item.kind === 'texto' && item.fileId && readableDocKind(item) === 'epub') {
+    const bytes = deps.download ? await deps.download(item.fileId).catch(() => null) : null;
+    if (!bytes)
+      return {
+        kind: 'link',
+        url: null,
+        title,
+        reason: 'no pude bajar el EPUB de Telegram (¿más de 20 MB?)',
+      };
+    return { kind: 'epub', bytes, title: item.fileName?.replace(/\.epub$/i, '') || title };
+  }
   if (item.kind === 'enlace' && item.url && !isPodcast(item)) {
     let html: string;
     try {
@@ -831,6 +847,20 @@ async function buildFor(item: BandejaItem, deps: KindleDeliverDeps): Promise<Bui
   }
 }
 
+/** Sin Calibre: se dice UNA vez cómo ponerlo (nunca se instala solo); si falló, el porqué. */
+function calibreNote(azw3: Azw3Result, store: BandejaStore, lines: string[]): void {
+  if (azw3.ok) return;
+  if (azw3.reason !== 'no-converter') {
+    lines.push(`⚠️ El AZW3 no salió (${azw3.message}); te dejo el EPUB.`);
+    return;
+  }
+  if (store.getMeta('kindle_calibre_hint') === 'shown') return;
+  store.setMeta('kindle_calibre_hint', 'shown');
+  lines.push(
+    'ℹ️ No tengo Calibre en el PC, así que va en EPUB: por correo a tu Kindle Amazon lo convierte solo. Para el AZW3 del Paperwhite por USB, instala Calibre una vez: winget install calibre.calibre (no lo instalo yo).',
+  );
+}
+
 /** «Mándame lo que me pasaste para leer»: arma los ficheros, los manda y dice qué pasó. */
 export async function deliverToKindle(
   target: KindleTarget,
@@ -864,6 +894,26 @@ export async function deliverToKindle(
     files.push({ bytes: built.bytes, name, caption: `📖 ${title} · el PDF original, tal cual` });
     mailFile = { bytes: built.bytes, name };
     lines.push(`📖 «${title}»: te paso el PDF original tal cual (el Kindle lo abre).`);
+  } else if (built.kind === 'epub') {
+    // El EPUB que mandaste: tal cual (por correo, Amazon lo convierte) y su AZW3 para USB.
+    title = built.title;
+    const name = safeFilename(title, 'epub');
+    mailFile = { bytes: built.bytes, name };
+    const azw3 = await (deps.convert ?? ((e: Buffer, t: string) => epubToAzw3(e, t)))(
+      built.bytes,
+      title,
+    ).catch((err: unknown): Azw3Result => ({ ok: false, reason: 'failed', message: errText(err) }));
+    if (azw3.ok)
+      files.push({
+        bytes: azw3.azw3,
+        name: name.replace(/\.epub$/, '.azw3'),
+        caption: `📖 ${title} · AZW3 para el Paperwhite (por USB, a la carpeta documents)`,
+      });
+    files.push({ bytes: built.bytes, name, caption: `📖 ${title} · el EPUB original, tal cual` });
+    lines.push(
+      `📖 «${title}»: ${azw3.ok ? 'el AZW3 del Paperwhite (por USB) y ' : ''}el EPUB original tal cual.`,
+    );
+    calibreNote(azw3, deps.store, lines);
   } else {
     const doc = built.doc;
     title = doc.title;
@@ -901,16 +951,7 @@ export async function deliverToKindle(
     lines.unshift(
       `📖 «${title}» listo para el Kindle: ${azw3.ok ? 'AZW3 (Paperwhite, por USB) y EPUB' : 'EPUB'}${target.pdf ? ' + PDF' : ''} · ~${Math.max(1, Math.round(words / 230))} min de lectura.`,
     );
-    if (!azw3.ok) {
-      if (azw3.reason === 'no-converter') {
-        if (deps.store.getMeta('kindle_calibre_hint') !== 'shown') {
-          deps.store.setMeta('kindle_calibre_hint', 'shown');
-          lines.push(
-            'ℹ️ No tengo Calibre en el PC, así que va en EPUB: por correo a tu Kindle Amazon lo convierte solo. Para el AZW3 del Paperwhite por USB, instala Calibre una vez: winget install calibre.calibre (no lo instalo yo).',
-          );
-        }
-      } else lines.push(`⚠️ El AZW3 no salió (${azw3.message}); te dejo el EPUB.`);
-    }
+    calibreNote(azw3, deps.store, lines);
   }
   const tooBig = files.filter((f) => f.bytes.length > MAX_SEND_BYTES);
   for (const f of files) {

@@ -4,7 +4,7 @@ Nico (11-nov-2026): guarda cosas todo el día (vídeos de YouTube, posts de X, P
 
 ## Cómo se usa (Telegram)
 
-- **Mándalo a secas**, sin escribir nada más: un enlace (o varios), un PDF sin pie, una captura sin pie, o un reenvío de otro chat con un enlace. Contesta «📥 guardado en la bandeja · 3 hoy» con **⚡ Míralo ya** (lo procesa ahora y te manda la ficha) y **🗑️ Quitar**.
+- **Mándalo a secas**, sin escribir nada más: un enlace (o varios), un PDF, EPUB o Word (DOCX/ODT) sin pie, una captura sin pie, o un reenvío de otro chat con un enlace. Contesta «📥 guardado en la bandeja · 3 hoy» con **⚡ Míralo ya** (lo procesa ahora y te manda la ficha) y **🗑️ Quitar**.
 - **«libro: Título»** (o «📚 Título») guarda un libro.
 - **/bandeja <enlace o texto>** guarda a mano; **/bandeja libro <título>**; «/bandeja» como pie de una foto o un PDF.
 - Con una pregunta o una frase tuya («resúmeme esto <enlace>», un PDF con «¿qué opinas?») te contesto como siempre: eso no va a la bandeja. Tampoco una respuesta a otro mensaje, ni notas de voz, ni grupos.
@@ -17,7 +17,7 @@ Nico (11-nov-2026): guarda cosas todo el día (vídeos de YouTube, posts de X, P
    - YouTube: subtítulos; si no hay, baja solo el audio y lo transcribe el whisper local del PC (lo mismo que `resumen_video`, tope `PA_RESUMEN_MAX_MIN`).
    - X: el texto del post por la API pública de fxtwitter; si trae vídeo, su transcripción.
    - Spotify: título y programa de la ficha; la transcripción sale de la misma entrega en YouTube y, si no, del mp3 del RSS del programa (búsqueda pública de iTunes), transcrito en el PC.
-   - Artículos: el texto de la página. PDFs: su texto (páginas reales). Capturas: el modelo las lee; **una captura con varias cosas guardadas** (un chat con tarjetas de YouTube/X) se parte en una por cosa, sin repetir lo que ya estaba (misma clave: id del vídeo o del post).
+   - Artículos: el texto de la página. PDFs: su texto (páginas reales). EPUB, DOCX y ODT: su texto entero (el lector de documentos de Asistenta). Capturas: el modelo las lee; **una captura con varias cosas guardadas** (un chat con tarjetas de YouTube/X) se parte en una por cosa, sin repetir lo que ya estaba (misma clave: id del vídeo o del post).
    - Libros: **Goodreads** (página pública de búsqueda: media y número de valoraciones; si bloquea o no está, «N/D» con el motivo, nunca una nota inventada) y **Open Library** (autor, año, páginas, descripción).
    - Solo si todo falla se juzga por la descripción o la ficha, y la ficha lo dice: «⚠️ Sin transcripción: juzgado por la descripción (motivo)».
 2. **El coste**: minutos del vídeo/episodio, páginas del PDF o del libro, minutos de lectura (230 palabras/min).
@@ -38,8 +38,8 @@ A las **21:30** (Europe/Madrid; `PA_BANDEJA_HORA` o `/bandeja hora`), un mensaje
 Para leer en el Kindle (Nico: «generar el PDF y si se puede con Calibre convertir a formato Kindle Paperwhite 11ª generación»).
 
 - **Cómo se pide**: el botón **📖 Al Kindle** de la ficha (y «📖 N Kindle» en el resumen de la noche), contestar **«kindle»** al enlace que mandaste, al «📥 guardado» o a la ficha, o **/kindle N** / **/kindle <enlace>** (aunque no esté en la bandeja). Con **«pdf»** detrás (`/kindle 12 pdf`, «kindle pdf») sale además en PDF.
-- **Qué cosas**: artículos y páginas, PDFs, posts e hilos de X, y la **transcripción real** de un vídeo o podcast (la que se guardó al procesarlo; si no la hay, se saca otra vez por el mismo camino). Un vídeo juzgado solo por su descripción no tiene botón: no hay texto que leer.
-- **Qué sale**: el texto entero (Readability, el mismo extractor que `fetch`), con una primera página con título, autor, fecha, fuente y enlace, en un **EPUB** limpio. Con **Calibre** en el PC (`ebook-convert`: en el PATH, en `C:\Program Files\Calibre2` o en `PA_EBOOK_CONVERT`), también el **AZW3** del Paperwhite (`--output-profile kindle_pw3`) para pasarlo por USB a la carpeta `documents`. Sin Calibre se queda en EPUB y lo dice una vez: `winget install calibre.calibre` (no se instala solo). Un PDF que mandaste va **tal cual**.
+- **Qué cosas**: artículos y páginas, PDFs, EPUB y Word, posts e hilos de X, y la **transcripción real** de un vídeo o podcast (la que se guardó al procesarlo; si no la hay, se saca otra vez por el mismo camino). Un vídeo juzgado solo por su descripción no tiene botón: no hay texto que leer.
+- **Qué sale**: el texto entero (Readability, el mismo extractor que `fetch`), con una primera página con título, autor, fecha, fuente y enlace, en un **EPUB** limpio. Con **Calibre** en el PC (`ebook-convert`: en el PATH, en `C:\Program Files\Calibre2` o en `PA_EBOOK_CONVERT`), también el **AZW3** del Paperwhite (`--output-profile kindle_pw3`) para pasarlo por USB a la carpeta `documents`. Sin Calibre se queda en EPUB y lo dice una vez: `winget install calibre.calibre` (no se instala solo). Un PDF o un EPUB que mandaste va **tal cual** (el EPUB, además, en AZW3 con Calibre); un DOCX/ODT sale en EPUB con su texto.
 - **Correo a tu Kindle** (apagado hasta que lo pongas): `PA_KINDLE_EMAIL=tu_nombre@kindle.com` o `/bandeja kindle correo tu_nombre@kindle.com` (`… correo off` lo apaga). Va el EPUB (Amazon lo convierte) o el PDF, con el correo de Asistenta. Amazon **solo** acepta remitentes aprobados: Amazon → Contenido y dispositivos → Preferencias → Documentos personales → añade el correo de Asistenta.
 - **Automático**: `/bandeja kindle auto on` (o `PA_KINDLE_AUTO=1`) manda solo lo 🔴 «léelo entero» en cuanto se juzga; los vídeos 🔴 no (son para verlos; el botón sí los manda).
 - **Solo para ti**: va a tu chat y a tu Kindle, nunca a otro sitio. Con muro de pago, «inicia sesión» o una página que no deja leerla, no se salta: te paso el enlace y el porqué.

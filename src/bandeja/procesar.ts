@@ -10,6 +10,7 @@
 
 import type { VideoText } from '../media/resumen-video.js';
 import { xVideoUrl } from '../media/resumen-video.js';
+import { officeKind } from '../memory/office.js';
 import { decodeEntities, extractMainContent, extractText } from '../tools/fetch.js';
 import {
   type BandejaKind,
@@ -50,6 +51,8 @@ export interface ProcesarDeps {
   download?: (fileId: string) => Promise<Buffer | null>;
   /** Texto de un PDF (una página por bloque separado por línea en blanco). */
   pdfText?: (bytes: Buffer) => Promise<string>;
+  /** Texto de un EPUB, DOCX u ODT (el lector de memory/office.ts). */
+  docText?: (bytes: Buffer, mimeType?: string, name?: string) => Promise<string>;
   /** «Tus temas» de Nico, para etiquetar. */
   temas?: () => readonly string[];
   /** Una captura con varias cosas se parte en una por cosa (las guarda el daemon). */
@@ -590,6 +593,48 @@ async function pdfContent(item: BandejaItem, deps: ProcesarDeps): Promise<Conten
   };
 }
 
+/** ¿Un documento que sé leer además del PDF? EPUB (un libro), DOCX u ODT. */
+export function readableDocKind(
+  item: Pick<BandejaItem, 'mimeType' | 'fileName'>,
+): 'epub' | 'docx' | 'odt' | null {
+  const k = officeKind(item.mimeType ?? undefined, item.fileName ?? undefined);
+  return k === 'epub' || k === 'docx' || k === 'odt' ? k : null;
+}
+
+/** EPUB / DOCX / ODT que mandó Nico: su texto entero, como un PDF. */
+async function docContent(item: BandejaItem, deps: ProcesarDeps): Promise<Content> {
+  const kind = readableDocKind(item);
+  if (!item.fileId || !kind || !deps.download || !deps.docText)
+    throw new BandejaError('no puedo leer ese documento desde aquí');
+  const bytes = await deps.download(item.fileId);
+  if (!bytes) throw new BandejaError('no pude descargar el documento de Telegram (¿más de 20 MB?)');
+  let raw: string;
+  try {
+    raw = await deps.docText(bytes, item.mimeType ?? undefined, item.fileName ?? undefined);
+  } catch (err) {
+    throw new BandejaError(
+      `no pude leer el ${kind.toUpperCase()} (${String(err instanceof Error ? err.message : err).slice(0, 100)})`,
+    );
+  }
+  const w = words(raw);
+  if (w < 30) throw new BandejaError(`el ${kind.toUpperCase()} no tiene texto que leer`);
+  const mins = readingMinutes(w);
+  const pages = Math.max(1, Math.round(w / WORDS_PER_BOOK_PAGE));
+  const label = kind === 'epub' ? 'EPUB' : kind === 'docx' ? 'Word' : 'ODT';
+  return {
+    title:
+      item.fileName
+        ?.replace(/\.(epub|docx|odt)$/i, '')
+        .replace(/[_-]+/g, ' ')
+        .trim() || null,
+    text: raw,
+    costMin: mins,
+    costLabel: `${kind === 'epub' ? '📘' : '📝'} ~${pages} págs · ~${minutesLabel(mins)}`,
+    extra: { source: label, pages, basis: 'texto' },
+    describe: `${kind === 'epub' ? 'Libro en EPUB' : 'Documento'} «${item.fileName ?? 'sin nombre'}» de unas ${pages} páginas${raw.length > MAX_CONTENT_CHARS ? ' (te paso el principio y el final)' : ''}.`,
+  };
+}
+
 const SPLIT_PROMPT = [
   'Miras una captura de pantalla que Nico guardó.',
   'Si es una LISTA de varias cosas guardadas (un chat consigo mismo con tarjetas de YouTube, posts de X, artículos…), contesta una línea por cosa, en este formato:',
@@ -783,7 +828,10 @@ async function contentFor(
   if (kind === 'imagen') return imageContent(item, deps, signal);
   if (kind === 'libro') return bookContent(item, deps);
   if (kind === 'texto' && !item.url) {
-    if (item.fileId) throw new BandejaError('ese tipo de documento no lo sé leer aún (solo PDF)');
+    if (item.fileId) {
+      if (readableDocKind(item)) return docContent(item, deps);
+      throw new BandejaError('ese tipo de documento no lo sé leer aún (PDF, EPUB, DOCX u ODT sí)');
+    }
     return textContent(item);
   }
   return linkContent(item, deps, signal);
