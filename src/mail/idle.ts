@@ -338,4 +338,20 @@ export class MailIdleTransport {
     this.client?.close();
     await this.task;
   }
+  /**
+   * Como stop(), pero se puede volver a encender con start() («/correo vigilar off» y luego
+   * «on» sin reiniciar el daemon). stop() sigue siendo el apagado definitivo del cierre.
+   */
+  async pause(): Promise<void> {
+    if (this.stopped) return;
+    await this.stop();
+    this.task = null;
+    this.client = null;
+    this.abort = new AbortController();
+    this.stopped = false;
+  }
+  /** ¿Hay una conexión (o su reintento) en marcha? */
+  running(): boolean {
+    return this.task !== null && !this.stopped;
+  }
 }
