@@ -809,7 +809,9 @@ import {
 import { setUndoDir, undoLast } from './undo.js';
 import {
   archivarText,
+  fijarText,
   isArchiveConfirm,
+  pinSubcommand,
   SkillUsage,
   toolUseCounts,
   USO_VENTANA_MS,
@@ -8879,6 +8881,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // «/funciones uso» y «/funciones archivar [sí]»: lo que más usas y lo que no (dueño).
     const [sub = '', ...restWords] = args.trim().split(/\s+/);
     const subFold = foldAccents(sub.toLowerCase());
+    // «/funciones fijar <nombre>» / «/funciones soltar <nombre>»: nunca se archiva (Hermes lock).
+    const pin = view.owner ? pinSubcommand(subFold) : null;
+    if (pin !== null) {
+      const text = fijarText(skills.list(), restWords.join(' '), pin, (id, p) =>
+        skills.setPinned(id, p),
+      );
+      await say(inbound, text, { quote: true });
+      return;
+    }
     if (view.owner && (subFold === 'uso' || subFold === 'usos' || subFold === 'archivar')) {
       const now = Date.now();
       if (subFold === 'archivar') {

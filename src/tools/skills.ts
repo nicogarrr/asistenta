@@ -35,6 +35,8 @@ const SkillsParams = lazySchema(() =>
       Type.Literal('suggest'),
       Type.Literal('disable'),
       Type.Literal('enable'),
+      Type.Literal('pin'),
+      Type.Literal('unpin'),
       Type.Literal('remove'),
       Type.Literal('check'),
       Type.Literal('accept'),
@@ -42,7 +44,7 @@ const SkillsParams = lazySchema(() =>
     id: Type.Optional(
       Type.String({
         description:
-          'For read, improve, disable, enable and remove: the skill id (the slug of its name, see list).',
+          'For read, improve, disable, enable, pin, unpin and remove: the skill id (the slug of its name, see list).',
       }),
     ),
     name: Type.Optional(
@@ -163,6 +165,8 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<ReturnType<typ
       'action=disable when the owner says to drop one ("quita la de X"); action=enable brings it',
       'back; action=remove only when the owner explicitly asks to delete it (it goes to a',
       'recoverable trash). Disabled skills are not followed.',
+      'action=pin when the owner says to keep one forever ("no la archives nunca", "fija la de X"):',
+      'a pinned skill is never proposed for archiving; action=unpin undoes it.',
       'action=check runs the self-check of one skill (steps, needs set up, factory tool',
       'installed). Run it right after saving a new ability and tell the owner what is missing.',
       'action=accept only when the owner says yes to your «🔁 … ¿Lo guardo como habilidad?»',
@@ -278,6 +282,22 @@ export function createSkillsTool(deps: SkillsToolDeps): AgentTool<ReturnType<typ
               },
             ],
             details: { id, version: store.read(id)?.version ?? 1, steps: newSteps },
+          };
+        }
+
+        case 'pin':
+        case 'unpin': {
+          const id = String(args.id ?? '').trim();
+          if (!id) throw new Error(`la acción ${args.action} necesita id`);
+          const ok = store.setPinned(id, args.action === 'pin');
+          const text = !ok
+            ? `No tengo ninguna habilidad «${id}».`
+            : args.action === 'pin'
+              ? `📌 Fijada «${id}»: no te la propondré archivar aunque no se use.`
+              : `Soltada «${id}»: puede volver a salir en /funciones archivar si no se usa.`;
+          return {
+            content: [{ type: 'text', text }],
+            details: { id, action: args.action, found: ok },
           };
         }
 
