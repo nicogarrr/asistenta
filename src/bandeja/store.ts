@@ -33,6 +33,11 @@ export interface BandejaExtra {
   basis?: 'transcripcion' | 'descripcion' | 'ficha' | 'texto' | 'captura';
   /** Por qué no hubo transcripción (cuando `basis` es descripción o ficha). */
   basisReason?: string;
+  /**
+   * Transcripción a medias: el tope de tiempo cortó el whisper y solo se oyeron los primeros
+   * N min (la nota y el Kindle son de esa parte, y se dice).
+   */
+  heardMin?: number;
   /** Un dato público real al lado de nuestra nota (visualizaciones de YouTube…). */
   publicRating?: string;
   /** PDF original que ofrece el autor o la página (se adjunta tal cual, nunca se rehace). */

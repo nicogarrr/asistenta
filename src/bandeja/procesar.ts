@@ -329,7 +329,12 @@ async function videoContent(
       text: v.text,
       costMin: mins,
       costLabel: mins ? `🎬 ${minutesLabel(mins)}` : '🎬 duración desconocida',
-      extra: { author: v.meta.author, source: site, basis: 'transcripcion' },
+      extra: {
+        author: v.meta.author,
+        source: site,
+        basis: 'transcripcion',
+        ...(v.cappedAtMin ? { heardMin: v.cappedAtMin } : {}),
+      },
       describe: `Vídeo de ${site} «${v.meta.title}» de ${v.meta.author}${mins ? `, ${Math.round(mins)} min` : ''}, con su transcripción ${v.source === 'subtitulos' ? 'de los subtítulos' : 'sacada del audio'}${v.cappedAtMin ? ` (solo los primeros ${v.cappedAtMin} min)` : ''}.`,
       ...(found ? { url: found } : {}),
     };
@@ -478,8 +483,12 @@ async function podcastContent(
         text: v.text,
         costMin: mins,
         costLabel: mins ? `🎧 ${minutesLabel(mins)}` : '🎧 episodio',
-        extra: { source: `${show} (podcast)`, basis: 'transcripcion' },
-        describe: `Episodio del podcast ${show} «${title}», con la transcripción de su audio.`,
+        extra: {
+          source: `${show} (podcast)`,
+          basis: 'transcripcion',
+          ...(v.cappedAtMin ? { heardMin: v.cappedAtMin } : {}),
+        },
+        describe: `Episodio del podcast ${show} «${title}», con la transcripción de su audio${v.cappedAtMin ? ` (solo los primeros ${v.cappedAtMin} min)` : ''}.`,
       };
     reasons.push(`el audio del RSS no se pudo transcribir (${v.reason})`);
   } else reasons.push('no encontré el RSS');
