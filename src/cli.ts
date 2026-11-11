@@ -6641,6 +6641,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         fetchPdf: bandejaPdfBytes,
         // Comparte el turno del whisper con la cola (antes iban dos transcripciones a la vez).
         readable: (item) => bandejaQueue.readable(item),
+        transcribeBusy: () => bandejaQueue.transcribeBusy(),
+        notify: (text) => sendToChat(chatId, text),
         sendFile: (bytes, name, caption) =>
           telegram.sendDocumentBytes(Number(chatId), bytes, name, caption),
         mail: { account: () => loadMailAccount(), send: (account, req) => sendMail(account, req) },

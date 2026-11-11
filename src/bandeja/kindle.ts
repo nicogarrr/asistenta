@@ -653,6 +653,10 @@ export interface KindleDeliverDeps {
   readable?: (
     item: BandejaItem,
   ) => Promise<{ title: string | null; text: string; extra: BandejaExtra }>;
+  /** ¿El whisper del PC está ocupado con otra cosa (la cola de la bandeja)? */
+  transcribeBusy?: () => boolean;
+  /** Un aviso al chat de Nico mientras se prepara (la espera de una transcripción larga). */
+  notify?: (text: string) => Promise<unknown>;
   /** EPUB → AZW3 con Calibre; por defecto epubToAzw3 (busca ebook-convert). */
   convert?: (epub: Buffer, title: string) => Promise<Azw3Result>;
   /** Manda un fichero al chat de Nico. */
@@ -844,6 +848,17 @@ async function buildFor(item: BandejaItem, deps: KindleDeliverDeps): Promise<Bui
   if (stored) return { kind: 'doc', doc: itemDoc(item, stored, item.title) };
   if (!deps.readable)
     return { kind: 'link', url: item.url, title, reason: 'no tengo su texto guardado' };
+  // Un vídeo o un podcast sin su texto guardado se transcribe ahora, y si la cola de la
+  // bandeja tiene el whisper ocupado espera su turno: hasta 35 min. Antes, tras «📖 Preparo
+  // #N…», el chat se quedaba callado todo ese rato (bugs-36).
+  if (isMediaItem(item) && deps.notify)
+    await deps
+      .notify(
+        deps.transcribeBusy?.()
+          ? '⏳ El PC está transcribiendo otra cosa de la bandeja: en cuanto acabe transcribo esta y te la mando. Puede tardar un rato.'
+          : '⏳ No tenía su texto guardado: lo estoy transcribiendo. Un vídeo largo tarda unos minutos.',
+      )
+      .catch(() => undefined);
   try {
     const r = await deps.readable(item);
     if (item.id) deps.store.saveText(item.id, r.text);
