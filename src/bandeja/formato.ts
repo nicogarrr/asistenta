@@ -6,6 +6,7 @@ import { commandButton } from '../channels/telegram-shared.js';
 import { sliceSafe } from '../text.js';
 import type { BandejaKind } from './captura.js';
 import { goodreadsLine } from './goodreads.js';
+import { kindleable } from './kindle.js';
 import type { BandejaItem } from './store.js';
 import { VERDICT_EMOJI, VERDICT_ORDER, verdictLabel } from './veredicto.js';
 
@@ -77,6 +78,24 @@ export function itemButtons(item: BandejaItem, numbered = false): Button[] {
     commandButton(`⏭️${n} mañana`, 'bandeja', id, 'manana'),
     commandButton(`🗑️${n} fuera`, 'bandeja', id, 'descartar'),
   ].filter((b): b is Button => b !== undefined);
+}
+
+/** «📖 Al Kindle» de una cosa que se lee (artículo, PDF, post, transcripción), o nada. */
+export function kindleButton(item: BandejaItem, numbered = false): Button | undefined {
+  if (!kindleable(item)) return undefined;
+  return commandButton(
+    numbered ? `📖 ${item.id} Kindle` : '📖 Al Kindle',
+    'bandeja',
+    String(item.id),
+    'kindle',
+  );
+}
+
+/** Los botones de la ficha: ✅ ⏭️ 🗑️ y, si se lee, «📖 Al Kindle» en su fila. */
+export function cardButtons(item: BandejaItem): Button[] {
+  const kb = kindleButton(item);
+  if (item.state !== 'pendiente') return kb ? [kb] : [];
+  return kb ? [...itemButtons(item), kb] : itemButtons(item);
 }
 
 /**

@@ -57,6 +57,8 @@ export interface ProcesarDeps {
     parent: BandejaItem,
     child: CaptureCandidate,
   ) => { item: BandejaItem; dup: boolean } | null;
+  /** Una cosa recién juzgada (para mandar solo lo 🔴 al Kindle con «kindle auto»). */
+  onDone?: (item: BandejaItem) => void | Promise<void>;
   now?: () => Date;
 }
 
@@ -835,7 +837,37 @@ export async function processItem(
     costLabel: content.costLabel,
     extra: { ...content.extra, ...(tags.length ? { tags } : {}) },
     ...(content.url ? { url: content.url } : {}),
+    ...(keepsBody(item, content) ? { body: content.text } : {}),
   };
+}
+
+/**
+ * ¿Se guarda el texto entero para «📖 Al Kindle»? Solo lo que se leyó de verdad (la
+ * transcripción, el post, el artículo); no una descripción, ni el PDF (va el original).
+ */
+function keepsBody(item: BandejaItem, content: Content): boolean {
+  if (item.kind === 'pdf' || item.kind === 'imagen' || item.kind === 'libro') return false;
+  return content.extra.basis === 'transcripcion' || content.extra.basis === 'texto';
+}
+
+/**
+ * El texto entero de una cosa, con el mismo camino que el procesado (subtítulos o audio
+ * transcrito, post de X, página…), para «📖 Al Kindle» cuando no estaba guardado. Lanza
+ * BandejaError si solo hay una descripción o una ficha.
+ */
+export async function readableText(
+  item: BandejaItem,
+  deps: ProcesarDeps,
+  signal?: AbortSignal,
+): Promise<{ title: string | null; text: string; extra: BandejaExtra }> {
+  const c = await contentFor(item, deps, signal);
+  if (!keepsBody(item, c))
+    throw new BandejaError(
+      c.extra.basisReason
+        ? `no tengo el texto entero (${c.extra.basisReason})`
+        : 'no tengo el texto entero, solo la descripción',
+    );
+  return { title: c.title, text: c.text, extra: c.extra };
 }
 
 /** Tope de tiempo por cosa (un vídeo largo transcrito en el PC tarda). */
@@ -956,6 +988,16 @@ export class BandejaQueue {
         }
       }
       this.#store.saveResult(id, result, (this.#deps.now ?? (() => new Date()))());
+      if (result.body) this.#store.saveText(id, result.body);
+      const done = this.#store.get(id);
+      if (done && this.#deps.onDone) {
+        // «/bandeja kindle auto on»: lo 🔴 se manda solo. Nunca frena la cola.
+        void Promise.resolve()
+          .then(() => this.#deps.onDone?.(done))
+          .catch((err: unknown) =>
+            this.#warn('bandeja: aviso de fin falló', { id, err: String(err) }),
+          );
+      }
     } catch (err) {
       if (err instanceof BandejaSplit) {
         const parts = err.children.map((c) => `#${c}`).join(', ');

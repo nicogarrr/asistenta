@@ -10,7 +10,13 @@
  *   /bandeja pendientes      todo lo que queda por ver, de cualquier día
  *   /bandeja hora 22:00      la hora del resumen de cada noche
  *   /bandeja captura on|off  guardar solo lo que llega a secas (on) o solo con /bandeja (off)
+ *   /bandeja kindle N [pdf]  «📖 Al Kindle»: el texto entero en EPUB (+AZW3 con Calibre, +PDF)
+ *   /bandeja kindle <enlace> lo mismo con un enlace (también «/kindle <enlace>»)
+ *   /bandeja kindle auto on|off      lo 🔴 para leer entero va solo al Kindle
+ *   /bandeja kindle correo <x@kindle.com>|off   el correo a tu Kindle (apagado por defecto)
  */
+
+import { isKindleAddress } from '../books/kindle.js';
 import { localDay } from '../datecontext.js';
 import { type CaptureCandidate, explicitCapture } from './captura.js';
 import {
@@ -18,12 +24,13 @@ import {
   ackText,
   type Button,
   byVerdict,
+  cardButtons,
   cardText,
-  itemButtons,
   kindEmoji,
   listText,
   shortTitle,
 } from './formato.js';
+import { type KindleTarget, kindleStatusText } from './kindle.js';
 import type { BandejaQueue } from './procesar.js';
 import {
   composeDigest,
@@ -44,6 +51,8 @@ export interface BandejaReply {
   perRow?: number;
   /** PDF original que adjuntar detrás (lo 🔴 con PDF del autor). */
   pdf?: { url: string; name: string };
+  /** La cosa de la que es este mensaje (contestarle «kindle» la manda al Kindle). */
+  itemId?: number;
 }
 
 export interface BandejaCommandDeps {
@@ -55,6 +64,8 @@ export interface BandejaCommandDeps {
   progress?: (text: string) => Promise<unknown>;
   /** Un fichero que vino con la orden (foto o PDF con pie «/bandeja»). */
   attached?: CaptureCandidate | null;
+  /** «📖 Al Kindle»: arma y manda los ficheros; devuelve qué pasó (kindle.ts deliverToKindle). */
+  kindle?: (target: KindleTarget) => Promise<string>;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -79,6 +90,7 @@ export function captureAndAck(
   return {
     text: ackText(saved, deps.store.countDay(deps.chatId, day), digestHora(deps.store, deps.env)),
     buttons: ackButtons(saved),
+    ...(saved.length === 1 && saved[0] ? { itemId: saved[0].item.id } : {}),
   };
 }
 
@@ -92,6 +104,56 @@ function ownItem(deps: BandejaCommandDeps, raw: string | undefined): BandejaItem
   return item;
 }
 
+const ON = ['on', 'si', 'sí', '1'];
+const OFF = ['off', 'no', '0'];
+
+/** «/bandeja kindle …» (y «/kindle …», que es lo mismo). */
+async function kindleSub(parts: string[], deps: BandejaCommandDeps): Promise<BandejaReply> {
+  const [first = '', second = ''] = parts;
+  const opt = first.toLowerCase();
+  if (!first) return { text: kindleStatusText(deps.store, deps.env) };
+  if (opt === 'auto') {
+    const v = second.toLowerCase();
+    if (ON.includes(v)) {
+      deps.store.setMeta('kindle_auto', 'on');
+      return {
+        text: '📖 Hecho: lo 🔴 «léelo entero» te llega solo en formato Kindle en cuanto lo juzgue (los vídeos no; para esos, «📖 Al Kindle» a mano).',
+      };
+    }
+    if (OFF.includes(v)) {
+      deps.store.setMeta('kindle_auto', 'off');
+      return { text: '📖 Automático apagado: al Kindle solo lo que pidas con «📖 Al Kindle».' };
+    }
+    return { text: kindleStatusText(deps.store, deps.env) };
+  }
+  if (opt === 'correo' || opt === 'email' || opt === 'mail') {
+    if (OFF.includes(second.toLowerCase())) {
+      deps.store.setMeta('kindle_email', 'off');
+      return { text: '📧 Correo al Kindle apagado: los ficheros te llegan solo por aquí.' };
+    }
+    if (!second || !isKindleAddress(second))
+      return {
+        text: 'Pásame tu dirección de Kindle, la que acaba en @kindle.com (Amazon → Contenido y dispositivos → Dispositivos → tu Kindle): «/bandeja kindle correo tu_nombre@kindle.com».',
+      };
+    deps.store.setMeta('kindle_email', second.trim());
+    return {
+      text: `📧 Hecho: lo que mandes al Kindle irá también a ${second.trim()}. Para que Amazon lo acepte, el correo de Asistenta tiene que estar en tu lista de remitentes aprobados: Amazon → Contenido y dispositivos → Preferencias → Documentos personales.`,
+    };
+  }
+  if (!deps.kindle) return { text: 'El Kindle no está disponible desde aquí.' };
+  const pdf = parts.slice(1).some((p) => p.toLowerCase() === 'pdf');
+  if (/^https?:\/\//i.test(first)) {
+    await deps.progress?.('📖 Lo preparo para el Kindle…').catch(() => undefined);
+    return { text: await deps.kindle({ url: first, pdf }) };
+  }
+  const item = ownItem(deps, first);
+  if (typeof item === 'string') return { text: `${item.replace('/bandeja ver 12', '/kindle 12')}` };
+  await deps
+    .progress?.(`📖 Preparo #${item.id} ${shortTitle(item, 60)} para el Kindle…`)
+    .catch(() => undefined);
+  return { text: await deps.kindle({ item, pdf }), itemId: item.id };
+}
+
 const HELP = [
   '📥 La bandeja: mándame a secas (sin escribir nada más) enlaces de YouTube, X o artículos, PDFs, capturas o «libro: título», y los guardo.',
   'Cada noche te digo qué hacer con cada cosa: 🔴 imprescindible (entero) · 🟡 ideas buenas (basta el resumen) · ⚪ paja, con nota del 1 al 10.',
@@ -99,6 +161,7 @@ const HELP = [
   '',
   '/bandeja — lo de hoy · /bandeja ver N — ficha · /bandeja resumen — el resumen ya',
   '/bandeja semana · /bandeja pendientes · /bandeja hora 22:00 · /bandeja captura off',
+  '📖 /kindle N o /kindle <enlace> — el texto entero para el Kindle · /bandeja kindle — ajustes',
 ].join('\n');
 
 export async function bandejaCommand(
@@ -134,11 +197,7 @@ export async function bandejaCommand(
     case 'ficha': {
       const item = ownItem(deps, restParts[0]);
       if (typeof item === 'string') return { text: item };
-      return {
-        text: cardText(item),
-        buttons: item.state === 'pendiente' ? itemButtons(item) : [],
-        perRow: 3,
-      };
+      return { text: cardText(item), buttons: cardButtons(item), perRow: 3, itemId: item.id };
     }
     case 'ahora':
     case 'ya': {
@@ -155,8 +214,9 @@ export async function bandejaCommand(
       const pdf = pdfsToAttach([fresh])[0];
       return {
         text: cardText(fresh),
-        buttons: fresh.state === 'pendiente' ? itemButtons(fresh) : [],
+        buttons: cardButtons(fresh),
         perRow: 3,
+        itemId: fresh.id,
         ...(pdf?.extra.pdfUrl ? { pdf: { url: pdf.extra.pdfUrl, name: pdfName(pdf) } } : {}),
       };
     }
@@ -262,6 +322,8 @@ export async function bandejaCommand(
         text: `La captura automática está ${captureOn(deps.store, deps.env) ? 'encendida' : 'apagada'}. «/bandeja captura on|off».`,
       };
     }
+    case 'kindle':
+      return kindleSub(restParts, deps);
     default: {
       const cands = explicitCapture(trimmed);
       if (!cands) return { text: HELP };

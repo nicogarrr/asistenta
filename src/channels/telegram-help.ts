@@ -182,6 +182,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         description: 'lo que guardas a secas: cada noche 🔴 entero · 🟡 basta el resumen · ⚪ paja',
       },
       {
+        command: 'kindle',
+        args: '<N|enlace> [pdf]',
+        description: 'el texto entero de algo para leer, en EPUB/AZW3 para el Kindle',
+      },
+      {
         command: 'investiga',
         args: '[amplio] <pregunta> [| a, b, c]',
         description: 'informe a fondo con fuentes; «amplio» = tabla',

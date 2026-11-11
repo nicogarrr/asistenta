@@ -111,7 +111,20 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS texts (
+  item_id INTEGER PRIMARY KEY,
+  body    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS msgs (
+  chat_id    TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  item_id    INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, message_id)
+);
 `;
+
+/** Tope del texto entero guardado por cosa (una transcripción de 4 h son ~250 000 caracteres). */
+export const MAX_STORED_TEXT = 2_000_000;
 
 type Row = Record<string, string | number | null>;
 
@@ -160,6 +173,11 @@ function mapRow(r: Row): BandejaItem {
 
 export interface ProcessResult {
   title?: string | null;
+  /**
+   * El texto entero que se leyó (la transcripción, el post, el artículo), para «📖 Al
+   * Kindle» sin volver a transcribir. No va en `extra`: se guarda aparte (tabla texts).
+   */
+  body?: string;
   verdict: Veredicto | null;
   score: number | null;
   reason: string | null;
@@ -334,6 +352,41 @@ export class BandejaStore {
         now.toISOString(),
         id,
       );
+  }
+
+  /** Guarda el texto entero de una cosa (para «📖 Al Kindle»). */
+  saveText(id: number, body: string): void {
+    this.#db
+      .prepare(
+        'INSERT INTO texts (item_id, body) VALUES (?, ?) ON CONFLICT(item_id) DO UPDATE SET body = excluded.body',
+      )
+      .run(id, body.slice(0, MAX_STORED_TEXT));
+  }
+
+  getText(id: number): string | null {
+    const r = this.#db.prepare('SELECT body FROM texts WHERE item_id = ?').get(id) as
+      | { body: string }
+      | undefined;
+    return r ? r.body : null;
+  }
+
+  /** Apunta que un mensaje de Telegram (el aviso, la ficha, el enlace de Nico) es de esta cosa. */
+  linkMessage(chatId: string, messageId: string, itemId: number): void {
+    this.#db
+      .prepare(
+        'INSERT INTO msgs (chat_id, message_id, item_id) VALUES (?, ?, ?) ON CONFLICT(chat_id, message_id) DO UPDATE SET item_id = excluded.item_id',
+      )
+      .run(chatId, messageId, itemId);
+  }
+
+  /** La cosa a la que pertenece un mensaje (para contestar «kindle» a ese mensaje). */
+  itemForMessage(chatId: string, messageId: string): BandejaItem | null {
+    const r = this.#db
+      .prepare('SELECT item_id FROM msgs WHERE chat_id = ? AND message_id = ?')
+      .get(chatId, messageId) as { item_id: number } | undefined;
+    if (!r) return null;
+    const item = this.get(Number(r.item_id));
+    return item && item.chatId === chatId ? item : null;
   }
 
   setState(id: number, state: Estado): void {

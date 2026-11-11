@@ -184,6 +184,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'ignorados',
   'expertos',
   'bandeja',
+  'kindle',
 ]);
 
 export interface FuncionCommand extends HelpEntry {

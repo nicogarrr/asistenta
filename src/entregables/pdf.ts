@@ -89,7 +89,10 @@ export async function crearPdf(input: PdfInput): Promise<Buffer> {
   }
   y -= 6;
   if (input.texto?.trim()) {
-    for (const l of partir(limpio(input.texto.trim()), font, 11, ancho)) {
+    // Línea a línea: el salto de línea no está en WinAnsi y `limpio` se lo comía, así que
+    // un texto de varios párrafos salía en un solo bloque.
+    const texto = input.texto.trim().split(/\r?\n/).map(limpio).join('\n');
+    for (const l of partir(texto, font, 11, ancho)) {
       if (y < MARGEN + 14) nueva();
       page.drawText(l, { x: MARGEN, y: y - 11, size: 11, font });
       y -= 15;
