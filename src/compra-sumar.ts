@@ -8,7 +8,10 @@
  * misma cucharada, o unidades sueltas: huevos, cebollas). Si no se puede sumar (2 tazas con
  * 200 g), queda como antes, en su línea.
  */
+import { concordar, esPlural } from './compra-concordar.js';
 import { ingredientBase } from './compra-receta.js';
+
+export { concordar } from './compra-concordar.js';
 
 const fold = (s: string): string =>
   s
@@ -124,5 +127,8 @@ export function sumarLinea(existing: string, extra: string): string | null {
   const total = (a.q * a.factor + b.q * b.factor) / a.factor;
   // «1 huevo» + «2 huevos»: el texto en plural es el que vale para el total.
   const template = a.family === 'u' && a.q === 1 && b.q > 1 ? b : a;
-  return `${fmt(total, template.unit)}${template.rest}`;
+  const qty = fmt(total, template.unit);
+  // «½ cebolla» + «1 cebolla» → «2 cebollas», no «2 cebolla».
+  const ahora = esPlural(Number(qty.replace(',', '.')));
+  return `${qty}${ahora === esPlural(template.q) ? template.rest : concordar(template.rest, ahora)}`;
 }

@@ -29,7 +29,8 @@ describe('/compra receta … para N: escala las cantidades', () => {
 
   it('escala la cantidad inicial con redondeo de compra', () => {
     expect(scaleIngredient('300 g de lentejas', 1.5)).toBe('450 g de lentejas');
-    expect(scaleIngredient('1 chorizo', 1.5)).toBe('2 chorizo');
+    // bugs-35: con el plural (antes «2 chorizo»).
+    expect(scaleIngredient('1 chorizo', 1.5)).toBe('2 chorizos');
     expect(scaleIngredient('½ cebolla', 1.5)).toBe('1 cebolla');
     expect(scaleIngredient('1,5 l de leche', 1.5)).toBe('2,3 l de leche');
     expect(scaleIngredient('2 cucharadas de miel', 1.5)).toBe('3 cucharadas de miel');
@@ -52,7 +53,7 @@ describe('/compra receta … para N: escala las cantidades', () => {
     expect(view.text).toContain('«Lentejas» (de 4 a 6 raciones): apunto 5 ingredientes');
     expect(store.list().map((i) => i.text)).toEqual([
       '450 g de lentejas',
-      '2 chorizo',
+      '2 chorizos',
       '3 zanahorias',
       '1 cebolla',
       'Aceite de oliva',
