@@ -1,5 +1,11 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import { compactTokensFromEnv, estimateTokens, isSummary } from '../core/history.js';
+import {
+  compactTokensFromEnv,
+  countUnverified,
+  estimateTokens,
+  isSummary,
+  UNVERIFIED_WARNING,
+} from '../core/history.js';
 import { sliceSafe } from '../text.js';
 
 /**
@@ -57,6 +63,11 @@ export interface HiloContexto {
   resumenes: number;
   /** ISO del último resumen que sigue en el historial; null si no hay. */
   ultimoResumen: string | null;
+  /**
+   * Datos del resumen marcados «SIN VERIFICAR:» (Hermes `UNVERIFIED:`): lo que el asistente
+   * dio por hecho sin comprobarlo antes de resumir. Solo el número, nunca el texto.
+   */
+  sinVerificar: number;
   /** Nombres de las herramientas cargadas (solo nombres, con tope). */
   herramientas: string[];
   herramientasRecortadas: number;
@@ -105,6 +116,19 @@ function role(m: AgentMessage): string {
   return String((m as { role?: unknown }).role ?? '');
 }
 
+/** El texto de un mensaje (cadena o bloques de texto). */
+function textoDe(m: AgentMessage): string {
+  const c = (m as { content?: unknown }).content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  return c
+    .map((b) => {
+      const t = (b as { text?: unknown })?.text;
+      return typeof t === 'string' ? t : '';
+    })
+    .join('\n');
+}
+
 function textoDeSistema(m: AgentMessage): number {
   const c = (m as { content?: unknown }).content;
   if (typeof c === 'string') return c.length;
@@ -148,10 +172,13 @@ export function contextoDeHilo(f: ContextoFuente): HiloContexto {
   let conversacion = 0;
   let mensajes = 0;
   let fotos = 0;
+  let sinVerificar = 0;
   for (const [i, m] of f.messages.entries()) {
     const t = estimateTokens(m);
     if (isSummary(m)) {
       resumen += t;
+      // El aviso que va bajo la cabecera nombra la marca: no cuenta como dato.
+      sinVerificar += countUnverified(textoDe(m).replaceAll(UNVERIFIED_WARNING, ''));
       const ts = (m as { timestamp?: unknown }).timestamp;
       if (typeof ts === 'number' && Number.isFinite(ts)) ultimo = Math.max(ultimo ?? 0, ts);
     } else if (role(m) === 'system') {
@@ -191,7 +218,9 @@ export function contextoDeHilo(f: ContextoFuente): HiloContexto {
       id: 'resumen',
       nombre: 'Resumen de lo anterior',
       tokens: resumen,
-      detalle: resumen ? 'resumen automático' : 'sin resumen todavía',
+      detalle: resumen
+        ? `resumen automático${sinVerificar ? ` · ${plural(sinVerificar, 'dato sin verificar', 'datos sin verificar')}` : ''}`
+        : 'sin resumen todavía',
     },
     {
       id: 'conversacion',
@@ -222,6 +251,7 @@ export function contextoDeHilo(f: ContextoFuente): HiloContexto {
     resumenApagado: apagado,
     resumenes: f.resumenes,
     ultimoResumen: ultimo === null ? null : new Date(ultimo).toISOString(),
+    sinVerificar,
     herramientas: nombres.slice(0, MAX_NOMBRES_HERRAMIENTAS),
     herramientasRecortadas: Math.max(0, nombres.length - MAX_NOMBRES_HERRAMIENTAS),
   };
