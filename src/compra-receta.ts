@@ -9,6 +9,7 @@
  *
  * Lo que se da por hecho en casa (sal, pimienta, agua) no se apunta, y se dice.
  */
+import { concordar, esPlural } from './compra-concordar.js';
 import { decodeEntities } from './tools/fetch.js';
 
 const MAX_INGREDIENTS = 60;
@@ -188,7 +189,11 @@ export function scaleIngredient(item: string, factor: number): string {
     /^(?:g|gr|gramos?|kg|kilos?|ml|mililitros?|l|litros?|cl|dl|cucharad\w*|cdas?|cdtas?|tazas?|vasos?|latas?|sobres?|dientes?|pizcas?|ramitas?|hojas?)$/i.test(
       unit,
     );
-  return `${fmtQty(q * factor, isUnit ? unit : '')}${item.slice(m[1].length)}`;
+  const qty = fmtQty(q * factor, isUnit ? unit : '');
+  const rest = item.slice(m[1].length);
+  // «1 cebolla» para 6 → «2 cebollas»; «2 huevos» para 2 → «1 huevo».
+  const ahora = esPlural(Number(qty.replace(',', '.')));
+  return `${qty}${ahora === esPlural(q) ? rest : concordar(rest, ahora)}`;
 }
 
 /** «… para 6» / «… 6 personas» al final de /compra receta: raciones que quiere Nico. */
