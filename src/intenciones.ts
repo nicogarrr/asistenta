@@ -32,8 +32,12 @@ export interface Intencion {
 
 const fold = (s: string): string => foldAccents(s).toLowerCase();
 
-/** «hable de», «mencione a», «salga el tema de»… (lo que dispara: decir, no llegar). */
-const HABLAR = String.raw`(?:yo\s+)?(?:te\s+)?(?:hable(?:s|mos)?|hablo|mencione(?:s|mos)?|menciono|nombre|nombro|saque|saco|salga\s+(?:el\s+)?tema|sale\s+(?:el\s+)?tema|escriba|escribo)\s+(?:de|sobre|del|a|con|el\s+tema\s+de)?\s*`;
+/**
+ * «hable de», «mencione a», «salga el tema de»… (lo que dispara: decir, no llegar). Solo en 1ª
+ * persona: «cuando hables con el banco, dime qué te dicen» es un encargo para Asistenta, no un
+ * recordatorio que salte cuando Nico hable del banco.
+ */
+const HABLAR = String.raw`(?:yo\s+)?(?:te\s+)?(?:hable(?:mos)?|hablo|mencione(?:mos)?|menciono|nombre|nombro|saque|saco|salga\s+(?:el\s+)?tema|sale\s+(?:el\s+)?tema|escriba|escribo)\s+(?:de|sobre|del|a|con|el\s+tema\s+de)?\s*`;
 const CUANDO = String.raw`(?:cuando|cada\s+vez\s+que|si(?:\s+alguna\s+vez)?)\s+`;
 const PIDE = String.raw`(?:recu[eé]rdame|av[ií]same(?:\s+de)?|dime|preg[uú]ntame(?:\s+por)?)\s+(?:que\s+|de\s+)?`;
 /** «cuando hable de Indra, recuérdame mirar el dividendo». */
