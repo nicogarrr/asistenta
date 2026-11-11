@@ -11,6 +11,7 @@
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { chatSinHilo } from './chat-titulos.js';
 import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
 export type AreaId =
@@ -138,7 +139,14 @@ export function splitAskFirstScope(what: string): { what: string; where: 'aqui' 
 
 /** La regla vale en esta llamada: es de todos los hilos o de este chat. */
 const appliesIn = (r: AskFirstRule, chat: string | undefined): boolean =>
-  r.chat === undefined || (chat !== undefined && r.chat === chat);
+  r.chat === undefined || (chat !== undefined && mismoChat(r.chat, chat));
+
+/**
+ * ¿Es el mismo chat? Sin mirar el tema: en un grupo con temas (foro) la clave lleva el hilo
+ * («telegram:cuenta:-100123:7»), y una regla «… en este grupo» dicha en un tema solo valía en
+ * ese tema; en «General» o en otro tema no preguntaba (bugs-36).
+ */
+const mismoChat = (a: string, b: string): boolean => chatSinHilo(a) === chatSinHilo(b);
 
 const fold = (s: string): string =>
   s
@@ -224,7 +232,13 @@ export class AskFirstStore {
     const already: AreaId[] = [];
     let next = rules.reduce((m, r) => Math.max(m, r.id), 0) + 1;
     for (const area of areas) {
-      if (rules.some((r) => r.area === area && (r.chat === undefined || r.chat === chat))) {
+      if (
+        rules.some(
+          (r) =>
+            r.area === area &&
+            (r.chat === undefined || (chat !== undefined && mismoChat(r.chat, chat))),
+        )
+      ) {
         already.push(area);
         continue;
       }
@@ -234,7 +248,7 @@ export class AskFirstStore {
         area,
         dicho: dicho.trim().slice(0, 120),
         createdAt: new Date(this.#now()).toISOString(),
-        ...(chat === undefined ? {} : { chat }),
+        ...(chat === undefined ? {} : { chat: chatSinHilo(chat) }),
       };
       // Pasa a valer en todos los hilos: las de un solo chat de esa clase sobran.
       if (chat === undefined) {
@@ -303,7 +317,8 @@ const AREA_HINT =
 /** Dónde vale una regla, dicho para Nico desde el chat en que mira la lista. */
 function scopeNote(r: AskFirstRule, where: AskFirstWhere | undefined): string {
   if (r.chat === undefined) return '';
-  if (where && r.chat === where.chat) return where.group ? ' (solo en este grupo)' : ' (solo aquí)';
+  if (where && mismoChat(r.chat, where.chat))
+    return where.group ? ' (solo en este grupo)' : ' (solo aquí)';
   const grupo = /:-\d+/.test(r.chat);
   const nombre = where?.nombreDe?.(r.chat);
   if (nombre) return grupo ? ` (solo en el grupo «${nombre}»)` : ` (solo en «${nombre}»)`;
@@ -314,7 +329,7 @@ function scopeNote(r: AskFirstRule, where: AskFirstWhere | undefined): string {
 const visibleFrom =
   (where: AskFirstWhere | undefined) =>
   (r: AskFirstRule): boolean =>
-    !where?.group || r.chat === undefined || r.chat === where.chat;
+    !where?.group || r.chat === undefined || mismoChat(r.chat, where.chat);
 
 /**
  * La respuesta de `/permisos preguntar …` y de «pregúntame antes de …». `where` es el chat en
