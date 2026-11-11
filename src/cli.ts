@@ -163,7 +163,7 @@ import {
   modelErrorFollowUp,
   modelErrorMark,
 } from './core/friendly-error.js';
-import { dedupeNewFacts, splitCaducidad } from './core/history.js';
+import { countUnverifiedInSummaries, dedupeNewFacts, splitCaducidad } from './core/history.js';
 import {
   checkProviderKey,
   createProviderHandle,
@@ -8054,6 +8054,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         project: projectContexts.load(thread.key),
         model: thread.agent.modelId,
         primaryModel: thread.agent.availableModels[0] ?? config.model,
+        // Lo mismo que la tarjeta Contexto del panel: solo el número, nunca el texto.
+        sinVerificar: countUnverifiedInSummaries(thread.agent.messages),
       });
       // Sin carpeta: una ruta pegada en texto normal la liga, como /proyecto <carpeta>.
       if (!projectContexts.get(thread.key)) {

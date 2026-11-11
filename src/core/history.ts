@@ -101,6 +101,23 @@ export function hasUnverified(text: string): boolean {
 export function countUnverified(text: string): number {
   return text.match(new RegExp(UNVERIFIED_RE.source, 'gi'))?.length ?? 0;
 }
+
+/**
+ * Cuántos datos marcados «SIN VERIFICAR:» llevan los resúmenes que siguen en el
+ * historial (lo mismo que cuenta la tarjeta Contexto del panel, para /estado).
+ * El aviso que va bajo la cabecera nombra la marca: no cuenta como dato.
+ */
+export function countUnverifiedInSummaries(messages: readonly AgentMessage[]): number {
+  let n = 0;
+  for (const m of messages) {
+    if (!isSummary(m)) continue;
+    const text = blocks(m)
+      .map((b) => (b.type === 'text' && typeof b.text === 'string' ? b.text : ''))
+      .join('\n');
+    n += countUnverified(text.replaceAll(UNVERIFIED_WARNING, ''));
+  }
+  return n;
+}
 const OPEN = '<<<DATOS';
 const CLOSE = 'FIN DATOS>>>';
 
