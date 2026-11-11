@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
@@ -33,6 +34,11 @@ export interface CompraItem {
   text: string;
   done: boolean;
   addedAt: number;
+  /**
+   * Las recetas que ya contaron en esta línea (su enlace o la huella de su texto), para que
+   * otra receta con la misma línea sume y la misma receta mandada otra vez no (bugs-35).
+   */
+  recetas?: string[];
 }
 
 interface CompraFile {
@@ -150,7 +156,10 @@ export class CompraStore {
    * harina» → «300 g de harina») en vez de quedar dos líneas o darse por «ya estaba». Si ya
    * estaba sin cantidad («harina»), se da por apuntado.
    */
-  addSumando(texts: string[]): {
+  addSumando(
+    texts: string[],
+    receta?: string,
+  ): {
     added: string[];
     already: string[];
     merged: Array<{ from: string; to: string }>;
@@ -160,29 +169,49 @@ export class CompraStore {
     const already: string[] = [];
     const merged: Array<{ from: string; to: string }> = [];
     let changed = false;
+    const marca = (item: CompraItem | undefined): void => {
+      if (!item || !receta || item.recetas?.includes(receta)) return;
+      item.recetas = [...(item.recetas ?? []), receta].slice(-20);
+      changed = true;
+    };
     for (const text of texts) {
       const t = text.trim().slice(0, MAX_ITEM_CHARS);
       if (!t) continue;
       const key = ingredientKey(t);
       const pending = key ? data.items.filter((i) => !i.done && ingredientKey(i.text) === key) : [];
       let done = false;
+      // Esta misma receta ya contó en esa línea (aunque se sumara a otra cantidad): mandarla
+      // otra vez no suma de nuevo. Antes solo lo frenaba el texto exacto y «100 g» + «200 g»
+      // = «300 g» pasaba a «500 g» al repetirla.
+      const counted = receta ? pending.find((i) => i.recetas?.includes(receta)) : undefined;
+      if (counted) {
+        already.push(counted.text);
+        continue;
+      }
       // El mismo texto exacto («6 huevos» y «6 huevos») se da por «ya estaba», como siempre:
       // así mandar dos veces la misma receta (o que el modelo la repita) no duplica nada.
+      // Si ese texto lo puso OTRA receta, esta suma lo suyo («2 huevos» + «2 huevos»).
       const same = pending.find((i) => fold(i.text) === fold(t));
-      if (same) {
+      const deOtra = Boolean(receta && same?.recetas?.length);
+      if (same && !deOtra) {
         already.push(same.text);
         continue;
       }
-      for (const hit of pending) {
+      for (const hit of same ? [same, ...pending.filter((i) => i !== same)] : pending) {
         const sum = sumarLinea(hit.text, t);
         if (sum && sum.length <= MAX_ITEM_CHARS) {
           merged.push({ from: hit.text, to: sum });
           hit.text = sum;
+          marca(hit);
           changed = done = true;
           break;
         }
       }
       if (done) continue;
+      if (same) {
+        already.push(same.text);
+        continue;
+      }
       // Ya en la lista sin cantidad («harina»): con eso basta, como antes con el texto igual.
       const bare = pending.find((i) => !/^\s*[\d½¼¾⅓⅔]/.test(i.text));
       if (bare) {
@@ -194,6 +223,8 @@ export class CompraStore {
       if (r === 'already') already.push(t);
       else {
         added.push(r);
+        const nuevo = data.items.find((i) => !i.done && fold(i.text) === fold(r));
+        if (nuevo && receta) nuevo.recetas = [receta];
         changed = true;
       }
     }
@@ -519,7 +550,11 @@ export async function recetaACompra(
   if (!r.items.length) {
     return { text: recetaNote(r, [], [], servings), buttons: [] };
   }
-  const added = store.addSumando(r.items);
+  // Qué receta es (su enlace o la huella de lo pegado): la misma no cuenta dos veces.
+  const receta = url
+    ? `url:${url.replace(/[?#].*$/, '').toLowerCase()}`
+    : `txt:${createHash('sha256').update(fold(arg)).digest('hex').slice(0, 16)}`;
+  const added = store.addSumando(r.items, receta);
   const note = recetaNote(r, added.added, added.already, servings);
   const sumado = added.merged.length
     ? ` Sumado a lo que ya tenías: ${added.merged.map((m) => `${m.from} → ${m.to}`).join(', ')}.`
