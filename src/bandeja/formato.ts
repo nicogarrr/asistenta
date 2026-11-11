@@ -3,9 +3,10 @@
  * guardar, la ficha de una cosa, la lista de /bandeja y los botones.
  */
 import { commandButton } from '../channels/telegram-shared.js';
-import { localDay } from '../datecontext.js';
+import { localDay, localTimeZone } from '../datecontext.js';
 import { sliceSafe } from '../text.js';
 import { type BandejaKind, displayUrl } from './captura.js';
+import { eventoLinea } from './evento.js';
 import { goodreadsLine } from './goodreads.js';
 import { kindleable } from './kindle.js';
 import type { BandejaItem } from './store.js';
@@ -211,8 +212,15 @@ function metaLine(item: BandejaItem): string {
   return parts.join(' · ');
 }
 
+/** «📅 jueves 20 nov, 10:00 · IFEMA» si la página es de un evento (su ficha schema.org `Event`). */
+export function eventLine(item: BandejaItem, now: Date = new Date(), tz?: string): string | null {
+  const ev = item.extra.evento;
+  if (!ev?.inicio) return null;
+  return eventoLinea(ev, tz ?? localTimeZone(), now);
+}
+
 /** La ficha completa de una cosa ya procesada (o por qué no lo está). */
-export function cardText(item: BandejaItem): string {
+export function cardText(item: BandejaItem, now: Date = new Date()): string {
   const head = `#${item.id} ${kindEmoji(item.kind)} ${shortTitle(item, 120)}`;
   if (item.state === 'descartado' && item.status === 'listo' && !item.verdict)
     return [head, `ℹ️ ${item.error ?? 'quitada'}.`].join('\n');
@@ -226,6 +234,8 @@ export function cardText(item: BandejaItem): string {
   ];
   const meta = metaLine(item);
   if (meta) lines.push(meta);
+  const cuando = eventLine(item, now);
+  if (cuando) lines.push(cuando);
   const gr = goodreadsLine(item.extra.goodreads);
   if (gr) lines.push(gr);
   if (item.extra.publicRating) lines.push(item.extra.publicRating);
