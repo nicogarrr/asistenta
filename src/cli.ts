@@ -2552,13 +2552,16 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           repartos: () => panelRepartos(activeDeliveries(memoryDb, Date.now()), localTimeZone()),
           // Tarjeta Páginas: páginas vivas y salidas de rutinas a fichero (solo texto, sin HTML).
           // «Mis gastos» automática: se rehace al mirarla si el Ojo apuntó cobros nuevos.
-          paginas: () => {
+          paginas: async () => {
             refrescarPaginaGastos(memoryDb, paginasVivas, Date.now(), localTimeZone());
+            const { EnlacesFijados } = await import('./enlaces-enviados.js');
             return panelPaginas(
               paginasVivas,
               join(paths.state, 'salidas'),
               localTimeZone(),
               creados,
+              // 📌 Los enlaces que fijó en /biblioteca enlaces, a un clic desde el panel.
+              () => new EnlacesFijados(join(paths.state, 'enlaces-fijados.json')).todos(),
             );
           },
           creado: (id) => creados.leer(id),
@@ -7722,12 +7725,15 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   /** «/biblioteca enlaces» y su «📌 N» / «Soltar N» (enlaces-enviados.ts). */
   const cmdBibliotecaEnlaces = async (
     inbound: Inbound,
-    orden: { kind: 'enlaces' } | { kind: 'enlace-pin'; fijar: boolean; n: number; clave?: string },
+    orden:
+      | { kind: 'enlaces'; busca?: string }
+      | { kind: 'enlace-pin'; fijar: boolean; n: number; clave?: string },
   ): Promise<void> => {
     const { commandButton } = await import('./channels/telegram-shared.js');
     const en = await import('./enlaces-enviados.js');
     const key = (await resolveThread(inbound)).key;
-    const recientes = en.enlacesDe(sessions.recentAssistantTurns(key, 300));
+    const turnos = sessions.recentAssistantTurns(key, 300);
+    const recientes = en.enlacesDe(turnos);
     // 📌 enlaces fijados de este chat (Grok Bot «Pin»): salen arriba aunque pasen los 10 últimos.
     const fijos = new en.EnlacesFijados(join(paths.state, 'enlaces-fijados.json'));
     const chat = chatKey(inbound);
@@ -7744,7 +7750,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
       await say(inbound, en.textoFijarEnlace(orden.fijar, e, r), { quote: true });
       return;
     }
-    const v = en.enlacesVista(recientes, Date.now(), localTimeZone(), fijos.lista(chat));
+    // «/biblioteca enlaces idealista»: busca más atrás que los 10 últimos (y en los fijados).
+    const busca = orden.kind === 'enlaces' ? orden.busca : undefined;
+    const v = busca
+      ? en.enlacesVista(
+          en
+            .buscarEnlaces(en.enlacesDe(turnos, en.ENLACES_BUSCA_MAX), busca)
+            .slice(0, en.ENLACES_MAX),
+          Date.now(),
+          localTimeZone(),
+          en.buscarEnlaces(fijos.lista(chat), busca),
+          busca,
+        )
+      : en.enlacesVista(recientes, Date.now(), localTimeZone(), fijos.lista(chat));
     // Por fila: «🔗 N» (abre, si es https) y su «📌 N» / «Soltar N».
     const abrir = new Map(v.buttons.map((b) => [b.label.replace(/^🔗 /, ''), b]));
     const buttons = v.pins

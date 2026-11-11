@@ -174,6 +174,20 @@ export class EnlacesFijados {
     return this.#leer()[chat] ?? [];
   }
 
+  /** Los fijados de todos sus chats, sin repetir (tarjeta Páginas del panel, que es suyo). */
+  todos(): EnlaceEnviado[] {
+    const out: EnlaceEnviado[] = [];
+    const vistos = new Set<string>();
+    for (const l of Object.values(this.#leer()))
+      for (const x of l) {
+        const k = claveEnlace(x.url);
+        if (vistos.has(k)) continue;
+        vistos.add(k);
+        out.push(x);
+      }
+    return out.sort((a, b) => b.at - a.at);
+  }
+
   fijar(chat: string, e: EnlaceEnviado): 'ok' | 'ya' | 'lleno' {
     const datos = this.#leer();
     const l = datos[chat] ?? [];
@@ -193,6 +207,30 @@ export class EnlacesFijados {
     this.#guardar(datos);
     return e;
   }
+}
+
+/** Cuántos enlaces se miran hacia atrás al buscar («/biblioteca enlaces idealista»). */
+export const ENLACES_BUSCA_MAX = 200;
+
+const plegar = (s: string): string =>
+  s
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase();
+
+/**
+ * Los que llevan TODAS las palabras de la búsqueda en la etiqueta o en la dirección (sin
+ * tildes ni mayúsculas): «idealista», «piso gijon», «youtube indra».
+ */
+export function buscarEnlaces<T extends EnlaceEnviado>(enlaces: readonly T[], busca: string): T[] {
+  const ws = plegar(busca)
+    .split(/[^a-z0-9ñ]+/)
+    .filter((w) => w.length > 1 && !/^(de|del|la|el|los|las|un|una|en|con)$/.test(w));
+  if (!ws.length) return [];
+  return enlaces.filter((x) => {
+    const hay = plegar(`${x.etiqueta} ${displayUrl(x.url)}`);
+    return ws.every((w) => hay.includes(w));
+  });
 }
 
 /** Lo fijado arriba y luego lo último que te mandé (sin repetir lo fijado). La numeración de la lista. */
@@ -235,6 +273,8 @@ export function enlacesVista(
   now: number = Date.now(),
   tz: string = localTimeZone(),
   fijados: readonly EnlaceEnviado[] = [],
+  /** «/biblioteca enlaces idealista»: lo que ya viene filtrado, para el título y el «nada». */
+  busca?: string,
 ): {
   text: string;
   buttons: Array<{ label: string; action: string }>;
@@ -243,7 +283,9 @@ export function enlacesVista(
   const todos = enlacesConFijados(enlaces, fijados);
   if (!todos.length)
     return {
-      text: '🔗 Aún no te he mandado ningún enlace en este chat (o es de antes de que guardara las conversaciones).',
+      text: busca
+        ? `🔗 No encuentro ningún enlace con «${busca}» entre los que te he mandado. «/biblioteca enlaces» para verlos todos.`
+        : '🔗 Aún no te he mandado ningún enlace en este chat (o es de antes de que guardara las conversaciones).',
       buttons: [],
       pins: [],
     };
@@ -260,7 +302,9 @@ export function enlacesVista(
     : lineas.join('\n');
   const recientes = todos.length - nFij;
   return {
-    text: `🔗 Los enlaces que te he mandado${recientes ? ` (los ${recientes} últimos${nFij ? `, y ${nFij} fijado${nFij === 1 ? '' : 's'}` : ''})` : ''}:\n${cuerpo}\n\nToca 🔗 N para abrirlo y 📌 N para tenerlo siempre arriba.`,
+    text: busca
+      ? `🔗 Enlaces con «${busca}» (${todos.length}):\n${cuerpo}\n\nToca 🔗 N para abrirlo y 📌 N para tenerlo siempre arriba.`
+      : `🔗 Los enlaces que te he mandado${recientes ? ` (los ${recientes} últimos${nFij ? `, y ${nFij} fijado${nFij === 1 ? '' : 's'}` : ''})` : ''}:\n${cuerpo}\n\nToca 🔗 N para abrirlo y 📌 N para tenerlo siempre arriba. «/biblioteca enlaces <palabra>» para buscar uno más viejo.`,
     buttons: todos
       .map((e, i) => ({ label: `🔗 ${i + 1}`, action: `url:${e.url}` }))
       .filter((b) => /^url:https:\/\/\S+$/.test(b.action) && Buffer.byteLength(b.action) <= 2052),

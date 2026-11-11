@@ -2598,6 +2598,24 @@ ${renderMiniAppScript()}
             });
             contenedor.appendChild(lista3);
           }
+          // 📌 Enlaces fijados en «/biblioteca enlaces»: un clic y se abren (solo https).
+          if (Array.isArray(datos.enlaces) && datos.enlaces.length) {
+            contenedor.appendChild(nodo('p', 'muted', '📌 Enlaces fijados («/biblioteca enlaces» en Telegram):'));
+            var lista4 = nodo('ul', 'tareas');
+            datos.enlaces.forEach(function (e) {
+              if (typeof e.url !== 'string' || !/^https:[/][/]/i.test(e.url)) return;
+              var fila = nodo('li', 'texto');
+              var a = document.createElement('a');
+              a.href = e.url;
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+              a.textContent = e.etiqueta && e.etiqueta.toLowerCase() !== String(e.dominio).toLowerCase() ? e.etiqueta : e.dominio;
+              fila.appendChild(a);
+              fila.appendChild(document.createTextNode(' · ' + e.dominio + ' · ' + e.fijado));
+              lista4.appendChild(fila);
+            });
+            contenedor.appendChild(lista4);
+          }
           if (datos.salidas.length) {
             contenedor.appendChild(nodo('p', 'muted', 'Salidas de rutinas guardadas en fichero:'));
             var lista2 = nodo('ul', 'tareas');
