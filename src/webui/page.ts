@@ -1784,6 +1784,17 @@ ${renderMiniAppScript()}
                 : 'Todavía no se ha resumido esta conversación.'
             )
           );
+          var sinVerificar = Number(h.sinVerificar) || 0;
+          if (sinVerificar > 0) {
+            bloque.appendChild(
+              nodo(
+                'p',
+                'ctx-linea ctx-sin-verificar',
+                '⚠️ ' + sinVerificar + (sinVerificar === 1 ? ' dato del resumen va marcado' : ' datos del resumen van marcados') +
+                  ' SIN VERIFICAR: no los des por hechos sin comprobarlos.'
+              )
+            );
+          }
           var nombres = Array.isArray(h.herramientas) ? h.herramientas : [];
           if (nombres.length) {
             var detalles = document.createElement('details');
