@@ -46,17 +46,20 @@ export function ackText(
   items: readonly { item: BandejaItem; dup: boolean }[],
   countToday: number,
   hora: string,
+  /** El resumen de hoy ya salió: lo guardado ahora va en el de mañana. */
+  tomorrow = false,
 ): string {
   const fresh = items.filter((i) => !i.dup);
   const dups = items.length - fresh.length;
+  const when = tomorrow ? `mañana a las ${hora}` : `a las ${hora}`;
   if (fresh.length === 0)
-    return `📥 Eso ya estaba en la bandeja (${countToday} hoy). Te lo cuento a las ${hora}.`;
+    return `📥 Eso ya estaba en la bandeja (${countToday} hoy). Te lo cuento ${when}.`;
   const what =
     fresh.length === 1
       ? `${kindEmoji(fresh[0]?.item.kind ?? 'enlace')} guardado`
       : `${fresh.length} cosas guardadas`;
   const dupNote = dups > 0 ? ` (${dups} ya estaba${dups === 1 ? '' : 'n'})` : '';
-  return `📥 ${what} en la bandeja${dupNote} · ${countToday} hoy. Te digo a las ${hora} si merece la pena.`;
+  return `📥 ${what} en la bandeja${dupNote} · ${countToday} hoy. Te digo ${when} si merece la pena.`;
 }
 
 /** Botones del aviso de guardado: «⚡ Míralo ya» y «🗑️ Quitar» (solo con una cosa). */
