@@ -36,7 +36,7 @@ const at: Record<string, string> = {
 const routines = [
   r('resumen-mañana'),
   r('recordatorio-1: pagar la matrícula', { prompt: 'pagar la matrícula' }),
-  r('precio-luz'),
+  r('precio-luz', { schedule: '0 20 * * 6' }),
   r('pausada', { enabled: false }),
   r('un-procedimiento', { kind: 'procedure', schedule: null }),
 ];
@@ -67,11 +67,15 @@ describe('/previsto (Muse: «everything it… plans to do»)', () => {
       '📥 resumen de la bandeja',
     ]);
     const semana = previstoFilas(routines, nextOf, 'semana', now, bandeja);
-    expect(semana.filas).toHaveLength(4);
+    // bugs-34: la rutina diaria sale los 7 días (12–18), no solo el primero.
+    expect(semana.filas).toHaveLength(10);
+    expect(semana.filas.filter((f) => f.text === 'rutina «resumen-mañana»')).toHaveLength(7);
     const text = previstoTexto(semana, 'semana', now);
     expect(text).toMatch(/Hoy\n• 18:42/);
     expect(text).toMatch(/\n\S+ 12\/11\n• 08:00 🔁/);
-    expect(text).toMatch(/\n\S+ 14\/11\n• 20:00 🔁 rutina «precio-luz»/);
+    expect(text).toMatch(
+      /\n\S+ 14\/11\n• 08:00 🔁 rutina «resumen-mañana»\n• 20:00 🔁 rutina «precio-luz»/,
+    );
   });
 
   it('nada previsto lo dice; las órdenes raras no valen', () => {

@@ -5,23 +5,83 @@
  * (https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/). Aquí lo hecho ya
  * se ve (registro de acciones, /recordatorios, /cron), pero lo que viene estaba repartido
  * en tres órdenes: recordatorios en /recordatorios, rutinas en /cron, el resumen de la
- * bandeja en /bandeja. Esto lo junta en una lista: la próxima vez de cada cosa, de la más
- * cercana a la más lejana.
+ * bandeja en /bandeja. Esto lo junta en una lista: cada vez que va a pasar algo en el rango,
+ * de la más cercana a la más lejana (una rutina diaria sale los 7 días en /previsto semana;
+ * la que suena varias veces el mismo día sale una vez ese día, con cuántas y hasta qué hora).
  *
  * - `/previsto` — las próximas 24 h. `/previsto hoy` — hasta medianoche.
  *   `/previsto semana` — 7 días.
  * - Solo lectura: no cambia nada. Las rutinas en pausa no salen (se cuentan al final).
  */
 
+import { cadenciaDeRutina, fueraDeCadencia } from './cron/cadencia.js';
 import { localDay } from './datecontext.js';
 import type { Routine } from './db.js';
-import { fechaCortaEs, isReminder, reminderText } from './tools/reminder.js';
+import { skipsHolidays } from './festivos-rutinas.js';
+import { scheduleRunsAfter } from './routines.js';
+import { fechaCortaEs, isOneShotReminder, isReminder, reminderText } from './tools/reminder.js';
 
 export type PrevistoRango = 'dia' | 'hoy' | 'semana';
 
 export interface PrevistoExtra {
   at: Date;
   text: string;
+  /** Horario cron si se repite (el resumen de la bandeja, cada noche). */
+  cada?: string;
+}
+
+/** Tope de ejecuciones que se miran por cosa (una vigilancia cada 5 min en una semana). */
+const MAX_RUNS = 2100;
+/** Más de estas veces el mismo día y se dicen en una línea («24 veces, hasta las 23:00»). */
+const MAX_POR_DIA = 2;
+
+/**
+ * Las veces que suena una rutina después de la primera (que da el planificador), según su
+ * cron y su cadencia («cada 2 días» se salta el día de en medio). Un recordatorio de una
+ * vez suena una vez. «Excepto festivos»: solo se sabe la próxima, así que no se inventan
+ * las demás.
+ */
+export function siguientesEjecuciones(r: Routine, first: Date, end: number): Date[] {
+  if (!r.schedule || isOneShotReminder(r) || skipsHolidays(`${r.name} ${r.prompt ?? ''}`))
+    return [];
+  const cadencia = cadenciaDeRutina(r);
+  const out: Date[] = [];
+  let last = first.toISOString();
+  for (const run of scheduleRunsAfter(r.schedule, first, MAX_RUNS)) {
+    if (run.getTime() > end) break;
+    if (cadencia && fueraDeCadencia(cadencia, run, last)) continue;
+    out.push(run);
+    last = run.toISOString();
+  }
+  return out;
+}
+
+function hhmm(d: Date): string {
+  return fechaCortaEs(d).slice(-5);
+}
+
+/** Una fila por vez; si una misma cosa suena más de MAX_POR_DIA veces un día, una sola. */
+function filasDe(runs: readonly Date[], icon: string, text: string): PrevistoFila[] {
+  const porDia = new Map<string, Date[]>();
+  for (const at of runs) {
+    const day = localDay(at);
+    const list = porDia.get(day);
+    if (list) list.push(at);
+    else porDia.set(day, [at]);
+  }
+  const filas: PrevistoFila[] = [];
+  for (const list of porDia.values()) {
+    const first = list[0] as Date;
+    const lastRun = list[list.length - 1] as Date;
+    if (list.length > MAX_POR_DIA)
+      filas.push({
+        at: first,
+        icon,
+        text: `${text} · ${list.length} veces, hasta las ${hhmm(lastRun)}`,
+      });
+    else for (const at of list) filas.push({ at, icon, text });
+  }
+  return filas;
 }
 
 export interface PrevistoFila {
@@ -54,13 +114,17 @@ function hasta(rango: PrevistoRango, now: Date): number {
   return t + 60_000;
 }
 
-/** Lo previsto, ordenado. `nextOf` es la próxima vez según el planificador. */
+/**
+ * Lo previsto, ordenado. `nextOf` es la próxima vez según el planificador; `masTarde`, las
+ * siguientes dentro del rango (por defecto, `siguientesEjecuciones`).
+ */
 export function previstoFilas(
   routines: readonly Routine[],
   nextOf: (r: Routine) => Date | null,
   rango: PrevistoRango,
   now: Date,
   extras: readonly PrevistoExtra[] = [],
+  masTarde: (r: Routine, first: Date, end: number) => Date[] = siguientesEjecuciones,
 ): { filas: PrevistoFila[]; pausadas: number } {
   const end = hasta(rango, now);
   const filas: PrevistoFila[] = [];
@@ -74,15 +138,22 @@ export function previstoFilas(
     const at = nextOf(r);
     if (!at || Number.isNaN(at.getTime()) || at.getTime() < now.getTime() - 60_000) continue;
     if (at.getTime() > end) continue;
-    filas.push(
-      isReminder(r)
-        ? { at, icon: '⏰', text: reminderText(r) }
-        : { at, icon: '🔁', text: `rutina «${r.name}»` },
-    );
+    const runs = [
+      at,
+      ...masTarde(r, at, end).filter((d) => d.getTime() > at.getTime() && d.getTime() <= end),
+    ];
+    if (isReminder(r)) filas.push(...filasDe(runs, '⏰', reminderText(r)));
+    else filas.push(...filasDe(runs, '🔁', `rutina «${r.name}»`));
   }
   for (const e of extras) {
-    if (e.at.getTime() >= now.getTime() - 60_000 && e.at.getTime() <= end)
-      filas.push({ at: e.at, icon: '', text: e.text });
+    if (e.at.getTime() < now.getTime() - 60_000 || e.at.getTime() > end) continue;
+    const runs = [e.at];
+    if (e.cada)
+      for (const d of scheduleRunsAfter(e.cada, e.at, MAX_RUNS)) {
+        if (d.getTime() > end) break;
+        runs.push(d);
+      }
+    filas.push(...filasDe(runs, '', e.text));
   }
   filas.sort((a, b) => a.at.getTime() - b.at.getTime() || a.text.localeCompare(b.text));
   return { filas, pausadas };
