@@ -15,6 +15,7 @@ import {
   formatearCampo,
   mensajeDeError,
   progresoPlan,
+  recordatorioAprobacion,
   resumenAprobacion,
   resumenMemoria,
   resumenSesion,
@@ -46,6 +47,7 @@ export function renderFormatScript(): string {
   return `var asistentaFormato = (function () {
   'use strict';
   var resumenAprobacion = ${resumenAprobacion.toString()};
+  var recordatorioAprobacion = ${recordatorioAprobacion.toString()};
   var tiempoRestante = ${tiempoRestante.toString()};
   var etiquetaCampo = ${etiquetaCampo.toString()};
   var formatearCampo = ${formatearCampo.toString()};
@@ -69,6 +71,7 @@ export function renderFormatScript(): string {
     progresoPlan: progresoPlan,
     mensajeDeError: mensajeDeError,
     resumenAprobacion: resumenAprobacion,
+    recordatorioAprobacion: recordatorioAprobacion,
     tiempoRestante: tiempoRestante,
     etiquetaCampo: etiquetaCampo,
     formatearCampo: formatearCampo
@@ -396,6 +399,7 @@ export function renderPage(): string {
     .aprobacion .meta { margin: 6px 0 0; color: var(--suave); font-size: 13px; word-break: break-word; }
     .aprobacion .caduca { margin: 6px 0 0; font-size: 13px; color: var(--texto); font-variant-numeric: tabular-nums; }
     .aprobacion .caduca.urgente { color: var(--mal); }
+    .aprobacion .recordatorio { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--mal); }
     .aprobacion .botones button { padding: 8px 12px; font-size: 14px; min-height: 40px; }
     .aprobacion .botones button.permitir { border-color: #1d4f35; background: #0f241a; color: var(--ok); }
     .aprobacion .botones button.siempre { border-color: #6b4f1d; color: #fcd34d; background: transparent; }
@@ -1112,8 +1116,63 @@ ${renderMiniAppScript()}
             }
           }
         }
+        recordarAprobaciones(ahora);
       }
       window.setInterval(actualizarCaducidades, 1000);
+
+      // Recordatorio (Grok Bot, como el de Telegram): una aprobación sin respuesta a los 3 min
+      // lleva una línea «⏳ Sigue esperando…», la pestaña se marca con ⏳ y, si el navegador ya
+      // tiene permiso de avisos, sale UNA notificación. Una vez por aprobación, aunque se repinte.
+      var aprobacionesRecordadas = {};
+      var hayRecordatorio = false;
+      function recordarAprobaciones(ahora) {
+        var tarjetas = document.querySelectorAll('#panel-aprobaciones .aprobacion[data-creada]');
+        var alguno = false;
+        for (var i = 0; i < tarjetas.length; i += 1) {
+          var t = tarjetas[i];
+          var texto = formato.recordatorioAprobacion(
+            { createdAt: Number(t.getAttribute('data-creada')), expiresAt: Number(t.getAttribute('data-expira')) },
+            ahora
+          );
+          var linea = t.querySelector('.recordatorio');
+          if (!texto) {
+            if (linea) linea.remove();
+            continue;
+          }
+          alguno = true;
+          if (!linea) {
+            linea = nodo('p', 'recordatorio', texto);
+            var caduca = t.querySelector('.caduca');
+            if (caduca && caduca.nextSibling) t.insertBefore(linea, caduca.nextSibling);
+            else t.appendChild(linea);
+          } else if (linea.textContent !== texto) {
+            linea.textContent = texto;
+          }
+          var id = t.getAttribute('data-id') || '';
+          if (id && !aprobacionesRecordadas[id]) {
+            aprobacionesRecordadas[id] = true;
+            anunciar(texto);
+            avisoDelNavegador(t.getAttribute('data-titulo') || 'Aprobación pendiente', id);
+          }
+        }
+        if (alguno !== hayRecordatorio) {
+          hayRecordatorio = alguno;
+          document.title = (alguno ? '⏳ ' : '') + formato.tituloPestana(pendientesPrevios || 0);
+        }
+      }
+
+      // Solo si Nico ya dio permiso de avisos a la página: nunca se pide aquí por sorpresa.
+      function avisoDelNavegador(titulo, id) {
+        try {
+          if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+          new Notification('Asistenta sigue esperando tu respuesta', {
+            body: titulo,
+            tag: 'asistenta-aprobacion-' + id
+          });
+        } catch (error) {
+          // Sin avisos del sistema: queda la línea de la tarjeta y la pestaña.
+        }
+      }
 
       // Las aprobaciones esperando se ven sin buscarlas: contador en la tarjeta y en la pestaña.
       // Las tarjetas se repintan enteras (y la cuenta atrás cambia cada segundo),
@@ -1135,7 +1194,9 @@ ${renderMiniAppScript()}
         contador.hidden = !(n > 0);
         contador.setAttribute('aria-label', n === 1 ? '1 pendiente' : n + ' pendientes');
         tarjeta.classList.toggle('pendiente', n > 0);
+        if (!(n > 0)) hayRecordatorio = false;
         document.title = formato.tituloPestana(n);
+        if (hayRecordatorio) document.title = '⏳ ' + document.title;
       }
 
       // Al repintar (p. ej. la recarga silenciosa) el aviso «Permitido…» ya no se borra si
@@ -1181,6 +1242,12 @@ ${renderMiniAppScript()}
           var tarjeta = document.createElement('article');
           tarjeta.className = 'aprobacion';
           tarjeta.setAttribute('data-titulo', resumen.titulo);
+          // Para el recordatorio de los 3 min (recordarAprobaciones): cuándo se pidió y quién es.
+          if (id) tarjeta.setAttribute('data-id', id);
+          if (item && typeof item === 'object' && Number.isFinite(Number(item.createdAt)) && resumen.caduca !== null) {
+            tarjeta.setAttribute('data-creada', String(Number(item.createdAt)));
+            tarjeta.setAttribute('data-expira', String(resumen.caduca));
+          }
           var tituloId = 'aprobacion-' + i;
           tarjeta.setAttribute('aria-labelledby', tituloId);
           var titulo = nodo('h3', 'pregunta', resumen.titulo);
