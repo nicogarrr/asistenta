@@ -216,3 +216,47 @@ export function extractBodyText(source: Buffer | string): string {
   // Sin Content-Type no hay forma de saber si es HTML: se quita marcado como antes.
   return found.html || !declared ? htmlToText(found.text) : found.text;
 }
+
+/**
+ * Las invitaciones de calendario de un correo (partes `text/calendar`, `application/ics` o
+ * un adjunto `.ics`), decodificadas: el agente no lee adjuntos, pero una invitación es justo
+ * lo que hay que ver (src/ics.ts la convierte en «📅 …»). Como mucho 3, de 512 KB.
+ */
+export function calendarPartsOf(source: Buffer | string): string[] {
+  const raw =
+    typeof source === 'string'
+      ? Buffer.from(source, 'utf8').toString('latin1')
+      : source.toString('latin1');
+  const { hasHeaders } = splitHeaders(raw);
+  if (!hasHeaders) return [];
+  const out: string[] = [];
+  const walk = (part: Part, depth: number) => {
+    if (depth > MAX_DEPTH || out.length >= 3) return;
+    if (part.type.startsWith('multipart/')) {
+      const boundary = part.params.get('boundary');
+      if (!boundary) return;
+      for (const child of splitMultipart(part.body, boundary))
+        walk(toPart(child, 'text/plain'), depth + 1);
+      return;
+    }
+    if (part.type === 'message/rfc822') {
+      const inner = decodeTransfer(part.body, part.encoding).toString('latin1');
+      walk(toPart(inner, 'text/plain'), depth + 1);
+      return;
+    }
+    const name = part.params.get('name') ?? '';
+    const isIcs =
+      part.type === 'text/calendar' ||
+      part.type === 'application/ics' ||
+      (/\.ics$/i.test(name) &&
+        (part.type === 'application/octet-stream' || part.type.startsWith('text/')));
+    if (!isIcs) return;
+    const text = decodeCharset(
+      decodeTransfer(part.body.slice(0, 700_000), part.encoding),
+      part.params.get('charset'),
+    );
+    if (/BEGIN:VEVENT/i.test(text)) out.push(text.slice(0, 512_000));
+  };
+  walk(toPart(raw, 'text/plain'), 0);
+  return out;
+}

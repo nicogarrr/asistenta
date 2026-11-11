@@ -10,6 +10,7 @@
 
 import { createHash } from 'node:crypto';
 import { recipeFromHtml } from '../compra-receta.js';
+import { ICS_SOURCE, isIcsFile, parseIcs } from '../ics.js';
 import type { VideoText } from '../media/resumen-video.js';
 import { xVideoUrl } from '../media/resumen-video.js';
 import { officeKind } from '../memory/office.js';
@@ -942,12 +943,47 @@ async function contentFor(
   return linkContent(item, deps, signal);
 }
 
+async function icsResult(item: BandejaItem, deps: ProcesarDeps): Promise<ProcessResult> {
+  if (!deps.download) throw new BandejaError('no puedo bajar ficheros desde aquí');
+  const bytes = await downloadItemFile(item, deps);
+  if (!bytes) throw new BandejaError('no pude bajar el .ics de Telegram');
+  const { eventos } = parseIcs(bytes.toString('utf8'));
+  const ev = eventos[0];
+  if (!ev) throw new BandejaError('el .ics no trae ningún evento con fecha');
+  const otros = eventos.length > 1 ? ` (trae ${eventos.length} eventos; te enseño el primero)` : '';
+  const { cancelado, repite, ...evento } = ev;
+  if (cancelado)
+    return {
+      title: `Cancelado: ${ev.nombre}`,
+      verdict: 'paja',
+      score: null,
+      reason: `Es la cancelación de «${ev.nombre}». Si lo tenías apuntado, quítalo de tu calendario.${otros}`,
+      ideas: [],
+      costMin: 0,
+      costLabel: '📅 cancelación',
+      extra: { source: ICS_SOURCE, basis: 'texto' },
+    };
+  return {
+    title: ev.nombre,
+    verdict: 'ideas',
+    score: null,
+    reason: `Invitación de calendario${ev.lugar ? ` en ${ev.lugar}` : ''}.${repite ? ' Se repite: apunto solo la primera vez.' : ''}${otros}`,
+    ideas: [],
+    costMin: 0,
+    costLabel: '📅 invitación',
+    extra: { source: ICS_SOURCE, basis: 'texto', evento },
+  };
+}
+
 /** Procesa una cosa y devuelve su resultado (lanza BandejaError con el motivo en español). */
 export async function processItem(
   item: BandejaItem,
   deps: ProcesarDeps,
   signal?: AbortSignal,
 ): Promise<ProcessResult & { url?: string }> {
+  // Una invitación de calendario (.ics): se lee entera sin modelo (fecha, sitio) y va con
+  // «📅 Al calendario». Antes acababa en ⚠️ («ese tipo de documento no lo sé leer»).
+  if (item.fileId && isIcsFile(item.mimeType, item.fileName)) return icsResult(item, deps);
   const content = await contentFor(item, deps, signal);
   const complete = await deps.complete().catch(() => undefined);
   if (!complete) throw new BandejaError('no tengo modelo para juzgarlo ahora mismo');

@@ -15,10 +15,12 @@
  */
 
 import type { ImapFlow } from 'imapflow';
+import { localTimeZone } from '../datecontext.js';
+import { invitacionLineas } from '../ics.js';
 import { log } from '../log.js';
 import { foldAccents } from '../text.js';
 import { vaultGet } from '../vault.js';
-import { extractBodyText } from './mime.js';
+import { calendarPartsOf, extractBodyText } from './mime.js';
 import {
   GMAIL_IMAP_HOST,
   GMAIL_IMAP_PORT,
@@ -100,6 +102,15 @@ export function toMessage(
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  // Una invitación de calendario (.ics) va en un adjunto que el cuerpo no trae: su fecha, su
+  // sitio o que es una cancelación, leídos sin modelo, delante (no los corta el tope de 8000).
+  let invitaciones: string[] = [];
+  try {
+    invitaciones = invitacionLineas(calendarPartsOf(raw.source ?? ''), localTimeZone());
+  } catch {
+    invitaciones = [];
+  }
+  const withInvite = invitaciones.length ? `${invitaciones.join('\n')}\n\n${text}` : text;
 
   return {
     id: String(raw.uid),
@@ -110,7 +121,7 @@ export function toMessage(
         .join(', ') ?? '',
     to: (envelope.to ?? []).map((t) => t.address ?? '').filter(Boolean),
     subject: envelope.subject?.trim() ? envelope.subject : '(sin asunto)',
-    text: text.slice(0, 8000),
+    text: withInvite.slice(0, 8000),
     // Una cabecera Date ilegible llega como Invalid Date: NaN rompería ordenar y
     // comparar fechas aguas abajo (agenda, resúmenes). 0 = «sin fecha».
     at: envelope.date && Number.isFinite(envelope.date.getTime()) ? envelope.date.getTime() : 0,

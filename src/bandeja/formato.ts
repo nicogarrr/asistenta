@@ -4,6 +4,7 @@
  */
 import { commandButton } from '../channels/telegram-shared.js';
 import { localDay, localTimeZone } from '../datecontext.js';
+import { ICS_SOURCE } from '../ics.js';
 import { sliceSafe } from '../text.js';
 import { type BandejaKind, displayUrl } from './captura.js';
 import { eventoLinea } from './evento.js';
@@ -229,7 +230,12 @@ export function cardText(item: BandejaItem, now: Date = new Date()): string {
   if (item.status !== 'listo' || !item.verdict)
     return `${head}\n⏳ Aún lo estoy procesando. Te lo digo en cuanto lo tenga.`;
   const lines = [
-    `${verdictLabel(item.verdict, item.kind, item.extra.source)} · ${scoreLabel(item) || '?/10'}${provisional(item) ? ' (provisional)' : ''}`,
+    // Una invitación .ics no se juzga (no hay nota): se dice lo que es.
+    item.extra.source === ICS_SOURCE
+      ? item.extra.evento
+        ? '📅 Invitación de calendario'
+        : '❌ Cancelación de un evento'
+      : `${verdictLabel(item.verdict, item.kind, item.extra.source)} · ${scoreLabel(item) || '?/10'}${provisional(item) ? ' (provisional)' : ''}`,
     head,
   ];
   const meta = metaLine(item);

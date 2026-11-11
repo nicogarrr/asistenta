@@ -24,6 +24,7 @@ import { isKindleAddress } from '../books/kindle.js';
 import { commandButton } from '../channels/telegram-shared.js';
 import { localDay } from '../datecontext.js';
 import type { EventoArgs } from '../google/workspace.js';
+import { ICS_SOURCE } from '../ics.js';
 import { type CaptureCandidate, explicitCapture } from './captura.js';
 import { cuandoTexto, eventoArgs, localWallTime, yaPaso } from './evento.js';
 import {
@@ -324,6 +325,25 @@ async function calendarioSub(
   } finally {
     calendarioEnCurso.delete(busy);
   }
+}
+
+/**
+ * Al acabar de leer una invitación .ics (procesar.ts, sin modelo): la pregunta de «📅 Al
+ * calendario» al momento, con su «✅ Sí, apúntalo» (no espera al resumen de la noche). Una
+ * cancelación lo dice. null si no es un .ics.
+ */
+export async function icsAviso(
+  item: BandejaItem,
+  deps: BandejaCommandDeps,
+): Promise<BandejaReply | null> {
+  if (item.extra.source !== ICS_SOURCE || item.status !== 'listo') return null;
+  if (!item.extra.evento)
+    return {
+      text: `❌ #${item.id} ${item.reason ?? 'Es la cancelación de un evento.'}`,
+      itemId: item.id,
+    };
+  const r = await calendarioSub('calendario', String(item.id), deps);
+  return { ...r, text: `📅 #${item.id} es una invitación. ${r.text}` };
 }
 
 /** Los «✅ Sí, apúntalo» que aún están creando su evento (chat:número). */
