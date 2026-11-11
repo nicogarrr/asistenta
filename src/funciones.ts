@@ -164,6 +164,7 @@ export const OWNER_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'precios',
   'spotify',
   'google',
+  'biblioteca',
   'tailscale',
   'panel',
   'voz',
