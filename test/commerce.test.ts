@@ -815,8 +815,10 @@ describe('a purchase from search to the payment screen', () => {
     }
 
     // A refusal is not remembered as consent, and a consent would not be remembered
-    // either: four attempts at a charge, four questions, zero purchases.
-    expect(asked).toBe(4);
+    // either: zero purchases. The gate asks once: the same refused charge in the same
+    // turn is denied without asking again (gaps-12, Grok Bot «Deny… won't ask you about
+    // it until you send another message»); the tool's own confirm still asks each time.
+    expect(asked).toBe(3);
     expect(page.clicks).toHaveLength(0);
   });
 });

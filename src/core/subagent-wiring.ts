@@ -152,12 +152,9 @@ export function createEffectfulChildGate(
       if (!approval.complete) return false;
       const question = `Especialista ${specialist.title}: ${approval.question}`;
       if (refused.has(question)) return false;
-      let answer: unknown;
-      try {
-        answer = await approve(question);
-      } catch {
-        return false;
-      }
+      // Si preguntar falla, se propaga: la Gate lo deniega (cerrada) sin contarlo como un
+      // «no» de Nico, y la próxima vez vuelve a preguntar.
+      const answer: unknown = await approve(question);
       if (answer === true) return true;
       refused.add(question);
       return false;
