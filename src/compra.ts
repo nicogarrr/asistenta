@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { recetaItems, recetaNote, recetaUrl, splitRaciones } from './compra-receta.js';
-import { ingredientKey, sumarLinea } from './compra-sumar.js';
+import { cambiarAporte, ingredientKey, sumarLinea } from './compra-sumar.js';
 import { lazySchema, Type } from './core/lazy-schema.js';
 import { setAsideCorrupt, writeFileReplacing } from './fs-tmp.js';
 
@@ -39,11 +39,24 @@ export interface CompraItem {
    * otra receta con la misma línea sume y la misma receta mandada otra vez no (bugs-35).
    */
   recetas?: string[];
+  /**
+   * Lo que puso cada receta en esta línea («2 huevos»), por su clave: si la misma receta
+   * vuelve con otras raciones se cambia su parte en vez de darse por «ya estaba» (bugs-36).
+   */
+  aportes?: Record<string, string>;
 }
 
 interface CompraFile {
   items: CompraItem[];
   nextId: number;
+}
+
+/** Solo los aportes de las recetas que la línea aún recuerda (se quedan las 20 últimas). */
+function recortaAportes(
+  aportes: Record<string, string>,
+  recetas: readonly string[],
+): Record<string, string> {
+  return Object.fromEntries(Object.entries(aportes).filter(([k]) => recetas.includes(k)));
 }
 
 export const fold = (s: string): string =>
@@ -163,15 +176,21 @@ export class CompraStore {
     added: string[];
     already: string[];
     merged: Array<{ from: string; to: string }>;
+    rescaled: Array<{ from: string; to: string }>;
   } {
     const data = this.#read();
     const added: string[] = [];
     const already: string[] = [];
     const merged: Array<{ from: string; to: string }> = [];
+    // Las líneas que esta receta ya tocó en esta vuelta y su texto de antes.
+    const ahora = new Set<CompraItem>();
+    const antesDe = new Map<CompraItem, string>();
     let changed = false;
-    const marca = (item: CompraItem | undefined): void => {
+    const marca = (item: CompraItem | undefined, aporte: string): void => {
       if (!item || !receta || item.recetas?.includes(receta)) return;
       item.recetas = [...(item.recetas ?? []), receta].slice(-20);
+      item.aportes = recortaAportes({ ...(item.aportes ?? {}), [receta]: aporte }, item.recetas);
+      ahora.add(item);
       changed = true;
     };
     for (const text of texts) {
@@ -184,8 +203,27 @@ export class CompraStore {
       // otra vez no suma de nuevo. Antes solo lo frenaba el texto exacto y «100 g» + «200 g»
       // = «300 g» pasaba a «500 g» al repetirla.
       const counted = receta ? pending.find((i) => i.recetas?.includes(receta)) : undefined;
-      if (counted) {
-        already.push(counted.text);
+      if (counted && receta) {
+        const antes = counted.aportes?.[receta];
+        let nueva: string | null = null;
+        let aporte = t;
+        if (antes && ahora.has(counted)) {
+          // Otra línea de la misma receta para lo mismo («2 huevos» y «1 huevo para pintar»):
+          // se suma a lo que esta receta ya puso en esta vuelta.
+          nueva = sumarLinea(counted.text, t);
+          aporte = sumarLinea(antes, t) ?? antes;
+        } else if (antes && fold(antes) !== fold(t)) {
+          // …salvo que vuelva con otras raciones («para 4» → «para 6»): entonces su parte
+          // cambia. Antes decía «ya estaba» y la lista seguía con lo de 4 (bugs-36).
+          nueva = cambiarAporte(counted.text, antes, t);
+        }
+        if (nueva && nueva.length <= MAX_ITEM_CHARS) {
+          if (!ahora.has(counted) && !antesDe.has(counted)) antesDe.set(counted, counted.text);
+          counted.text = nueva;
+          counted.aportes = { ...(counted.aportes ?? {}), [receta]: aporte };
+          ahora.add(counted);
+          changed = true;
+        } else already.push(counted.text);
         continue;
       }
       // El mismo texto exacto («6 huevos» y «6 huevos») se da por «ya estaba», como siempre:
@@ -202,7 +240,7 @@ export class CompraStore {
         if (sum && sum.length <= MAX_ITEM_CHARS) {
           merged.push({ from: hit.text, to: sum });
           hit.text = sum;
-          marca(hit);
+          marca(hit, t);
           changed = done = true;
           break;
         }
@@ -224,12 +262,19 @@ export class CompraStore {
       else {
         added.push(r);
         const nuevo = data.items.find((i) => !i.done && fold(i.text) === fold(r));
-        if (nuevo && receta) nuevo.recetas = [receta];
+        if (nuevo && receta) {
+          nuevo.recetas = [receta];
+          nuevo.aportes = { [receta]: t };
+          ahora.add(nuevo);
+        }
         changed = true;
       }
     }
     if (changed) this.#write(data);
-    return { added, already, merged };
+    const rescaled = [...antesDe]
+      .filter(([item, from]) => fold(item.text) !== fold(from))
+      .map(([item, from]) => ({ from, to: item.text }));
+    return { added, already, merged, rescaled };
   }
 
   /** Apunta uno sobre `data` (sin guardar): el texto apuntado, 'already' o 'full'. */
@@ -559,7 +604,10 @@ export async function recetaACompra(
   const sumado = added.merged.length
     ? ` Sumado a lo que ya tenías: ${added.merged.map((m) => `${m.from} → ${m.to}`).join(', ')}.`
     : '';
-  return compraView(store.list(), `${note}${sumado}`);
+  const ajustado = added.rescaled.length
+    ? ` Ajustado a las raciones nuevas: ${added.rescaled.map((m) => `${m.from} → ${m.to}`).join(', ')}.`
+    : '';
+  return compraView(store.list(), `${note}${sumado}${ajustado}`);
 }
 
 /** Herramienta del modelo: «añade leche», «ya he comprado el pan», «¿qué me falta?». */

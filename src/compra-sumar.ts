@@ -132,3 +132,25 @@ export function sumarLinea(existing: string, extra: string): string | null {
   const ahora = esPlural(Number(qty.replace(',', '.')));
   return `${qty}${ahora === esPlural(template.q) ? template.rest : concordar(template.rest, ahora)}`;
 }
+
+/**
+ * Una receta ya apuntada vuelve con otras raciones («para 4» → «para 6»): su parte en la línea
+ * pasa de `antes` a `ahora` y lo demás (lo de otras recetas o lo que puso Nico) se queda
+ * («5 huevos» con 2 de esta receta → «6 huevos» si ahora pide 3). null si no se puede
+ * (otro ingrediente, sin cantidad, unidades que no casan, o no quedaría nada).
+ */
+export function cambiarAporte(linea: string, antes: string, ahora: string): string | null {
+  const key = ingredientKey(linea);
+  if (!key || ingredientKey(antes) !== key || ingredientKey(ahora) !== key) return null;
+  const a = parseCantidad(linea);
+  const o = parseCantidad(antes);
+  const n = parseCantidad(ahora);
+  if (!a || !o || !n || o.family !== a.family || n.family !== a.family) return null;
+  const total = (a.q * a.factor - o.q * o.factor + n.q * n.factor) / a.factor;
+  if (!(total > 0)) return null;
+  // Si la línea era solo de esta receta, manda el texto nuevo tal cual («3 huevos»).
+  if (Math.abs(a.q * a.factor - o.q * o.factor) < 1e-9) return ahora.trim();
+  const qty = fmt(total, a.unit);
+  const plural = esPlural(Number(qty.replace(',', '.')));
+  return `${qty}${plural === esPlural(a.q) ? a.rest : concordar(a.rest, plural)}`;
+}
