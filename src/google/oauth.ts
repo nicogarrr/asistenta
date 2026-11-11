@@ -9,6 +9,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { avisarConexionCaida } from '../conexion-caida.js';
 import { createServer } from '../node-http.js';
 
 export const GOOGLE_KEYS = {
@@ -312,8 +313,9 @@ export class GoogleAuth {
       if (r.json.error === 'invalid_grant') {
         // Revocado desde la cuenta de Google o caducado: hay que volver a conectar.
         await this.deps.vault.delete(GOOGLE_KEYS.refreshToken);
+        avisarConexionCaida('google');
         throw new GoogleNotConnectedError(
-          'Google ha retirado el permiso. Para volver a conectarlo, escribe «pa google conectar» en una terminal del PC.',
+          'Google ha retirado el permiso. Para volver a conectarlo: /google conectar en Telegram (o «pa google conectar» en una terminal del PC).',
         );
       }
       throw new Error('Google ha rechazado la conexión. Revisa el cliente en docs/google.md.');

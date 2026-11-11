@@ -6,6 +6,7 @@
  * Pasos para el dueño: docs/SETUP-INTEGRACIONES.md, apartado Spotify.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { avisarConexionCaida } from './conexion-caida.js';
 import { createServer } from './node-http.js';
 
 export const SPOTIFY_KEYS = { refreshToken: 'spotify:refreshToken' } as const;
@@ -200,6 +201,7 @@ async function accessToken(deps: SpotifyDeps): Promise<string> {
   });
   if (status === 400 && json.error === 'invalid_grant') {
     await deps.vault.delete(SPOTIFY_KEYS.refreshToken);
+    avisarConexionCaida('spotify');
     throw new SpotifyError(`Spotify ha retirado el permiso. ${SPOTIFY_NOT_CONNECTED}`);
   }
   if (status !== 200 || typeof json.access_token !== 'string')
