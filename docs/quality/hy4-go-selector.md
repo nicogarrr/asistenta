@@ -38,3 +38,15 @@ realizado, pendiente antes de cerrar el trabajo visual.
 Guard aplicado tambien a models.streamSimple y models.completeSimple directos
 (resumenes/extraccion), no solo al streamFn del agente. Test verifica que un
 fetch inyectado por caller no puede saltarse el guard; todo sin red real.
+
+## Sustitucion de DeepSeek autorizada16nov11:56
+
+Piloto activa PA_HY4_REPLACE_DEEPSEEK=1 en el PC tras FAV y typecheckcompleto.
+Con ese flag, el handle convierte primary DeepSeekV4.1 normal/free de preset
+opencode u opencode-local a Hy4Go ANTESdelbranchlocal. Conserva .env original,
+no toca key, y usa misma guardia (sinhelpers/fallbacks/rotacionextras).
+Otros providers/modelos no cambian. Techooperativo30nov10:56UTC,14dias tras
+instruccion, no fecha contractual del proveedor: expira cerrando el handle,
+no restaurando DeepSeek. No quitar flag automaticamente como rollback.
+196testsverdes; provider96,30%lineas88,16%ramas90,90%funciones.
+Typecheckestrictocambiadosverde; fullrepo requiere runner conmasRAM.

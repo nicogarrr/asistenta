@@ -172,6 +172,23 @@ async function loadPiAi() {
 }
 
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
+  if (
+    process.env.PA_HY4_REPLACE_DEEPSEEK === '1' &&
+    ['deepseek-v4.1-flash', 'deepseek-v4.1-flash-free'].includes(config.model) &&
+    ['opencode', 'opencode-local'].includes(config.providerPreset ?? '')
+  ) {
+    // Operational ceiling, not the provider's unconfirmed contractual expiry.
+    if (Date.now() >= Date.parse('2026-11-30T10:56:00Z')) {
+      throw new Error('Promoción Hy4 terminada: no se restaura otro modelo automáticamente.');
+    }
+    config = {
+      ...config,
+      model: HY4,
+      providerPreset: 'opencode',
+      provider: 'opencode-go',
+      baseUrl: HY4_BASE,
+    };
+  }
   if (config.provider === 'opencode-local') {
     return createLocalHandle(config);
   }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, resetConfigForTests } from '../src/config.js';
 import {
   CLIENT_USER_AGENT,
@@ -91,4 +91,44 @@ describe('Hy4 selected wiring', () => {
       resetConfigForTests();
     }
   });
+});
+
+it.each(['opencode', 'opencode-local'])(
+  'pilot promotion replaces DeepSeek preset %s with guarded Hy4',
+  async (preset) => {
+    const env = { ...process.env };
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-16T12:00:00Z'));
+    try {
+      process.env.PA_HY4_REPLACE_DEEPSEEK = '1';
+      process.env.PA_PROVIDER_PRESET = preset;
+      process.env.PA_MODEL = 'deepseek-v4.1-flash';
+      process.env.OPENCODE_GO_API_KEY = 'synthetic';
+      resetConfigForTests();
+      const h = await createProviderHandle(loadConfig());
+      expect(h.model.id).toBe('hy4-flash-free');
+      expect(h.model.baseUrl).toBe('https://opencode.ai/inference/go/openai/v1');
+      expect(h.fallbackFor).toBeUndefined();
+      expect(h.utilityFor).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+      process.env = env;
+      resetConfigForTests();
+    }
+  },
+);
+
+it('promotion expiry fails closed without restoring DeepSeek', async () => {
+  const env = { ...process.env };
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-12-01T00:00:00Z'));
+  try {
+    process.env.PA_HY4_REPLACE_DEEPSEEK = '1';
+    process.env.PA_PROVIDER_PRESET = 'opencode';
+    process.env.PA_MODEL = 'deepseek-v4.1-flash';
+    resetConfigForTests();
+    await expect(createProviderHandle(loadConfig())).rejects.toThrow('no se restaura');
+  } finally {
+    clock.mockRestore();
+    process.env = env;
+    resetConfigForTests();
+  }
 });
