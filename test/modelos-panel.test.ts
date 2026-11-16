@@ -107,6 +107,7 @@ describe('aplicarModeloPanel', () => {
 
   it('la lista ofrecida son solo las medidas a coste 0 con herramientas', () => {
     expect(MODELOS_PANEL.map((m) => m.id)).toEqual([
+      'hy4-flash-free',
       'deepseek-v4.1-flash',
       'deepseek-v4-pro',
       'glm-5.3-flash',

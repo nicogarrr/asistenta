@@ -62,3 +62,33 @@ describe('OpenCode Go client rules', () => {
     expect(other.modelFor('pa-3').headers?.['x-opencode-session']).toBeUndefined();
   });
 });
+
+describe('Hy4 selected wiring', () => {
+  it('pins Go and removes paid helpers/fallbacks for explicit Hy4', async () => {
+    const env = { ...process.env };
+    try {
+      process.env.OPENCODE_GO_API_KEY = 'synthetic-no-network';
+      process.env.PA_PROVIDER_PRESET = 'opencode';
+      process.env.PA_MODEL = 'hy4-flash-free';
+      process.env.PA_FALLBACK_MODEL = 'paid';
+      process.env.PA_FALLBACK_MODELS = 'paid-two';
+      process.env.PA_MODELO_RAPIDO = 'paid-fast';
+      process.env.PA_UTILITY_MODEL = 'paid-util';
+      process.env.PA_MODELS = 'paid-extra';
+      process.env.PA_BASE_URL = 'https://other.invalid';
+      resetConfigForTests();
+      const h = await createProviderHandle(loadConfig());
+      expect(h.model.baseUrl).toBe('https://opencode.ai/inference/go/openai/v1');
+      expect(h.model.id).toBe('hy4-flash-free');
+      expect(h.fallbackFor).toBeUndefined();
+      expect(h.fallbackChainFor).toBeUndefined();
+      expect(h.utilityFor).toBeUndefined();
+      expect(h.modelById?.('paid-fast')).toBeUndefined();
+      expect(h.modelById?.('paid-extra')).toBeUndefined();
+      expect(h.modelFor('test').headers?.['x-opencode-session']).toBe('test');
+    } finally {
+      process.env = env;
+      resetConfigForTests();
+    }
+  });
+});
