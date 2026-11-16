@@ -17,7 +17,10 @@ function completion() {
     usage: { cost: 0, opencode: { billing_source: 'go', list_cost: 0, allowance: 0 } },
   };
 }
-beforeEach(() => vi.resetModules());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.resetModules();
+});
 async function setup(doc = completion(), cat = catalog(), sse = false) {
   const mod = await import('../src/core/hy4-zero.js');
   const inner = vi
@@ -117,3 +120,19 @@ it('forces final usage on SSE so no chunk is released before billing check', asy
   const sent = JSON.parse(String(s.inner.mock.calls[1]?.[1]?.body));
   expect(sent.stream_options.include_usage).toBe(true);
 });
+
+it.each([false, true])(
+  'live fetch expires without restart, duringCatalog=%s',
+  async (duringCatalog) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-30T10:55:59Z'));
+    const s = await setup();
+    if (duringCatalog)
+      s.inner.mockReset().mockImplementationOnce(async () => {
+        clock.mockReturnValue(Date.parse('2026-11-30T10:56:00Z'));
+        return Response.json(catalog());
+      });
+    else clock.mockReturnValue(Date.parse('2026-11-30T10:56:00Z'));
+    await expect(s.invoke()).rejects.toThrow();
+    expect(s.inner).toHaveBeenCalledTimes(duringCatalog ? 1 : 0);
+  },
+);

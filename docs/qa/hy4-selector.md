@@ -13,3 +13,8 @@ Tests reproducibles de cobertura de los tres ficheros cambiados:
 
 70 tests/10archivos; provider96,55%lineas90,11%ramas;
 guard100/90,38;selector100/96,55. Full TSC pendiente de CI.
+
+Caducidad del guard comprobada en cada fetch, antes del catalogo y justo
+antes de transmitir POST, no solo al crear handle.72testsverdes;
+guard100%lineas92,72%ramas. Mutante eliminando amboschecks:2testsfallan.
+Techo operativo30nov10:56Z, no fecha contractual confirmada.

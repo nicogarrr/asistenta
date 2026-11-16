@@ -4,6 +4,7 @@ export const HY4_BASE = 'https://opencode.ai/inference/go/openai/v1';
 const CATALOG = 'https://opencode.ai/inference/go/v1/models';
 const NOTICE =
   'Hy4 bloqueado: no se puede confirmar coste cero y facturación Go. Sin modelo de respaldo.';
+const promotionEnded = (): boolean => Date.now() >= Date.parse('2026-11-30T10:56:00Z');
 let blocked = false;
 let admitted = false;
 const object = (v: unknown): Record<string, unknown> =>
@@ -16,7 +17,7 @@ function trip(): never {
 
 export function createHy4ZeroFetch(inner: typeof fetch = globalThis.fetch): typeof fetch {
   return async (input, init) => {
-    if (blocked) throw new Error(NOTICE);
+    if (promotionEnded() || blocked) throw new Error(NOTICE);
     if (admitted) throw new Error('Hy4 ocupado; sin modelo de respaldo.');
     admitted = true;
     try {
@@ -43,7 +44,7 @@ export function createHy4ZeroFetch(inner: typeof fetch = globalThis.fetch): type
         trip();
       // Keep SDK streaming format, but buffer the full response so no tool or
       // text escapes before final billing metadata has been checked.
-      if (blocked) throw new Error(NOTICE);
+      if (promotionEnded() || blocked) throw new Error(NOTICE);
       const response = await inner(input, init);
       if (!response.ok) throw new Error(NOTICE);
       const text = await response.text();
