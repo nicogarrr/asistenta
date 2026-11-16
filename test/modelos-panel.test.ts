@@ -117,3 +117,56 @@ describe('aplicarModeloPanel', () => {
     ]);
   });
 });
+
+it('Hy4 announces the promotion and refuses permanent zero-cost claims', () => {
+  const out = aplicarModeloPanel('hy4-flash-free', {
+    files: [],
+    readFile: () => {
+      throw new Error('missing');
+    },
+    writeFile: () => {},
+    env: {},
+  });
+  expect(out.ok).toBe(true);
+  expect(out.mensaje).toContain('promoción temporal');
+  expect(out.mensaje).toContain('se bloquea');
+});
+
+it('replaces active env lines but preserves commented keys', () => {
+  expect(upsertEnvLines('# PA_MODEL=x\n', { PA_MODEL: 'hy4-flash-free' })).toContain(
+    '# PA_MODEL=x\nPA_MODEL=hy4-flash-free',
+  );
+  expect(upsertEnvLines('', {})).toBe('');
+});
+
+it('falls back to process env and a default destination when dependencies omit them', () => {
+  const previous = { ...process.env };
+  try {
+    const result = aplicarModeloPanel('hy4-flash-free', {
+      files: [],
+      readFile: () => Buffer.from(''),
+      writeFile: () => {},
+      reloadConfig: () => ({}),
+    });
+    expect(result.ok).toBe(true);
+    expect(process.env.PA_MODEL).toBe('hy4-flash-free');
+  } finally {
+    process.env = previous;
+  }
+});
+
+it('uses actual read/write defaults only on an isolated temporary env file', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'hy4-panel-'));
+  const path = join(dir, '.env');
+  try {
+    writeFileSync(path, 'PA_MODEL=old\n');
+    const result = aplicarModeloPanel('hy4-flash-free', { files: [path], env: {} });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(path, 'utf8')).toContain('PA_MODEL=hy4-flash-free');
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
