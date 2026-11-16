@@ -95,3 +95,38 @@ it('custom stream wiring passes fetch override and returns a completion without 
   const result = await stream.result();
   expect(result.role).toBe('assistant');
 });
+
+it('rejects Hy4 on a different preset before resolving any credentials', async () => {
+  await expect(
+    createProviderHandle({ ...config(), model: 'hy4-flash-free', providerPreset: undefined }),
+  ).rejects.toThrow('requiere OpenCode Go');
+});
+
+it('non-Go endpoints register helpers and exhaust their explicit key pool', async () => {
+  process.env.PA_API_KEY = 'synthetic';
+  process.env.PA_EXTRA_API_KEYS = 'second-synthetic';
+  const h = await createProviderHandle({
+    ...config(),
+    baseUrl: 'https://example.invalid/v1',
+    fallbackModel: 'back',
+    utilityModel: 'utility',
+    extraModels: ['manual'],
+  });
+  expect(h.modelById?.('manual')?.headers).toBeUndefined();
+  expect(h.fallbackFor?.().id).toBe('back');
+  expect(h.rotateKey?.()).toBe(true);
+  expect(h.rotateKey?.()).toBe(false);
+});
+
+it('Google primary, fallback and extras receive compatibility overrides', async () => {
+  process.env.GEMINI_API_KEY = 'synthetic';
+  const h = await createProviderHandle({
+    ...config(),
+    provider: 'google',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    fallbackModel: 'fallback',
+    extraModels: ['manual'],
+  });
+  expect(h.modelById?.('manual')?.compat).toMatchObject({ supportsStore: false });
+  expect(h.fallbackFor?.().compat).toMatchObject({ supportsStore: false });
+});
