@@ -3,6 +3,7 @@ import type { Config } from '../config.js';
 import { log } from '../log.js';
 import { vaultGet } from '../vault.js';
 import { createGeminiSignatureFetch } from './gemini-signature.js';
+import { createHy4ZeroFetch, HY4, HY4_BASE } from './hy4-zero.js';
 import { KeyPool, parseExtraKeys } from './key-pool.js';
 import { resolveModelCaps } from './models.js';
 
@@ -91,7 +92,7 @@ export const CLIENT_USER_AGENT = 'asistenta/1.0';
 
 /** True for any OpenCode endpoint (Zen or Go): both document the own-UA + session rules. */
 export function isOpenCodeEndpoint(baseUrl: string): boolean {
-  return /^https:\/\/opencode\.ai\/zen(\/|$)/.test(baseUrl);
+  return /^https:\/\/opencode\.ai\/(zen(\/|$)|inference\/go\/openai\/v1$)/.test(baseUrl);
 }
 
 /** True for the OpenRouter endpoint. */
@@ -171,8 +172,39 @@ async function loadPiAi() {
 }
 
 export async function createProviderHandle(config: Config): Promise<ProviderHandle> {
+  if (
+    process.env.PA_HY4_REPLACE_DEEPSEEK === '1' &&
+    ['deepseek-v4.1-flash', 'deepseek-v4.1-flash-free'].includes(config.model) &&
+    ['opencode', 'opencode-local'].includes(config.providerPreset ?? '')
+  ) {
+    // Operational ceiling, not the provider's unconfirmed contractual expiry.
+    if (Date.now() >= Date.parse('2026-11-30T10:56:00Z')) {
+      throw new Error('Promoción Hy4 terminada: no se restaura otro modelo automáticamente.');
+    }
+    config = {
+      ...config,
+      model: HY4,
+      providerPreset: 'opencode',
+      provider: 'opencode-go',
+      baseUrl: HY4_BASE,
+    };
+  }
   if (config.provider === 'opencode-local') {
     return createLocalHandle(config);
+  }
+  const hy4 = config.model === HY4;
+  if (hy4) {
+    if (config.providerPreset !== 'opencode') throw new Error('Hy4 requiere OpenCode Go');
+    config = {
+      ...config,
+      baseUrl: HY4_BASE,
+      provider: 'opencode-go',
+      fallbackModel: undefined,
+      fallbackModels: undefined,
+      extraModels: [],
+      fastModel: undefined,
+      utilityModel: undefined,
+    };
   }
   const { createModels, createProvider, envApiKeyAuth, openAICompletionsApi } = await loadPiAi();
   // Capacidades del catalogo (env > preset > defaults). El modelo de fallback
@@ -188,7 +220,7 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   // endpoint y se turnan con 429/cuota (KeyPool). Se lee en cada petición.
   const keys = new KeyPool([
     await resolveApiKey(config.baseUrl),
-    ...parseExtraKeys(process.env.PA_EXTRA_API_KEYS),
+    ...(hy4 ? [] : parseExtraKeys(process.env.PA_EXTRA_API_KEYS)),
   ]);
 
   const models = createModels({
@@ -279,11 +311,27 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
   const signatureFetch = isGoogleEndpoint(config.baseUrl)
     ? createGeminiSignatureFetch()
     : undefined;
+  const hy4Fetch = hy4 ? createHy4ZeroFetch() : undefined;
+  if (hy4Fetch) {
+    // Summaries/fact extraction call models.completeSimple directly. Guard
+    // the shared SDK entry points too, not only the interactive streamFn.
+    const rawStream = models.streamSimple.bind(models);
+    const rawComplete = models.completeSimple.bind(models);
+    models.streamSimple = (m, context, options) =>
+      rawStream(withGoHeaders(m, options?.sessionId), context, { ...options, fetch: hy4Fetch });
+    models.completeSimple = (m, context, options) =>
+      rawComplete(withGoHeaders(m, options?.sessionId), context, { ...options, fetch: hy4Fetch });
+  }
+
   const streamFn: ProviderHandle['streamFn'] = (m, context, options) =>
     models.streamSimple(
       withGoHeaders(m, options?.sessionId),
       context,
-      signatureFetch && !options?.fetch ? { ...options, fetch: signatureFetch } : options,
+      hy4Fetch
+        ? { ...options, fetch: hy4Fetch }
+        : signatureFetch && !options?.fetch
+          ? { ...options, fetch: signatureFetch }
+          : options,
     );
   const fallback = config.fallbackModel
     ? models.getModel(config.provider, config.fallbackModel)

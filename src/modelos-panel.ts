@@ -23,6 +23,11 @@ export interface ModeloPanelOpcion {
 
 export const MODELOS_PANEL: ModeloPanelOpcion[] = [
   {
+    id: 'hy4-flash-free',
+    nombre: 'Hy4 Flash (Go)',
+    nota: 'promoción temporal, coste cero comprobado por llamada; sin respaldo',
+  },
+  {
     id: 'deepseek-v4.1-flash',
     nombre: 'DeepSeek V4.1 Flash',
     nota: 'el de siempre: rápido y capaz',
@@ -112,6 +117,9 @@ export function aplicarModeloPanel(id: string, deps: AplicarModeloDeps = {}): Ap
   return {
     ok: true,
     modelo: opcion.id,
-    mensaje: `Listo: Asistenta usa ${opcion.nombre} por OpenCode Go (coste 0). Las conversaciones nuevas ya van con él y queda guardado para los próximos arranques.`,
+    mensaje:
+      opcion.id === 'hy4-flash-free'
+        ? 'Hy4 Flash seleccionado por Go: promoción temporal, precio comprobado por llamada y sin respaldo. Las conversaciones nuevas lo usarán; si no se confirma coste cero, se bloquea.'
+        : `Listo: Asistenta usa ${opcion.nombre} por OpenCode Go (coste 0). Las conversaciones nuevas ya van con él y queda guardado para los próximos arranques.`,
   };
 }
