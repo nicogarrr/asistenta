@@ -65,9 +65,10 @@ describe('Hy4 strict zero Go', () => {
     'blocks before inference on bad catalog %s',
     async (type) => {
       const cat = catalog();
-      if (type === 'priced') cat.data[0].cost.text.input.price = 1;
-      if (type === 'endpoint')
-        cat.data[0].api['chat-completions'].base_url = 'https://other.invalid';
+      const entry = cat.data[0];
+      if (!entry) throw new Error('missing fixture');
+      if (type === 'priced') entry.cost.text.input.price = 1;
+      if (type === 'endpoint') entry.api['chat-completions'].base_url = 'https://other.invalid';
       if (type === 'missing') cat.data = [];
       if (type === 'data') Reflect.deleteProperty(cat, 'data');
       const s = await setup(completion(), cat);
