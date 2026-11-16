@@ -24,9 +24,9 @@ no hay endpoint documentado localizado para leer el flag. Por ello esta rama
 NO debe activarse ni fusionarse como garantia de 0 EUR hasta cerrar ese gate.
 La clave solo se uso fuera de esta PR para lectura autorizada de cuota.
 
-Tests locales de guard, selector, wiring y regresiones: 192 verdes.
+Tests locales de guard, selector, wiring y regresiones: 193 verdes.
 Cobertura por fichero lineas/ramas/funciones: guard100/90,38/100;
-provider96,07/87,89/90,32; selector100/96,55/100.
+provider96,15/88,27/90,90; selector100/96,55/100.
 Biome de ficheros cambiados verde. Typecheck estricto de fuentes y tests
 modificados y sus dependencias: verde. Typecheck completo: OOM con heap
 default y 1,4GB; reintentos a3GB superaron105s sin resultado. Falta CI
@@ -34,3 +34,7 @@ con mas memoria; no afirmar typecheck completo ni CI verdes.
 No se ha probado el flujo en el PC Windows ni activado el modelo alli.
 La UI existente reutiliza selector, sin cambio de layout; preview visual no
 realizado, pendiente antes de cerrar el trabajo visual.
+
+Guard aplicado tambien a models.streamSimple y models.completeSimple directos
+(resumenes/extraccion), no solo al streamFn del agente. Test verifica que un
+fetch inyectado por caller no puede saltarse el guard; todo sin red real.

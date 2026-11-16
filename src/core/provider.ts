@@ -295,6 +295,17 @@ export async function createProviderHandle(config: Config): Promise<ProviderHand
     ? createGeminiSignatureFetch()
     : undefined;
   const hy4Fetch = hy4 ? createHy4ZeroFetch() : undefined;
+  if (hy4Fetch) {
+    // Summaries/fact extraction call models.completeSimple directly. Guard
+    // the shared SDK entry points too, not only the interactive streamFn.
+    const rawStream = models.streamSimple.bind(models);
+    const rawComplete = models.completeSimple.bind(models);
+    models.streamSimple = (m, context, options) =>
+      rawStream(withGoHeaders(m, options?.sessionId), context, { ...options, fetch: hy4Fetch });
+    models.completeSimple = (m, context, options) =>
+      rawComplete(withGoHeaders(m, options?.sessionId), context, { ...options, fetch: hy4Fetch });
+  }
+
   const streamFn: ProviderHandle['streamFn'] = (m, context, options) =>
     models.streamSimple(
       withGoHeaders(m, options?.sessionId),
