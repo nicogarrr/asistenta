@@ -534,6 +534,25 @@ export class TelegramChannel implements ChannelAdapter {
     }, wait);
   }
 
+  /**
+   * grammY's polling loop awaits each middleware. Waiting here for an application
+   * handler (e.g. /reintentar) can deadlock: its turn waits for offerApproval,
+   * while polling cannot read the callback until that very turn completes.
+   * Deliver synchronously up to the handler's first await, but let the daemon's
+   * per-thread turn queues own its completion. Only application work is detached:
+   * inbound parsing, callback authorisation and UI acknowledgements stay awaited.
+   */
+  #deliverInbound(handlers: ChannelHandlers, inbound: Inbound): void {
+    void (async () => {
+      await handlers.onMessage(inbound);
+    })().catch((error: unknown) => {
+      handlers.log('error', 'telegram update failed', {
+        kind: 'message',
+        error: describeError(error),
+      });
+    });
+  }
+
   async #onMessage(ctx: Context): Promise<void> {
     const handlers = this.#handlers;
     if (!handlers) return;
@@ -783,10 +802,10 @@ export class TelegramChannel implements ChannelAdapter {
           this.#holdSplit(key, held.inbound, handlers, ownComment);
           return;
         }
-        await handlers.onMessage(held.inbound);
+        this.#deliverInbound(handlers, held.inbound);
         return;
       }
-      await handlers.onMessage(held.inbound);
+      this.#deliverInbound(handlers, held.inbound);
     }
     if (plain && inbound.text.length >= SPLIT_TEXT_MIN_CHARS) {
       this.#holdSplit(key, inbound, handlers);
@@ -802,7 +821,7 @@ export class TelegramChannel implements ChannelAdapter {
       return;
     }
 
-    await handlers.onMessage(inbound);
+    this.#deliverInbound(handlers, inbound);
   }
 
   /** Textos largos a la espera de su continuación (chat:tema:usuario). */
@@ -1017,7 +1036,7 @@ export class TelegramChannel implements ChannelAdapter {
       sentAt: r.date ? new Date(r.date * 1000).toISOString() : undefined,
       replyToMessageId: this.#resolveReply(chatId, messageId),
     };
-    await handlers.onMessage(inbound);
+    this.#deliverInbound(handlers, inbound);
   }
   /** Mensajes ya avisados como editados (chat:id), para avisar una sola vez. */
   readonly #editNoted = new Set<string>();
@@ -1121,7 +1140,7 @@ export class TelegramChannel implements ChannelAdapter {
       receivedAt: new Date().toISOString(),
       replyToMessageId: this.#resolveReply(chatId, rawId),
     };
-    await handlers.onMessage(inbound);
+    this.#deliverInbound(handlers, inbound);
   }
 
   /**
@@ -1158,7 +1177,7 @@ export class TelegramChannel implements ChannelAdapter {
     const chatId = String(message.chat.id);
     const messageId = String(message.message_id);
     const thread = (message as { message_thread_id?: number }).message_thread_id;
-    await handlers.onMessage({
+    this.#deliverInbound(handlers, {
       channel: this.name,
       account: this.account,
       chatId,
@@ -1444,7 +1463,7 @@ export class TelegramChannel implements ChannelAdapter {
         ? String(message.message_thread_id)
         : undefined;
     const from = ctx.from;
-    await handlers.onMessage({
+    this.#deliverInbound(handlers, {
       channel: this.name,
       account: this.account,
       chatId: String(message.chat.id),
