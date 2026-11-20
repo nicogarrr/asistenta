@@ -1903,6 +1903,10 @@ export class Gate {
       case 'fabrica':
       case 'reminder':
         return 'escribe-local';
+      // Rutinas de agente programadas («cada lunes a las 9 revisa el gasto»): el
+      // registro local de rutinas; ver la lista es lectura.
+      case 'rutina':
+        return argString(c.args, 'action') === 'list' ? 'lee' : 'escribe-local';
       // «Vigila esto cada 10 min» (daemon/latido.ts): un aviso local que se repite en este chat.
       case 'latido':
         return argString(c.args, 'action') === 'list' ? 'lee' : 'escribe-local';
@@ -2160,6 +2164,7 @@ export class Gate {
     // de Asistenta («entra en este enlace para verificar tu cuenta»).
     const reminder =
       (call.tool === 'reminder' && action === 'create') ||
+      (call.tool === 'rutina' && action === 'create') ||
       (call.tool === 'latido' && action === 'start');
     // Una tarea del tablero también vuelve sola: sale en el resumen de la mañana.
     // Renombrar es apuntar otro texto en la misma tarea: la misma comprobación de copia.
@@ -2169,9 +2174,13 @@ export class Gate {
     // fuera; olvidar algo a secas sigue sin preguntar.
     // Lo mismo con cancelar un recordatorio o borrar una tarea: «cancela el aviso de la
     // medicina» escrito en una página quitaría un aviso que Nico pidió.
+    // Quitar, pausar o reanudar una rutina tras leer algo de fuera: «quita la rutina
+    // del gasto» escrito en una página apagaría un aviso que Nico pidió.
     const forget =
       (call.tool === 'memory' && (action === 'forget' || action === 'forget_profile')) ||
       (call.tool === 'reminder' && action === 'cancel') ||
+      (call.tool === 'rutina' &&
+        (action === 'cancel' || action === 'pause' || action === 'resume')) ||
       (call.tool === 'latido' && action === 'stop') ||
       (call.tool === 'tareas' && action === 'borrar');
     // Marcar hecha o mover una tarea la quita de hoy igual que borrarla: «marca como hecho
@@ -2185,14 +2194,27 @@ export class Gate {
         : null;
     }
     if (forget) {
+      const what =
+        call.tool === 'memory'
+          ? 'Borrar un recuerdo'
+          : call.tool === 'reminder'
+            ? 'Borrar un recordatorio'
+            : call.tool === 'rutina'
+              ? `${action === 'pause' ? 'Pausar' : action === 'resume' ? 'Reanudar' : 'Quitar'} una rutina`
+              : call.tool === 'latido'
+                ? 'Borrar una vigilancia'
+                : 'Borrar una tarea';
       return source
-        ? `Borrar ${call.tool === 'memory' ? 'un recuerdo' : call.tool === 'reminder' ? 'un recordatorio' : call.tool === 'latido' ? 'una vigilancia' : 'una tarea'} tras leer contenido externo (${source}) necesita tu aprobación expresa`
+        ? `${what} tras leer contenido externo (${source}) necesita tu aprobación expresa`
         : null;
     }
     const set = this.#externalGrams.get(sessionId);
     if (!source || !set || set.size === 0) return null;
     const tags = Array.isArray(call.args.tags) ? call.args.tags.join(' ') : '';
-    const text = argString(call.args, task ? 'titulo' : call.tool === 'latido' ? 'task' : 'text');
+    const text = argString(
+      call.args,
+      task ? 'titulo' : call.tool === 'latido' ? 'task' : call.tool === 'rutina' ? 'said' : 'text',
+    );
     if (!echoesSubstantially(set, `${text} ${tags}`)) return null;
     const what = memory
       ? 'Este recuerdo'
@@ -2200,7 +2222,9 @@ export class Gate {
         ? 'Esta tarea'
         : call.tool === 'latido'
           ? 'Esta vigilancia'
-          : 'Este recordatorio';
+          : call.tool === 'rutina'
+            ? 'Esta rutina'
+            : 'Este recordatorio';
     return `${what} copia lo que acabas de leer (${source}); guardarlo necesita tu aprobación expresa`;
   }
 
@@ -3272,6 +3296,7 @@ const BOUNDED_EFFECT_TOOLS = new Set([
   'media',
   'fabrica',
   'reminder',
+  'rutina',
   'latido',
   'vigilar_precio',
   'gasolineras',

@@ -61,6 +61,11 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'preguntar', threadAllow: true },
   { name: 'memory', threadAllow: true },
   { name: 'reminder', threadAllow: true },
+  {
+    name: 'rutina',
+    threadAllow: true,
+    note: 'Rutinas de agente programadas («cada lunes a las 9 revisa el gasto»): escribe en el registro local; cada ejecución pasa por la Gate como un turno.',
+  },
   { name: 'latido', threadAllow: true },
   { name: 'tareas', threadAllow: true },
   {

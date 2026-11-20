@@ -270,6 +270,10 @@ export const TOOL_ABILITIES: Readonly<
   media: { area: 'audio', text: 'grabo y reproduzco audio, hago fotos y uso la cámara o el micro' },
   download: { area: 'audio', text: 'descargo un vídeo, un PDF o solo el audio de un enlace' },
   reminder: { area: 'agenda', text: 'te recuerdo cosas a la hora que digas' },
+  rutina: {
+    area: 'agenda',
+    text: 'hago una tarea sola a su hora (cada lunes a las 9) y te aviso aquí',
+  },
   latido: {
     area: 'agenda',
     text: 'vigilo algo cada pocos minutos en este chat y solo te escribo si cambia',
