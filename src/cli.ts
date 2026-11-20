@@ -805,6 +805,7 @@ import {
   snoozeWhen,
 } from './tools/reminder.js';
 import { createResumenVideoTool } from './tools/resumen-video.js';
+import { createRoutineTool } from './tools/rutina.js';
 import { createServiceTool } from './tools/service.js';
 // Renfe stays unregistered on purpose: a tool that only knows one site lets the agent
 // report a booking it never made, which is the exact failure this project exists to
@@ -2442,7 +2443,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             randomUUID(),
             chatId,
             `¿Abro ${domain}?\n${reason}`,
-            { askScope: true },
+            // Un 👍 a la pregunta vale como «✅ Una vez» (la aprobación de un
+            // dominio es una puerta estándar; pagar o escribir en su nombre no).
+            { askScope: true, thumbOk: true },
           );
           return choice.approved;
         },
@@ -3125,6 +3128,14 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
         sync: () => routineRunner.sync(),
         nextOf: liveNextOf(() => routineRunner.status()),
       }),
+      // «Cada lunes a las 9 revisa el gasto y me avisas»: rutina de agente programada
+      // (no un recordatorio): la hace Asistenta a su hora y el resultado llega al chat.
+      createRoutineTool({
+        store,
+        scopeOf: scope,
+        sync: () => routineRunner.sync(),
+        nextOf: liveNextOf(() => routineRunner.status()),
+      }),
       createLatidoTool({
         latidos,
         scopeOf: scope,
@@ -3656,6 +3667,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           {
             // Un shell arriesgado no admite «Siempre» ni «Por ahora»: no se ofrecen.
             askScope: extra?.conAlcance !== false,
+            // «sí, hazlo» con un 👍 a la pregunta (una sola vez, como «✅ Una vez»).
+            thumbOk: true,
           },
         );
         return choice;

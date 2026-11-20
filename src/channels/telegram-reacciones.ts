@@ -94,6 +94,15 @@ export function reactionMood(emoji: string): ReactionMood {
 }
 
 /**
+ * «👍» a secas, con o sin tono de piel (U+1F3FB–U+1F3FF) ni selector de variante.
+ * Es el «sí, hazlo» del dueño sobre una propuesta: solo este emoji aprueba, no
+ * cualquier reacción positiva (un ❤️ a una respuesta no es un permiso).
+ */
+export function isThumbsUp(emoji: string): boolean {
+  return bare(emoji).replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '') === '👍';
+}
+
+/**
  * Los emojis que se acaban de poner (los nuevos que no estaban). Quitar una reacción
  * no es decir nada; los emojis personalizados y las estrellas de pago se ignoran.
  */

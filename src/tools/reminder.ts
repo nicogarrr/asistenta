@@ -811,6 +811,8 @@ export function createReminderTool(deps: ReminderDeps): AgentTool<ReturnType<typ
       '«las 3 de la noche» is 03:00, «9 de la noche» is 21:00.',
       "action=list shows this chat's reminders with their next time; action=cancel with a",
       'word from the text removes it. Say back the exact time you set, in local time.',
+      'If the user wants YOU to do something on a repeating schedule and report the',
+      'result («every Monday at 9 review my spending and tell me»), use rutina instead.',
       'Never claim a reminder exists unless this tool said it was created.',
     ].join('\n'),
     parameters: Params(),

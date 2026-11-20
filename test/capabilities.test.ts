@@ -27,6 +27,7 @@ const BEFORE = {
     'preguntar',
     'memory',
     'reminder',
+    'rutina',
     'latido',
     'tareas',
     'aviso_llegada',

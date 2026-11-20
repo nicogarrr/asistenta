@@ -19,6 +19,7 @@ import { sharedKindText } from './telegram-compartido.js';
 import { SentTexts } from './telegram-enviados.js';
 import {
   addedEmojis,
+  isThumbsUp,
   REACTION_LOG_MSG,
   REACTION_NEGATIVE_LOG_MSG,
   reactionMood,
@@ -303,6 +304,12 @@ export class TelegramChannel implements ChannelAdapter {
     string,
     { resolve: (choice: ApprovalChoice) => void; expires: number; chatId: string }
   >();
+  /**
+   * `chatId:messageId` -> approval id, SOLO de las preguntas que admiten 👍 (thumbOk).
+   * Una compra o un correo que firma el dueño nunca entran aquí: ahí el 👍 no
+   * aprueba y hace falta el botón, como siempre.
+   */
+  readonly #approvalByMessage = new Map<string, string>();
   #handlers: ChannelHandlers | null = null;
   #ready = false;
   /** Reconnect state: a terminal polling failure retries with backoff. */
@@ -570,6 +577,19 @@ export class TelegramChannel implements ChannelAdapter {
       // el chat de «Este asistente es privado.» y gastaba el cupo de envíos. Allí
       // se calla; el aviso solo va por privado.
       if (!isGroup) await ctx.reply('Este asistente es privado.').catch(() => {});
+      return;
+    }
+
+    // «👍» a secas citando una pregunta de aprobación pendiente: lo mismo que
+    // reaccionar con 👍 («sí, hazlo», una sola vez). Sin abrir turno.
+    const repliedTo = (msg as { reply_to_message?: { message_id?: number } }).reply_to_message
+      ?.message_id;
+    if (
+      !isGroup &&
+      repliedTo !== undefined &&
+      isThumbsUp(text) &&
+      this.#tryThumbApprove(String(ctx.chat?.id ?? ''), String(repliedTo))
+    ) {
       return;
     }
 
@@ -1005,11 +1025,18 @@ export class TelegramChannel implements ChannelAdapter {
     if (!handlers || !r || !user || !this.#options.allowedUserIds.includes(user.id)) return;
     const chatId = String(r.chat.id);
     const messageId = String(r.message_id);
+    const added = addedEmojis(r.old_reaction, r.new_reaction);
+    if (added.length === 0) return;
+    // Un 👍 a una pregunta de aprobación pendiente es «sí, hazlo» (una vez), no una
+    // reacción más: se resuelve la aprobación y no se abre turno. Un ❤️ u otro
+    // positivo NO aprueba (isThumbsUp), y una compra nunca entra aquí (thumbOk).
+    if (added.some(isThumbsUp) && this.#tryThumbApprove(chatId, messageId)) {
+      handlers.log('info', REACTION_LOG_MSG, { emoji: '👍', messageId });
+      return;
+    }
     const key = `${chatId}:${messageId}`;
     const said = this.#sentTexts.get(key);
     if (!said) return;
-    const added = addedEmojis(r.old_reaction, r.new_reaction);
-    if (added.length === 0) return;
     const emoji = added.find((e) => reactionMood(e) === 'negativa');
     if (!emoji) {
       handlers.log('info', REACTION_LOG_MSG, { emoji: added.join(' '), messageId });
@@ -1595,9 +1622,18 @@ export class TelegramChannel implements ChannelAdapter {
     await ctx.answerCallbackQuery({ text: label }).catch(() => {});
     const message = ctx.callbackQuery?.message;
     if (!message) return;
+    await this.#settleApprovalPrompt(message.chat.id, message.message_id, label);
+  }
+
+  /**
+   * La pregunta decidida se retira: se borra y, si Telegram no deja (muy vieja),
+   * queda marcada con la decisión y sin botones. Un fallo aquí es estético: la
+   * resolución ya ocurrió y nunca debe romper el turno que la esperaba.
+   */
+  async #settleApprovalPrompt(chatId: number, messageId: number, label: string): Promise<void> {
     const deleted = await this.#throttled(() =>
       withTimeout(
-        this.#bot.api.deleteMessage(message.chat.id, message.message_id),
+        this.#bot.api.deleteMessage(chatId, messageId),
         20_000,
         'deleteMessage timed out',
       ),
@@ -1611,7 +1647,7 @@ export class TelegramChannel implements ChannelAdapter {
     if (deleted) return;
     await this.#throttled(() =>
       withTimeout(
-        this.#bot.api.editMessageText(message.chat.id, message.message_id, label, {
+        this.#bot.api.editMessageText(chatId, messageId, label, {
           reply_markup: { inline_keyboard: [] },
         }),
         20_000,
@@ -1625,6 +1661,33 @@ export class TelegramChannel implements ChannelAdapter {
   }
 
   /**
+   * Un 👍 del dueño sobre una pregunta de aprobación que lo admite (`thumbOk`) es
+   * «sí, hazlo»: se resuelve como «✅ Una vez» —jamás «Por ahora» ni «Siempre»,
+   * un pulgar no deja permisos puestos— y la pregunta se retira como con el botón.
+   * Devuelve false si ese mensaje no es una aprobación pendiente con 👍 activo;
+   * el 👍 sigue entonces su camino normal (una reacción positiva, sin turno).
+   */
+  #tryThumbApprove(chatId: string, messageId: string): boolean {
+    const id = this.#approvalByMessage.get(`${chatId}:${messageId}`);
+    if (!id) return false;
+    const entry = this.#approvals.get(id);
+    // Resuelta, caducada o de otro chat: el índice se limpia al resolver, así que
+    // llegar aquí es solo el borde de una carrera; no se aprueba nada.
+    if (!entry || entry.chatId !== chatId || entry.expires < Date.now()) return false;
+    const choice: ApprovalChoice = { approved: true, scope: 'once' };
+    // Solo identificadores: la pregunta puede citar un secreto (ver offerApproval).
+    this.#handlers?.log('info', 'approval decided', {
+      id,
+      approved: true,
+      scope: 'once',
+      via: '👍',
+    });
+    entry.resolve(choice);
+    void this.#settleApprovalPrompt(Number(chatId), Number(messageId), decisionLabel(choice));
+    return true;
+  }
+
+  /**
    * Publish an approval with inline buttons; resolves with the scope the human
    * picked, or as refused when it expires, is cancelled, or the send fails.
    *
@@ -1632,12 +1695,17 @@ export class TelegramChannel implements ChannelAdapter {
    * answers not just "may I?" but "for how long?", which is what feeds
    * `Gate.setScope` on the caller side. Without it the legacy two buttons stay,
    * and any of their answers is reported as `scope: 'once'`.
+   *
+   * `thumbOk` (Grok Bot): un 👍 del dueño sobre el mensaje de la pregunta —reacción
+   * o respuesta citada que es solo «👍»— vale como «✅ Una vez»: aprueba SOLO esa
+   * acción, una vez, nunca «Por ahora» ni «Siempre». Sin `thumbOk` el 👍 no
+   * aprueba: las compras y lo que sale en su nombre piden siempre el botón.
    */
   offerApproval(
     id: string,
     chatId: string,
     question: string,
-    opts?: { askScope?: boolean; threadId?: string; signal?: AbortSignal },
+    opts?: { askScope?: boolean; threadId?: string; signal?: AbortSignal; thumbOk?: boolean },
   ): Promise<ApprovalChoice> {
     return new Promise<ApprovalChoice>((resolve) => {
       const signal = opts?.signal;
@@ -1665,6 +1733,7 @@ export class TelegramChannel implements ChannelAdapter {
         if (settled) return;
         settled = true;
         this.#approvals.delete(id);
+        if (messageId) this.#approvalByMessage.delete(`${chatId}:${messageId}`);
         signal?.removeEventListener('abort', onAbort);
         if (nudgeTimer) clearTimeout(nudgeTimer);
         if (nudgeId) void this.#retireApprovalNudge(chatId, nudgeId);
@@ -1738,6 +1807,10 @@ export class TelegramChannel implements ChannelAdapter {
       })
         .then((sentId) => {
           messageId = sentId;
+          // Solo si sigue abierta: un 👍 a una pregunta ya resuelta no la resucita.
+          if (opts?.thumbOk === true && sentId && !settled) {
+            this.#approvalByMessage.set(`${chatId}:${sentId}`, id);
+          }
           // Si el envío terminó justo después de caducar, el mensaje no debe
           // quedarse con botones muertos: se pinta el aviso en cuanto existe.
           if (expired && sentId) void this.#markApprovalExpired(chatId, sentId);
