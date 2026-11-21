@@ -56,6 +56,13 @@ function quartileMin(data) {
   const n = data?.quartile_min;
   return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : minGroup(data);
 }
+// Same rule for every other remote number that reaches a description, a schema or
+// the filters answer: an integer in range, else the fixed default.
+const boundedInt = (v, lo, hi, fallback) => Number.isInteger(v) && v >= lo && v <= hi ? v : fallback;
+const rankedMin = (data) => boundedInt(data?.min_ranked, 1, 1000, 3);
+const roundEur = (data) => boundedInt(data?.round_eur, 1, 100000, 1000);
+const boundedNum = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : null;
+const isoDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}([T ][\d:.]{1,12}Z?)?$/.test(v) ? v : null;
 function bucketsOf(data) {
   const b = data?.sizes?.buckets;
   if (!Array.isArray(b) || b.length > 20) return [];
@@ -95,7 +102,7 @@ const TOOLS = {
     define: (data) => ({ title: "Best-paying companies",
       description: "Every company the site's companies table lists for a selection, by median " +
                    "base, highest first, down to one salary; companies with fewer than " +
-                   `${data.min_ranked ?? 3} salaries in the selection come after the rest. Each says ` +
+                   `${rankedMin(data)} salaries in the selection come after the rest. Each says ` +
                    `how many people its figures come from, and few: true marks fewer than ${minGroup(data)}. ` +
                    "Use search to look one company up within the selection, and company_size to keep " +
                    "employers of a given headcount.",
@@ -532,7 +539,7 @@ const companyFigures = (data, a) => ({ ...figures(a), few: a.n < minGroup(data) 
 
 const fewNote = (data) => `few: true marks a figure from fewer than ${minGroup(data)} people, ` +
   "which only the site's companies table shows; from one person it is that person's salary, " +
-  `rounded to the nearest ${data.round_eur ?? 1000} EUR, so say so when quoting it. p25 and p75 ` +
+  `rounded to the nearest ${roundEur(data)} EUR, so say so when quoting it. p25 and p75 ` +
   `come only from ${quartileMin(data)} or more people.`;
 
 export async function topCompanies(data, args = {}, env = {}) {
@@ -552,7 +559,7 @@ export async function topCompanies(data, args = {}, env = {}) {
     rows.push({ company: c.name, url: c.url, ...companyFigures(data, a), company_size: c.size ?? null });
   }
   const shown = rows.slice(0, limit);
-  const ranked = data.min_ranked ?? 3;
+  const ranked = rankedMin(data);
   const close = want && !rows.length
     ? closeNames(found.map((r) => data.companies[rowOf(table, r).c]), args.search) : [];
   return { selection, ...(sizes ? { company_size: [...sizes], company_size_note: SIZE_NOTE } : {}),
@@ -707,14 +714,14 @@ export function filters(data) {
   return {
     roles: data.roles.map((r) => ({ slug: r.slug, name: r.name })),
     regions: data.regions, years: data.years,
-    company_sizes: (bucketsOf(data).length ? bucketsOf(data) : null), company_sizes_as_of: data.sizes?.as_of ?? null,
+    company_sizes: (bucketsOf(data).length ? bucketsOf(data) : null), company_sizes_as_of: isoDate(data.sizes?.as_of),
     min_group: minGroup(data),
-    min_ranked: data.min_ranked ?? null,
-    quartile_min: (quartileMin(data) ?? null), round_eur: data.round_eur ?? null,
-    threshold_eur: data.threshold,
-    min_base_eur: data.min_base ?? null, min_global_submissions: data.min_global ?? null,
-    reported: data.reported ?? null,
-    data_as_of: data.data_as_of || data.generated,
+    min_ranked: rankedMin(data),
+    quartile_min: (quartileMin(data) ?? null), round_eur: roundEur(data),
+    threshold_eur: boundedNum(data.threshold, 0, 10000000),
+    min_base_eur: boundedNum(data.min_base, 0, 10000000), min_global_submissions: boundedNum(data.min_global, 0, 1000000),
+    reported: boundedNum(data.reported, 0, 1000000000),
+    data_as_of: isoDate(data.data_as_of) || isoDate(data.generated),
   };
 }
 
@@ -1208,7 +1215,7 @@ export async function findJobs(data, args = {}, env = {}) {
   // Software Engineers through "software" alone, architects being solution architects (2026-11-13).
   const unmatched = results.length ? terms.filter((t) => !found.some((f) => f.matched.includes(t.term))).map((t) => t.term) : [];
   return {
-    generated_at: index.generated_at ?? null, salary_data_as_of: data.data_as_of || data.generated,
+    generated_at: isoDate(index.generated_at), salary_data_as_of: isoDate(data.data_as_of) || isoDate(data.generated),
     filters: { query: terms.map((t) => t.term).join(" ") || null,
                ...(terms.length ? { query_rule: "a posting matches any of the words (whole words, synonyms " +
                  "included) in its title, company or location, or among the keywords read from its description; " +
@@ -2445,7 +2452,7 @@ export async function jobQuestions(data, args = {}, env = {}) {
   const id = args.id.trim();
   const index = await jobIndex(env);
   const job = index.jobs.find((j) => isObject(j) && j.id === id);
-  if (!job) throw new QueryError(`no job '${id}' in the index of ${index.generated_at ?? "today"}; ids come ` +
+  if (!job) throw new QueryError(`no job '${id}' in the index of ${isoDate(index.generated_at) ?? "today"}; ids come ` +
     "from find_jobs, and a posting that closed leaves the index", "not_found");
   const posting = { id: job.id, title: job.title, company: job.company, location: job.location ?? null,
                     workplace: job.workplace ?? null, url: job.url, ats: job.ats };
