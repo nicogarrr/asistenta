@@ -2950,13 +2950,18 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     const entries = backgroundJournal.all();
     if (entries.length === 0) return;
     for (const entry of entries) {
-      backgroundJournal.remove(entry.threadKey, entry.task);
+      // La entrada se queda en el diario hasta que `start` la reescriba con el mismo id
+      // y el resultado se entregue: un fallo aquí no la pierde.
       if (Date.now() - entry.startedAt > BACKGROUND_JOB_MAX_AGE_MS) {
+        backgroundJournal.remove(entry.id);
         log.warn('stale background job dropped at startup', { task: sliceSafe(entry.task, 80) });
         continue;
       }
       const hash = entry.threadKey.lastIndexOf('#');
-      if (hash <= 0 || hash === entry.threadKey.length - 1) continue;
+      if (hash <= 0 || hash === entry.threadKey.length - 1) {
+        backgroundJournal.remove(entry.id);
+        continue;
+      }
       const entryChatKey = entry.threadKey.slice(0, hash);
       const entryName = entry.threadKey.slice(hash + 1);
       void getOrCreateThread(entryChatKey, entryName, entryName)
@@ -2968,11 +2973,19 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           const job: BackgroundJob = {
             task: entry.task,
             resumed: true,
+            id: entry.id,
+            startedAt: entry.startedAt,
+            ...(entry.role ? { role: entry.role } : {}),
+            ...(entry.tools ? { tools: entry.tools } : {}),
+            ...(entry.result !== undefined ? { result: entry.result } : {}),
             run: async (signal) => {
               if (!pool) throw new Error('delegate no está disponible en este arranque');
               const result = await pool.run({
                 task: entry.task,
                 parentDepth: 0,
+                // El rol y las herramientas del original, no los de por defecto.
+                ...(entry.role ? { role: entry.role } : {}),
+                ...(entry.tools ? { tools: entry.tools } : {}),
                 signal,
                 context: {
                   parentTools: () => defaultDelegateParentTools(config),
@@ -2985,9 +2998,8 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
             },
           };
           if (!startBackgroundDelegate(thread, job)) {
-            // No salió (un turno del panel en marcha): se queda en el diario para el
+            // No salió (un turno del panel en marcha): sigue en el diario para el
             // próximo arranque, no se pierde en silencio.
-            backgroundJournal.add(entry);
             log.warn('background job resume deferred', { task: sliceSafe(entry.task, 80) });
           }
         })

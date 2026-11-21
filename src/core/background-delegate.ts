@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Inbound } from '../channels/types.js';
 import { sliceSafe } from '../text.js';
 import type { BackgroundJobJournal } from './background-journal.js';
 import { isOutageError } from './friendly-error.js';
+import type { SubagentRole } from './subagent-runner.js';
 
 /**
  * `delegate` en segundo plano: la subtarea larga corre aparte, el turno que la pidió
@@ -15,6 +17,15 @@ export interface BackgroundJob {
   run: (signal: AbortSignal) => Promise<string>;
   /** Se retomó tras un reinicio (ver core/background-journal.ts): el aviso lo dice. */
   resumed?: boolean;
+  /** Id de la entrada del diario al retomar (si no, se crea uno nuevo por ejecución). */
+  id?: string;
+  /** Cuándo se arrancó de verdad (al retomar, el original: el tope de 24 h cuenta desde ahí). */
+  startedAt?: number;
+  /** Rol y herramientas pedidos: se guardan para reaplicarlos al retomar. */
+  role?: SubagentRole;
+  tools?: string[];
+  /** Resultado ya calculado antes del reinicio: solo falta entregarlo, no se repite. */
+  result?: string;
 }
 
 /** Subtareas en segundo plano a la vez por hilo (el pool ya limita a 2 en total). */
@@ -65,7 +76,7 @@ export class BackgroundDelegates {
   readonly #onError: (err: unknown) => void;
   readonly #retryDelays: readonly number[];
   readonly #sleep: (ms: number, signal: AbortSignal) => Promise<void>;
-  readonly #journal?: Pick<BackgroundJobJournal, 'add' | 'remove'>;
+  readonly #journal?: Pick<BackgroundJobJournal, 'add' | 'remove' | 'complete'>;
 
   constructor(
     opts: {
@@ -82,7 +93,7 @@ export class BackgroundDelegates {
        * y la borra al terminar, para que un reinicio del daemon la retome. Sin diario,
        * una subtarea a medias se pierde con el proceso, como siempre.
        */
-      journal?: Pick<BackgroundJobJournal, 'add' | 'remove'>;
+      journal?: Pick<BackgroundJobJournal, 'add' | 'remove' | 'complete'>;
       /** Para tests: la espera entre intentos. */
       sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
     } = {},
@@ -116,11 +127,28 @@ export class BackgroundDelegates {
     this.#running.set(thread.key, set);
     // En disco primero: si el proceso muere a partir de aquí, el arranque la retoma.
     // El diario falla cerrado (solo lo apunta): nunca impide arrancar la subtarea.
+    // Cada ejecución tiene su id: dos subtareas iguales a la vez no se pisan.
+    const id = job.id ?? randomUUID();
     try {
-      this.#journal?.add({ threadKey: thread.key, task: job.task, startedAt: Date.now() });
+      this.#journal?.add({
+        id,
+        threadKey: thread.key,
+        task: job.task,
+        startedAt: job.startedAt ?? Date.now(),
+        ...(job.role ? { role: job.role } : {}),
+        ...(job.tools ? { tools: job.tools } : {}),
+        ...(job.result !== undefined ? { result: job.result } : {}),
+      });
     } catch (err) {
       this.#onError(err);
     }
+    const forget = (): void => {
+      try {
+        this.#journal?.remove(id);
+      } catch (err) {
+        this.#onError(err);
+      }
+    };
     const generation = thread.generation();
     void (async () => {
       let note = '';
@@ -128,6 +156,10 @@ export class BackgroundDelegates {
         // Sin internet o con el modelo caído, la subtarea fallaba y llegaba «no terminó
         // bien»: había que volver a pedirla. Ahora espera y la repite sola.
         for (let attempt = 0; ; attempt++) {
+          if (job.result !== undefined) {
+            note = job.result;
+            break;
+          }
           try {
             const text = await job.run(ctl.signal);
             note = backgroundResultNote(job.task, text, false, attempt > 0, job.resumed === true);
@@ -154,17 +186,24 @@ export class BackgroundDelegates {
         set.delete(ctl);
         if (set.size === 0 && this.#running.get(thread.key) === set)
           this.#running.delete(thread.key);
-        // Terminó (bien, mal o cortada con /stop): ya no hay nada que retomar.
-        try {
-          this.#journal?.remove(thread.key, job.task);
-        } catch (err) {
-          this.#onError(err);
-        }
       }
-      if (ctl.signal.aborted || thread.generation() !== generation) return;
+      if (ctl.signal.aborted || thread.generation() !== generation) {
+        // Cortada a propósito (/stop, hilo nuevo): no se entrega ni se retoma.
+        forget();
+        return;
+      }
+      // El resultado queda en disco hasta que la entrega se confirme: si el proceso
+      // muere mientras el turno espera en cola, el arranque lo entrega sin repetir.
+      try {
+        this.#journal?.complete(id, note);
+      } catch (err) {
+        this.#onError(err);
+      }
       try {
         await deliver(note);
+        forget();
       } catch (err) {
+        // Sin entrega confirmada la entrada se queda para el próximo arranque.
         this.#onError(err);
       }
     })();
