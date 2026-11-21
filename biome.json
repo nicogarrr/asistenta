@@ -9,6 +9,7 @@
       "!dist",
       "!node_modules",
       "!tools/tv-home",
+      "!vendor",
       "!deploy/tv-webos",
       "!var",
       "!.data"

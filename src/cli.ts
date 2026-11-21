@@ -674,6 +674,7 @@ import {
   llegadaIntent,
 } from './llegada.js';
 import { parseMcpServers } from './mcp/client.js';
+import { guardEmpleoTools, withEmpleo } from './mcp/empleo.js';
 import { mcpHttpDoctorLines, mcpHttpEnabled, parseMcpHttpServers } from './mcp/http-client.js';
 import { guardReaTools, withRea } from './mcp/rea.js';
 import { createMcpTools, mcpCommandText, mcpResourcesDoctorLines } from './mcp/tools.js';
@@ -2482,7 +2483,9 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
   // MCP: servidores externos (PA_MCP_SERVERS) se arrancan UNA vez y sus tools
   // entran en todos los hilos. Un servidor caído se salta y no impide arrancar.
   // PA_REA=1 añade REA (src/mcp/rea.ts): solo lectura, solo el dueño, pide permiso cada vez.
-  const mcpServers = withRea(parseMcpServers(process.env.PA_MCP_SERVERS));
+  // El MCP de empleo (src/mcp/empleo.ts) va vendado y encendido salvo PA_EMPLEO=0:
+  // solo lectura, sin claves y sin candidaturas automáticas.
+  const mcpServers = withEmpleo(withRea(parseMcpServers(process.env.PA_MCP_SERVERS)));
   // Entradas con `url` (MCP por HTTP): solo con PA_MCP_HTTP=1.
   const mcpHttpServers = mcpHttpEnabled() ? parseMcpHttpServers(process.env.PA_MCP_SERVERS) : [];
   const mcpTools =
@@ -3674,7 +3677,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     // OCR local opcional (PP-OCRv5 / GLM-OCR): sin PA_OCR_LOCAL=1 no aporta nada.
     all.push(...ocrLocalPlugin.tools({}));
     if (mcpTools.length)
-      all.push(...guardReaTools(mcpTools, () => isOwnerDm(inboundFor(thread), vigilanteOwnerId)));
+      all.push(
+        ...guardEmpleoTools(
+          guardReaTools(mcpTools, () => isOwnerDm(inboundFor(thread), vigilanteOwnerId)),
+        ),
+      );
 
     // Only the tools that move the machine take the mutex. Wrapping read-only tools
     // would throw away the parallelism that makes multiple conversations worth having.
