@@ -71,7 +71,8 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export class BackgroundDelegates {
-  readonly #running = new Map<string, Set<AbortController>>();
+  /** Por hilo, los trabajos en marcha: cada controlador con el borrado de su entrada del diario. */
+  readonly #running = new Map<string, Map<AbortController, () => void>>();
   readonly #max: number;
   readonly #onError: (err: unknown) => void;
   readonly #retryDelays: readonly number[];
@@ -120,15 +121,22 @@ export class BackgroundDelegates {
     job: BackgroundJob,
     deliver: (note: string) => Promise<unknown>,
   ): boolean {
-    const set = this.#running.get(thread.key) ?? new Set<AbortController>();
+    const set = this.#running.get(thread.key) ?? new Map<AbortController, () => void>();
     if (set.size >= this.#max) return false;
     const ctl = new AbortController();
-    set.add(ctl);
-    this.#running.set(thread.key, set);
     // En disco primero: si el proceso muere a partir de aquí, el arranque la retoma.
     // El diario falla cerrado (solo lo apunta): nunca impide arrancar la subtarea.
     // Cada ejecución tiene su id: dos subtareas iguales a la vez no se pisan.
     const id = job.id ?? randomUUID();
+    const forget = (): void => {
+      try {
+        this.#journal?.remove(id);
+      } catch (err) {
+        this.#onError(err);
+      }
+    };
+    set.set(ctl, forget);
+    this.#running.set(thread.key, set);
     try {
       this.#journal?.add({
         id,
@@ -142,17 +150,15 @@ export class BackgroundDelegates {
     } catch (err) {
       this.#onError(err);
     }
-    const forget = (): void => {
-      try {
-        this.#journal?.remove(id);
-      } catch (err) {
-        this.#onError(err);
-      }
-    };
     const generation = thread.generation();
+    // El trabajo deja de ser cancelable solo cuando termina del todo, entrega incluida.
+    const cleanup = (): void => {
+      set.delete(ctl);
+      if (set.size === 0 && this.#running.get(thread.key) === set) this.#running.delete(thread.key);
+    };
     void (async () => {
-      let note = '';
       try {
+        let note = '';
         // Sin internet o con el modelo caído, la subtarea fallaba y llegaba «no terminó
         // bien»: había que volver a pedirla. Ahora espera y la repite sola.
         for (let attempt = 0; ; attempt++) {
@@ -182,37 +188,49 @@ export class BackgroundDelegates {
             break;
           }
         }
+        if (ctl.signal.aborted || thread.generation() !== generation) {
+          // Cortada a propósito (/stop, hilo nuevo): no se entrega ni se retoma.
+          forget();
+          return;
+        }
+        // El resultado queda en disco hasta que la entrega se confirme: si el proceso
+        // muere mientras el turno espera en cola, el arranque lo entrega sin repetir.
+        try {
+          this.#journal?.complete(id, note);
+        } catch (err) {
+          this.#onError(err);
+        }
+        // La entrega también es parte del trabajo: el controlador sigue en #running
+        // mientras el turno espera en cola, así que /stop aún lo alcanza (abortThread
+        // lo aborta y borra su entrada del diario) y no se entrega ni se retoma.
+        try {
+          await deliver(note);
+          forget();
+        } catch (err) {
+          // Sin entrega confirmada la entrada se queda para el próximo arranque.
+          this.#onError(err);
+        }
       } finally {
-        set.delete(ctl);
-        if (set.size === 0 && this.#running.get(thread.key) === set)
-          this.#running.delete(thread.key);
-      }
-      if (ctl.signal.aborted || thread.generation() !== generation) {
-        // Cortada a propósito (/stop, hilo nuevo): no se entrega ni se retoma.
-        forget();
-        return;
-      }
-      // El resultado queda en disco hasta que la entrega se confirme: si el proceso
-      // muere mientras el turno espera en cola, el arranque lo entrega sin repetir.
-      try {
-        this.#journal?.complete(id, note);
-      } catch (err) {
-        this.#onError(err);
-      }
-      try {
-        await deliver(note);
-        forget();
-      } catch (err) {
-        // Sin entrega confirmada la entrada se queda para el próximo arranque.
-        this.#onError(err);
+        cleanup();
       }
     })();
     return true;
   }
 
-  /** /stop: corta lo de ese hilo; su resultado ya no se entrega. */
+  /**
+   * /stop: corta lo de ese hilo; su resultado ya no se entrega. También borra el
+   * estado durable de cada trabajo, incluido un resultado ya calculado que aún espera
+   * su turno de entrega: si el daemon se reinicia antes de que la cola se libere, el
+   * arranque no lo entrega pese al /stop.
+   */
   abortThread(threadKey: string): void {
-    for (const ctl of this.#running.get(threadKey) ?? []) ctl.abort('stop');
+    const set = this.#running.get(threadKey);
+    if (set === undefined || set.size === 0) return;
+    this.#running.delete(threadKey);
+    for (const [ctl, forget] of set) {
+      ctl.abort('stop');
+      forget();
+    }
   }
 }
 
