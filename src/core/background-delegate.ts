@@ -114,12 +114,14 @@ export class BackgroundDelegates {
   /**
    * Arranca la subtarea. Devuelve false si el hilo ya tiene el máximo en marcha (el
    * llamador la hace entonces como siempre, esperando). `deliver` recibe la nota del
-   * resultado, salvo que /stop la cortara antes (`abortThread` o generación nueva).
+   * resultado, salvo que /stop la cortara antes (`abortThread` o generación nueva). Recibe
+   * también la señal: si el turno de entrega espera en cola, debe comprobarla al
+   * ejecutarse, porque `abortThread` no cambia la generación.
    */
   start(
     thread: { key: string; generation: () => number },
     job: BackgroundJob,
-    deliver: (note: string) => Promise<unknown>,
+    deliver: (note: string, signal: AbortSignal) => Promise<unknown>,
   ): boolean {
     const set = this.#running.get(thread.key) ?? new Map<AbortController, () => void>();
     if (set.size >= this.#max) return false;
@@ -204,7 +206,7 @@ export class BackgroundDelegates {
         // mientras el turno espera en cola, así que /stop aún lo alcanza (abortThread
         // lo aborta y borra su entrada del diario) y no se entrega ni se retoma.
         try {
-          await deliver(note);
+          await deliver(note, ctl.signal);
           forget();
         } catch (err) {
           // Sin entrega confirmada la entrada se queda para el próximo arranque.

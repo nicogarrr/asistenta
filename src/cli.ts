@@ -2932,8 +2932,11 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     return backgroundDelegates.start(
       { key: thread.key, generation: () => thread.generation },
       job,
-      (note) =>
+      (note, signal) =>
         queueThreadTurn(thread, async () => {
+          // /stop sobre el hilo (botón Pararlo) aborta sin subir la generación: el turno
+          // de entrega encolado debe comprobar la cancelación al ejecutarse.
+          if (signal.aborted) return;
           const turnInbound = backgroundTurnInbound(inboundFor(thread), note, new Date());
           await runTurn(thread, turnInbound, note, { external: 'subtarea en segundo plano' });
         }),
