@@ -1,0 +1,16 @@
+{
+  "generated": "2026-11-21",
+  "instructions": "Fixture de test: no son datos reales.",
+  "min_group": 3,
+  "threshold": 60000,
+  "roles": [
+    { "slug": "software-engineer", "name": "Software Engineer" },
+    { "slug": "data-scientist", "name": "Data Scientist" }
+  ],
+  "regions": {
+    "MD": { "en": "Madrid", "es": "Madrid" },
+    "CT": { "en": "Catalonia", "es": "Cataluña" }
+  },
+  "years": ["0-1", "2-4", "5-7"],
+  "sizes": { "buckets": ["1-50", "51-200"], "as_of": "2026-11-01" }
+}
