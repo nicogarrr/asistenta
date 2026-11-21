@@ -11,7 +11,9 @@
  * Encendido salvo PA_EMPLEO=0. Solo se publican las tools de lectura
  * (`allowedTools` y `readOnlyOnly`): nunca `report_application` (cuenta
  * candidaturas a la web), `hiring_contact` (contactos de personas) ni
- * `application_guide` (instrucciones para el agente, no un dato). Las
+ * `application_guide` (instrucciones para el agente, no un dato) ni
+ * `job_questions` (leería formularios externos en vivo, con el destino decidido
+ * por el índice remoto: se deja fuera para no abrir esa salida de red). Las
  * candidaturas no se envían solas: aplicar a una oferta lo hace el dueño,
  * paso a paso y con su sí.
  */
@@ -35,7 +37,6 @@ export const EMPLEO_ALLOWED_TOOLS: readonly string[] = [
   'top_companies',
   'company_salaries',
   'find_jobs',
-  'job_questions',
 ];
 
 /** Lo único del entorno que ve el servidor: rutas, carpetas de usuario y temporales, idioma. */

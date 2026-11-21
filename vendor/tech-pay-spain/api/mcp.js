@@ -45,10 +45,27 @@ const SELECTION = {
            "or a bucket such as 5-7. Omit for any experience." },
 };
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false };
+// Numbers and bucket labels from the remote data.json reach tool descriptions and
+// schemas, so they are checked by type and range here: a value that does not fit
+// falls back to a fixed default and no remote prose can get through.
+function minGroup(data) {
+  const n = data?.min_group;
+  return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : 5;
+}
+function quartileMin(data) {
+  const n = data?.quartile_min;
+  return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : minGroup(data);
+}
+function bucketsOf(data) {
+  const b = data?.sizes?.buckets;
+  if (!Array.isArray(b) || b.length > 20) return [];
+  return b.filter((x) => typeof x === "string" && /^\d{1,6}(-\d{1,6}|\+)?$/.test(x));
+}
+
 // How many people the employer has, in data.sizes.buckets. A string, commas
 // between several, for the same reason as `years`.
 const COMPANY_SIZE = (data) => ({ type: "string", description: "The employer's headcount: one of " +
-  `${(data.sizes?.buckets ?? []).join(", ")}, or several with commas (1-50,51-200 for under 200 people). ` +
+  `${bucketsOf(data).join(", ")}, or several with commas (1-50,51-200 for under 200 people). ` +
   "The whole company or group, worldwide. Companies whose headcount is not on file are left out." });
 
 // Every tool once: what tools/list shows of it, and what a call runs. `run` gets
@@ -64,7 +81,7 @@ const TOOLS = {
                    "of people at 60,000 EUR base or more, in euros per year, with how many people " +
                    "the figures come from. Every argument is optional and narrows the selection " +
                    "(role, region, years of experience); none gives all of Spain. A figure comes " +
-                   `only from ${data.min_group} or more people: a selection with fewer returns no ` +
+                   `only from ${minGroup(data)} or more people: a selection with fewer returns no ` +
                    "result and wider_selections, the same selection without years and then " +
                    "without region, to quote instead. For one company use company_salaries, and " +
                    "to rank companies use top_companies. Call list_filters when unsure how a role " +
@@ -79,7 +96,7 @@ const TOOLS = {
       description: "Every company the site's companies table lists for a selection, by median " +
                    "base, highest first, down to one salary; companies with fewer than " +
                    `${data.min_ranked ?? 3} salaries in the selection come after the rest. Each says ` +
-                   `how many people its figures come from, and few: true marks fewer than ${data.min_group}. ` +
+                   `how many people its figures come from, and few: true marks fewer than ${minGroup(data)}. ` +
                    "Use search to look one company up within the selection, and company_size to keep " +
                    "employers of a given headcount.",
       inputSchema: { type: "object", properties: {
@@ -94,7 +111,7 @@ const TOOLS = {
     define: (data) => ({ title: "One company's salaries",
       description: "One company in Spain, any the site lists, down to one salary: overall, and " +
                    "by role, region or experience wherever it has salaries. Each figure says how " +
-                   `many people it comes from, and few: true marks fewer than ${data.min_group}. Give ` +
+                   `many people it comes from, and few: true marks fewer than ${minGroup(data)}. Give ` +
                    "a role, region or years to see the groups within it, combinations included. " +
                    "A name the site does not list gets close names to try. Companies listed apart under a " +
                    "name that starts like it (BBVA and BBVA Technology) come back in related_companies.",
@@ -128,7 +145,7 @@ const TOOLS = {
                    "read from the description), and " +
                    "the company's median base for the posting's role in Spain, as the " +
                    "site's companies table shows it, with how many people it comes from " +
-                   `(few: true under ${data.min_group}). Pass the ids already applied to or turned ` +
+                   `(few: true under ${minGroup(data)}). Pass the ids already applied to or turned ` +
                    "down in exclude. When nothing matches, no_match says how many results each " +
                    "filter costs and suggests the closest postings, marked with the filter they miss. " +
                    "The starting point when asked to find jobs or apply for " +
@@ -419,7 +436,7 @@ const figures = (a) => ({
 
 const withheld = (data, selection) => ({
   selection, result: null,
-  reason: `fewer than ${data.min_group} salaries match; widen the selection (drop region or years)`,
+  reason: `fewer than ${minGroup(data)} salaries match; widen the selection (drop region or years)`,
 });
 
 // When a selection has too few people, the nearest wider ones that have
@@ -490,7 +507,7 @@ const rowOf = (table, r) => Object.fromEntries(table.fields.map((f, k) => [f, r[
 // Spanish subsidiary of a larger group: shown, never bucketed.
 function resolveSizes(data, value) {
   if (blank(value)) return null;
-  const buckets = data.sizes?.buckets ?? [];
+  const buckets = bucketsOf(data);
   const asked = (Array.isArray(value) ? value : String(value).split(/[,;]|\s+or\s+|\s+o\s+/))
     .map((x) => String(x).replace(/\s+/g, "").replace(/[–—]/g, "-")).filter(Boolean);
   if (!buckets.length || !asked.length || asked.some((x) => !buckets.includes(x)))
@@ -511,12 +528,12 @@ const companyBySlug = (data, slug) => {
 
 // A company's figures as the table shows them, flagged when fewer than
 // min_group people are behind them.
-const companyFigures = (data, a) => ({ ...figures(a), few: a.n < data.min_group });
+const companyFigures = (data, a) => ({ ...figures(a), few: a.n < minGroup(data) });
 
-const fewNote = (data) => `few: true marks a figure from fewer than ${data.min_group} people, ` +
+const fewNote = (data) => `few: true marks a figure from fewer than ${minGroup(data)} people, ` +
   "which only the site's companies table shows; from one person it is that person's salary, " +
   `rounded to the nearest ${data.round_eur ?? 1000} EUR, so say so when quoting it. p25 and p75 ` +
-  `come only from ${data.quartile_min ?? data.min_group} or more people.`;
+  `come only from ${quartileMin(data)} or more people.`;
 
 export async function topCompanies(data, args = {}, env = {}) {
   const table = await companyTable(env);
@@ -690,10 +707,10 @@ export function filters(data) {
   return {
     roles: data.roles.map((r) => ({ slug: r.slug, name: r.name })),
     regions: data.regions, years: data.years,
-    company_sizes: data.sizes?.buckets ?? null, company_sizes_as_of: data.sizes?.as_of ?? null,
-    min_group: data.min_group,
+    company_sizes: (bucketsOf(data).length ? bucketsOf(data) : null), company_sizes_as_of: data.sizes?.as_of ?? null,
+    min_group: minGroup(data),
     min_ranked: data.min_ranked ?? null,
-    quartile_min: data.quartile_min ?? null, round_eur: data.round_eur ?? null,
+    quartile_min: (quartileMin(data) ?? null), round_eur: data.round_eur ?? null,
     threshold_eur: data.threshold,
     min_base_eur: data.min_base ?? null, min_global_submissions: data.min_global ?? null,
     reported: data.reported ?? null,
@@ -866,7 +883,7 @@ function salaryContext(data, table, job, role) {
   if (!role || !table) return null;
   const { bySlug, cells } = lookups(data, table);
   const a = cells.get(role)?.get(bySlug.get(job.slug));
-  return a ? { role, company_median_base_eur: a.median, people: a.n, few: a.n < data.min_group,
+  return a ? { role, company_median_base_eur: a.median, people: a.n, few: a.n < minGroup(data),
                scope: "this company's salaries for the role in Spain, every region and experience" } : null;
 }
 
@@ -1250,7 +1267,7 @@ export async function findJobs(data, args = {}, env = {}) {
       "range is only in its text is judged by the median. salary_context is the company's " +
       "median base for the posting's role in Spain as the site's companies table shows it (Levels.fyi " +
       "data), with how many people it comes from; few: true marks fewer than " +
-      `${data.min_group}, and from one person it is that person's salary, rounded. null when nobody ` +
+      `${minGroup(data)}, and from one person it is that person's salary, rounded. null when nobody ` +
       "at the company reports the role" + (table ? "" : ", and this time for every posting: the " +
       "companies table could not be read") + ". It describes the company, not this posting.",
     jobs,
@@ -1269,7 +1286,7 @@ const ATS_HOST_PATTERNS = [/^[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com$/, /^wd\d+\.m
 const allowedHost = (host) => ATS_HOSTS.has(host) || ATS_HOST_PATTERNS.some((p) => p.test(host));
 // Teamtailor serves each career site on the employer's own domain; its host is
 // the board in our own index, and only that host is read for that posting.
-const SITE_HOST = /^(?=.{4,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const SITE_HOST = /^(?=.{4,253}$)(?!\d+(?:\.\d+)*$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const LIVE_TIMEOUT_MS = 8000;
 const LIVE_MAX_CHARS = 4_000_000;
 // Live form reads per request: a batch of 50 must not become 100 calls to a board.
@@ -1279,13 +1296,17 @@ const DESCRIPTION_CHARS = 6000;
 class BoardError extends Error {
   constructor(message, status = null) { super(message); this.status = status; }
 }
+// A public DNS name: no IP literal, no port or credentials, no local-looking suffix.
+const publicName = (host) => /^[a-z0-9.-]+$/i.test(host) && !/^\d+(\.\d+)*$/.test(host) &&
+  /\.[a-z]{2,}$/i.test(host) && !/(^|\.)(localhost|local|internal|lan|home|corp|intranet)$/i.test(host);
+const safeUrl = (u) => u.protocol === "https:" && !u.port && !u.username && !u.password && publicName(u.hostname);
 const hostOf = (url) => { try { return new URL(url).hostname; } catch { return ""; } };
 
 // `site` is a career site's own host, read from the board of a posting in the index
 // (Phenom sites live on the employer's domain), never from user input.
 async function fetchBoard(env, url, { body, text = false, site = null, headers = {} } = {}) {
   const u = new URL(url);
-  if (u.protocol !== "https:" || !(allowedHost(u.hostname) || (site && u.hostname === site)))
+  if (!safeUrl(u) || !(allowedHost(u.hostname) || (site && u.hostname === site)))
     throw new BoardError(`host ${u.hostname} is not allowed`);
   let answer;
   try {
@@ -1310,6 +1331,7 @@ async function fetchBoard(env, url, { body, text = false, site = null, headers =
 // Where an allowed board's page redirects to, without following it; null when it does not.
 async function redirectTo(env, url) {
   try {
+    if (!safeUrl(new URL(url))) return null;
     const answer = await (env.fetch ?? globalThis.fetch)(url, { redirect: "manual", signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
       headers: { Accept: "text/html", "User-Agent": `${SERVER.name}/${SERVER.version} (+https://spanishtoptechcompanies.com/mcp)` } });
     const to = answer.headers.get("location");
@@ -2261,6 +2283,8 @@ export function jsonldPosting(html) {
 
 async function jsonldForm(env, board, external, job) {
   const host = String(board).split("/")[0];
+  // A host that is not a public name (IP, local suffix) is never read: the posting is handed back unread.
+  if (!publicName(host)) return null;
   if (!SITE_HOST.test(host) || hostOf(job.url) !== host) throw new BoardError("the posting's board is not its careers site");
   const closed = () => new BoardError("the board no longer shows this posting; it may have closed");
   let url = job.url, page;

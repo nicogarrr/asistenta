@@ -22,8 +22,31 @@ const jobsSource = process.argv[3] ?? process.env.TECH_PAY_JOBS
 const companiesSource = process.argv[4] ?? process.env.TECH_PAY_COMPANIES
   ?? String(source).replace(/data\.json$/, "company-cells.json");
 
+const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_MAX_BYTES = 20 * 1024 * 1024;
+
+// A remote read: HTTPS only, no redirects, a timeout, an HTTP status check and a
+// byte limit that applies while the body streams in.
+async function readRemote(from) {
+  const url = new URL(String(from));
+  if (url.protocol !== "https:") throw new Error(`refusing non-HTTPS source ${url.origin}`);
+  const answer = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+                                    headers: { Accept: "application/json" } });
+  if (!answer.ok) throw new Error(`${url.pathname} answered ${answer.status}`);
+  const declared = Number(answer.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > FETCH_MAX_BYTES) throw new Error(`${url.pathname} is too large`);
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of answer.body) {
+    size += chunk.length;
+    if (size > FETCH_MAX_BYTES) throw new Error(`${url.pathname} is too large`);
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
 const read = async (from) => /^https?:/.test(String(from))
-  ? (await fetch(from)).json()
+  ? readRemote(from)
   : JSON.parse(readFileSync(/^file:/.test(String(from)) ? fileURLToPath(String(from)) : String(from), "utf8"));
 
 const data = await read(source);
