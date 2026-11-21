@@ -1,5 +1,6 @@
 import type { Inbound } from '../channels/types.js';
 import { sliceSafe } from '../text.js';
+import type { BackgroundJobJournal } from './background-journal.js';
 import { isOutageError } from './friendly-error.js';
 
 /**
@@ -12,6 +13,8 @@ import { isOutageError } from './friendly-error.js';
 export interface BackgroundJob {
   task: string;
   run: (signal: AbortSignal) => Promise<string>;
+  /** Se retomó tras un reinicio (ver core/background-journal.ts): el aviso lo dice. */
+  resumed?: boolean;
 }
 
 /** Subtareas en segundo plano a la vez por hilo (el pool ya limita a 2 en total). */
@@ -26,6 +29,7 @@ export function backgroundResultNote(
   text: string,
   failed = false,
   late = false,
+  resumed = false,
 ): string {
   const what = sliceSafe(task.replace(/\s+/g, ' ').trim(), 80);
   const head = failed
@@ -34,7 +38,10 @@ export function backgroundResultNote(
   const delay = late
     ? '\n[Llega con retraso: se cortó la conexión con el modelo y se reintentó sola. Menciónalo en pocas palabras.]'
     : '';
-  return `${head}${delay}\n${text}`;
+  const restart = resumed
+    ? '\n[Esta subtarea se cortó con un reinicio de Asistenta y se ha retomado sola. Menciónalo en pocas palabras.]'
+    : '';
+  return `${head}${delay}${restart}\n${text}`;
 }
 
 /** Espera `ms` o hasta que se aborte (/stop); nunca impide que el daemon se cierre. */
@@ -58,6 +65,7 @@ export class BackgroundDelegates {
   readonly #onError: (err: unknown) => void;
   readonly #retryDelays: readonly number[];
   readonly #sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  readonly #journal?: Pick<BackgroundJobJournal, 'add' | 'remove'>;
 
   constructor(
     opts: {
@@ -69,6 +77,12 @@ export class BackgroundDelegates {
        * Vacío: sin reintento. El hijo es de solo lectura, así que repetirlo es seguro.
        */
       retryDelays?: readonly number[];
+      /**
+       * Diario en disco (core/background-journal.ts): anota cada subtarea al arrancar
+       * y la borra al terminar, para que un reinicio del daemon la retome. Sin diario,
+       * una subtarea a medias se pierde con el proceso, como siempre.
+       */
+      journal?: Pick<BackgroundJobJournal, 'add' | 'remove'>;
       /** Para tests: la espera entre intentos. */
       sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
     } = {},
@@ -77,6 +91,7 @@ export class BackgroundDelegates {
     this.#onError = opts.onError ?? (() => {});
     this.#retryDelays = opts.retryDelays ?? [];
     this.#sleep = opts.sleep ?? abortableSleep;
+    this.#journal = opts.journal;
   }
 
   /** En marcha ahora en ese hilo. */
@@ -99,6 +114,13 @@ export class BackgroundDelegates {
     const ctl = new AbortController();
     set.add(ctl);
     this.#running.set(thread.key, set);
+    // En disco primero: si el proceso muere a partir de aquí, el arranque la retoma.
+    // El diario falla cerrado (solo lo apunta): nunca impide arrancar la subtarea.
+    try {
+      this.#journal?.add({ threadKey: thread.key, task: job.task, startedAt: Date.now() });
+    } catch (err) {
+      this.#onError(err);
+    }
     const generation = thread.generation();
     void (async () => {
       let note = '';
@@ -108,7 +130,7 @@ export class BackgroundDelegates {
         for (let attempt = 0; ; attempt++) {
           try {
             const text = await job.run(ctl.signal);
-            note = backgroundResultNote(job.task, text, false, attempt > 0);
+            note = backgroundResultNote(job.task, text, false, attempt > 0, job.resumed === true);
             break;
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -122,6 +144,8 @@ export class BackgroundDelegates {
               job.task,
               err instanceof Error ? sliceSafe(err.message, 300) : 'error desconocido',
               true,
+              false,
+              job.resumed === true,
             );
             break;
           }
@@ -130,6 +154,12 @@ export class BackgroundDelegates {
         set.delete(ctl);
         if (set.size === 0 && this.#running.get(thread.key) === set)
           this.#running.delete(thread.key);
+        // Terminó (bien, mal o cortada con /stop): ya no hay nada que retomar.
+        try {
+          this.#journal?.remove(thread.key, job.task);
+        } catch (err) {
+          this.#onError(err);
+        }
       }
       if (ctl.signal.aborted || thread.generation() !== generation) return;
       try {
