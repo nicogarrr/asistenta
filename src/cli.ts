@@ -524,6 +524,11 @@ let delegateWiring: ReturnType<typeof createDelegateWiring> | undefined;
  * Con `threadTools`, los especialistas (correo, calendario…) eligen de las
  * herramientas de ESE hilo, con sus propias comprobaciones; el pool es el mismo.
  */
+/** Herramientas de solo lectura del proceso para un hijo genérico (delegate las vuelve a filtrar). */
+function defaultDelegateParentTools(config: Config): AgentTool[] {
+  return [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[];
+}
+
 function delegateTool(
   config: Config,
   threadTools?: () => readonly AgentTool[],
@@ -535,7 +540,7 @@ function delegateTool(
     config,
     protectedPaths: protectedPaths(),
     secretPaths: secretStatePaths(),
-    parentTools: () => [...fsTools, createFetchTool(), createWebTool(config)] as AgentTool[],
+    parentTools: () => defaultDelegateParentTools(config),
   });
   return threadTools
     ? delegateWiring.forThread(threadTools, approve, background, owner)
@@ -1020,6 +1025,7 @@ import {
   type BackgroundJob,
   backgroundTurnInbound,
 } from './core/background-delegate.js';
+import { BACKGROUND_JOB_MAX_AGE_MS, BackgroundJobJournal } from './core/background-journal.js';
 import { buildContextNote } from './daemon/context-note.js';
 import {
   BORRAR_SUB,
@@ -1044,6 +1050,7 @@ import { summarizeTranscript } from './daemon/transcript-summary.js';
 import { tvButtonAction } from './daemon/tv-button.js';
 import { retentionIfDue } from './maintenance.js';
 import { missingPieceMessage } from './setup-missing.js';
+import { emptyResultNotice } from './tools/delegate.js';
 import { tvCommand } from './tv/tv-cli.js';
 
 export { ANTICIPATION_RULES, buildContextNote } from './daemon/context-note.js';
@@ -2853,10 +2860,13 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
    */
   const MAX_THREADS = 20;
   /** `delegate` en segundo plano: lo que corre por hilo; /stop y el desalojo lo cortan. */
+  // En disco, para que un reinicio (autoactualización, apagón) la retome sola.
+  const backgroundJournal = new BackgroundJobJournal(join(paths.state, 'subtareas-fondo.json'));
   const backgroundDelegates = new BackgroundDelegates({
     onError: (err) => log.warn('background delegate delivery failed', { err: String(err) }),
     // Sin red, la subtarea se repite sola (como un mensaje: PA_AUTO_RETRY).
     retryDelays: autoRetryOn ? AUTO_RETRY_DELAYS_MS : [],
+    journal: backgroundJournal,
   });
   const evictIdleThreads = (): void => {
     evictThreads({
@@ -2922,12 +2932,85 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
     return backgroundDelegates.start(
       { key: thread.key, generation: () => thread.generation },
       job,
-      (note) =>
+      (note, signal) =>
         queueThreadTurn(thread, async () => {
+          // /stop sobre el hilo (botón Pararlo) aborta sin subir la generación: el turno
+          // de entrega encolado debe comprobar la cancelación al ejecutarse.
+          if (signal.aborted) return;
           const turnInbound = backgroundTurnInbound(inboundFor(thread), note, new Date());
           await runTurn(thread, turnInbound, note, { external: 'subtarea en segundo plano' });
         }),
     );
+  };
+  /**
+   * Subtareas en segundo plano cortadas por un reinicio: se retoman solas y su
+   * resultado entra en el hilo que las pidió (el diario las apunta al arrancar y
+   * las borra al terminar). El hijo es de solo lectura, así que repetirla es
+   * seguro: mismo criterio que el reintento por caída de red. Una subtarea de más
+   * de un día se descarta: el contexto que la pidió quedó viejo.
+   */
+  const resumeBackgroundJobs = (): void => {
+    const entries = backgroundJournal.all();
+    if (entries.length === 0) return;
+    for (const entry of entries) {
+      // La entrada se queda en el diario hasta que `start` la reescriba con el mismo id
+      // y el resultado se entregue: un fallo aquí no la pierde.
+      if (Date.now() - entry.startedAt > BACKGROUND_JOB_MAX_AGE_MS) {
+        backgroundJournal.remove(entry.id);
+        log.warn('stale background job dropped at startup', { task: sliceSafe(entry.task, 80) });
+        continue;
+      }
+      const hash = entry.threadKey.lastIndexOf('#');
+      if (hash <= 0 || hash === entry.threadKey.length - 1) {
+        backgroundJournal.remove(entry.id);
+        continue;
+      }
+      const entryChatKey = entry.threadKey.slice(0, hash);
+      const entryName = entry.threadKey.slice(hash + 1);
+      void getOrCreateThread(entryChatKey, entryName, entryName)
+        .then((thread) => {
+          // El mismo cableado que `delegate` en segundo plano, con las herramientas
+          // de solo lectura del proceso (el pool las vuelve a filtrar por hijo).
+          delegateTool(config);
+          const pool = delegateWiring?.pool;
+          const job: BackgroundJob = {
+            task: entry.task,
+            resumed: true,
+            id: entry.id,
+            startedAt: entry.startedAt,
+            ...(entry.role ? { role: entry.role } : {}),
+            ...(entry.tools ? { tools: entry.tools } : {}),
+            ...(entry.result !== undefined ? { result: entry.result } : {}),
+            run: async (signal) => {
+              if (!pool) throw new Error('delegate no está disponible en este arranque');
+              const result = await pool.run({
+                task: entry.task,
+                parentDepth: 0,
+                // El rol y las herramientas del original, no los de por defecto.
+                ...(entry.role ? { role: entry.role } : {}),
+                ...(entry.tools ? { tools: entry.tools } : {}),
+                signal,
+                context: {
+                  parentTools: () => defaultDelegateParentTools(config),
+                  owner: thread.chatKey,
+                },
+              });
+              if (result.error !== undefined) throw new Error(result.error);
+              if (result.text.trim() === '') throw new Error(emptyResultNotice(undefined));
+              return result.text;
+            },
+          };
+          if (!startBackgroundDelegate(thread, job)) {
+            // No salió (un turno del panel en marcha): sigue en el diario para el
+            // próximo arranque, no se pierde en silencio.
+            log.warn('background job resume deferred', { task: sliceSafe(entry.task, 80) });
+          }
+        })
+        .catch((err: unknown) =>
+          log.warn('background job resume failed', { task: sliceSafe(entry.task, 80), err }),
+        );
+    }
+    log.info('background jobs found at startup', { found: entries.length });
   };
   const inboundFor = (thread: Thread): Inbound => {
     const live = threadInbound.get(thread.key);
@@ -4192,6 +4275,10 @@ async function serveCommand(control?: ControlStartup): Promise<number> {
           }),
   });
   runRoutineFire.resumePending();
+
+  // Subtareas en segundo plano cortadas por un reinicio (autoactualización, apagón):
+  // se retoman solas y su resultado entra en el hilo que las pidió.
+  resumeBackgroundJobs();
 
   // F1: recupera una vez el último disparo perdido con el PC apagado o dormido,
   // dentro de su ventana de gracia. PA_ROUTINE_CATCHUP=0 (o no/false/off) lo desactiva.

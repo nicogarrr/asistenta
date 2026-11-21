@@ -156,6 +156,9 @@ export function createDelegateTool(
         const owner = thread.owner;
         const started = thread.background({
           task: args.task,
+          // Se guardan en el diario para reaplicarlos al retomar tras un reinicio.
+          ...(args.role ? { role: args.role } : {}),
+          ...(args.tools ? { tools: args.tools } : {}),
           run: async (jobSignal) => {
             const result = await pool.run({
               task: args.task,
